@@ -2,4 +2,7 @@ The main goal is described either in README.md and in main.rs.
 
 Starting simple, at some point i will need to monitor the performance for this program to make it light and not fuck me while im playing or whatever.
 
-[ ] - See how can i capturate and store the amount of time that mouse button is pressed.
+[ ] Capture Keys
+  [x] See how can i capturate events.
+  [ ] Check the type of the event.
+  [ ] Store values.
