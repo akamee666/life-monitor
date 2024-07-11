@@ -4,4 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-rdev = "0.5.3"
+rdev = "*"
+chrono = "0.4.6"
+sysinfo = "*"
