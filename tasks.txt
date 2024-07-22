@@ -6,13 +6,13 @@ Starting simple, at some point i will need to monitor the performance for this p
   [x] See how can i capturate events.
   [x] Check the type of the event.
   [x] Store values.
-[FAILED] Keys are not being capture while inside an vm, need to fix that.
- [REASON] will be a pain in my ass to find which function vmware uses to capture keyboard(it's probably in kernel mode or even more deep) and also i would have to hook AND modify to library to make it work, im just gonna have both life monitors running in windows and linux as well since im using rdev library and can just cross compiler for win easily.
+  [FAILED] Keys are not being capture while inside an vm, need to fix that.
+    [REASON] ==> It would be a pain in my ass to hook vmware keyboard driver, probably i would need to put less effort if i write code from both plataforms and have the code running out and in the vm.
+[ ] Time tracking for apps.
+  [x] Get active windows.
+  [x] Understand how to write code to run in multiple threads. obs: i did not get it all yet, but its working so i will be moving.
+  [ ] Have it working for linux as well.
 
-[X] Check running apps always after some time.
-  [ ] Check the amount of time that i spent at different apps.
-  [ ] Need to create some logic to get some better results.
-
-[ ] Create tests - optinal
+[ ] Create tests 
 [ ] Send data to a api dont even know how i'm gonna do this 
 [ ] Create the website
