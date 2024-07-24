@@ -1,4 +1,4 @@
-use crate::windows;
+use crate::windows::util::*;
 use std::time::Duration;
 use sysinfo::*;
 use tokio::time;
@@ -7,7 +7,7 @@ const IDLE_CHECK_SECS: i32 = 5;
 const IDLE_PERIOD: u64 = 10;
 
 pub async fn track_processes() {
-    let mut interval = time::interval(Duration::from_secs(1));
+    let mut interval = time::interval(Duration::from_secs(5));
 
     let mut i = 0;
     let mut idle = false;
@@ -21,7 +21,7 @@ pub async fn track_processes() {
             // we check that the last time the user made any input
             // was shorter ago than our idle(5 seconds) period.
             // if it wasn't, we pause tracking
-            let duration = windows::get_last_input_time().as_secs();
+            let duration = get_last_input_time().as_secs();
             if IDLE_PERIOD > 0 && duration > IDLE_PERIOD {
                 idle = true;
             } else {
@@ -39,7 +39,7 @@ pub async fn track_processes() {
 async fn get_process() {
     let sys = sysinfo::System::new_all();
 
-    let (window_pid, window_title) = windows::get_active_window();
+    let (window_pid, window_title) = get_active_window();
 
     if window_pid == 0 {
         return;

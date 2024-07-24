@@ -2,59 +2,80 @@
 // that i use the outputs of my setup, my keyboard, mouse and also monitor what i'm doing daily.
 // The whole point of this is to create some graphs in an personal blog as i explained in README.md
 use rdev::{listen, Event};
-mod process;
-use crate::process::*;
+
+#[cfg(target_os = "linux")]
+mod linux;
 
 #[cfg(target_os = "windows")]
 mod windows;
 
-static mut LEFT_CLICKS: i64 = 0;
-static mut MIDDLE_CLICKS: i64 = 0;
-static mut RIGHT_CLICKS: i64 = 0;
-static mut KEY_PRESSED: i64 = 0;
-static mut MOUSE_MOV: f64 = 0.0;
+static mut EVENTS_COUNTER: EventsCounter = EventsCounter::new();
+
+#[derive(Debug)]
+struct EventsCounter {
+    pub left_clicks: i64,
+    pub right_clicks: i64,
+    pub middle_clicks: i64,
+    pub keys_pressed: i64,
+    pub mouse_moved_cm: f64,
+}
+
+impl EventsCounter {
+    const fn new() -> EventsCounter {
+        let left_clicks = 0;
+        let right_clicks = 0;
+        let middle_clicks = 0;
+        let keys_pressed = 0;
+        let mouse_moved_cm = 0.0;
+
+        /* Return the values */
+        EventsCounter {
+            left_clicks,
+            right_clicks,
+            middle_clicks,
+            keys_pressed,
+            mouse_moved_cm,
+        }
+    }
+
+    pub fn print_counters(&self) {
+        println!("{:#?}", self);
+    }
+}
+
 static mut LAST_X_PX: f64 = 0.0;
 static mut LAST_Y_PX: f64 = 0.0;
-
 fn callback(event: Event) {
     // each time an event occurs, increment the global var by one.
     match event.event_type {
         rdev::EventType::ButtonPress(button) => match button {
-            rdev::Button::Left => unsafe {
-                LEFT_CLICKS += 1;
-                println!("amount of left clicks: {}", LEFT_CLICKS);
-            },
-            rdev::Button::Right => unsafe {
-                RIGHT_CLICKS += 1;
-                println!("amount of right clicks: {}", RIGHT_CLICKS);
-            },
-            rdev::Button::Middle => unsafe {
-                MIDDLE_CLICKS += 1;
-                println!("amount of middle clicks: {}", MIDDLE_CLICKS);
-            },
+            rdev::Button::Left => unsafe { EVENTS_COUNTER.left_clicks += 1 },
+            rdev::Button::Right => unsafe { EVENTS_COUNTER.right_clicks += 1 },
+            rdev::Button::Middle => unsafe { EVENTS_COUNTER.middle_clicks += 1 },
             _ => {}
         },
 
-        rdev::EventType::KeyPress(_) => unsafe {
-            KEY_PRESSED += 1;
-            println!("amount of key pressed: {}", KEY_PRESSED);
+        rdev::EventType::KeyPress(key) => match key {
+            rdev::Key::KeyS => unsafe {
+                EVENTS_COUNTER.keys_pressed += 1;
+                EVENTS_COUNTER.print_counters();
+            },
+            _ => unsafe { EVENTS_COUNTER.keys_pressed += 1 },
         },
 
         rdev::EventType::MouseMove { x, y } => unsafe {
-            // https://stackoverflow.com/questions/68288183/detect-mousemove-of-x-pixels
             if LAST_X_PX != 0.0 {
-                let power_x: f64 = (LAST_Y_PX - y).powf(2.0);
-                let power_y: f64 = (LAST_X_PX - x).powf(2.0);
-
-                MOUSE_MOV += (power_x + power_y).sqrt();
+                // this is not accurate aodmwoamodawodawmod
+                let power_x: f64 = ((LAST_Y_PX - y).powf(2.0)) / 1600.0;
+                let power_y: f64 = ((LAST_X_PX - x).powf(2.0)) / 1600.0;
+                let pixels_moved = (power_x + power_y).sqrt();
+                // I would like this being i64 but not working just parsing to
+                // so i figure it out how to do it later i guess.
+                EVENTS_COUNTER.mouse_moved_cm += pixels_moved.ceil() * 0.026;
             }
 
             LAST_X_PX = x;
             LAST_Y_PX = y;
-
-            //Find out the DPI of the output device in question. (It's frequently 96 [96 dots per inch], but you cannot assume that.) This thread may help you do that, if it's a Windows Forms app. Also, the Graphics class has the DpiX and DpiY members, so you can use those.
-            //Convert the DPI to DPC [dots-per-centimeter] (DPC = DPI / 2.54).
-            //Multiply your number of centimeters by your DPC value.
         },
 
         _ => {}
@@ -64,9 +85,8 @@ fn callback(event: Event) {
 #[tokio::main]
 async fn main() {
     println!("By now the program does not too much, it capture the active window each five seconds and display the amount of times that you have used you keyboard/mouse since the program had started.");
-    // looks like it is working.
-    tokio::spawn(track_processes());
 
+    //tokio::spawn(linux::process::track_processes());
     if let Err(error) = listen(callback) {
         println!("Error: {:?}", error)
     }

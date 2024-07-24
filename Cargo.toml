@@ -8,7 +8,7 @@ rdev = "*"
 sysinfo = "^0"
 tokio = { version = "^1.19", features = ["full"] }
 
-[dependencies.windows]
+[target.'cfg(windows)'.dependencies.windows]
 version = "^0.58"
 features = [
   "Win32_Foundation",
@@ -18,3 +18,8 @@ features = [
   "Win32_UI_WindowsAndMessaging",
   "Win32_UI_Input_KeyboardAndMouse",
 ]
+
+
+[target.'cfg(unix)'.dependencies]
+x11rb = "0.9"
+log = "0.4"
