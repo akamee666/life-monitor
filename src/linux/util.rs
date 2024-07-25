@@ -1,11 +1,11 @@
-use log::warn;
 use std::error::Error;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{Atom, AtomEnum, ConnectionExt, GetPropertyReply, Window};
 use x11rb::rust_connection::RustConnection;
 
 // https://www.reddit.com/r/rust/comments/f7yrle/get_information_about_current_window_xorg/
-pub async fn print_active_window() -> Result<(), Box<dyn Error>> {
+// The return can be a empty result or boxed error.
+pub fn get_active_window() -> Result<String, Box<dyn Error>> {
     // Set up our state
     let (conn, screen) = x11rb::connect(None).expect("Failed to connect");
     let root = conn.setup().roots[screen].root;
@@ -15,8 +15,8 @@ pub async fn print_active_window() -> Result<(), Box<dyn Error>> {
 
     let focus = match find_active_window(&conn, root, net_active_window) {
         None => {
-            warn!("No active window selected");
-            return Ok(());
+            println!("No active window selected");
+            return Ok("".to_string());
         }
         Some(x) => x,
     };
@@ -28,14 +28,12 @@ pub async fn print_active_window() -> Result<(), Box<dyn Error>> {
     // Get the property from the window that we need
     let name = conn.get_property(false, focus, net_wm_name, utf8_string, 0, u32::MAX)?;
     let class = conn.get_property(false, focus, wm_class, string, 0, u32::MAX)?;
-    let (name, class) = (name.reply()?, class.reply()?);
+    let (_name, class) = (name.reply()?, class.reply()?);
 
-    // Print out the result
-    println!("Window name: {:?}", parse_string_property(&name));
-    let (instance, class) = parse_wm_class(&class);
-    println!("Window instance: {:?}", instance);
-    println!("Window class: {:?}", class);
-    Ok(())
+    let (_instance, class) = parse_wm_class(&class);
+    let window_class = class;
+
+    Ok(window_class)
 }
 
 fn get_or_intern_atom(conn: &RustConnection, name: &[u8]) -> Atom {
@@ -77,15 +75,17 @@ fn find_active_window(
     }
 }
 
-fn parse_string_property(property: &GetPropertyReply) -> &str {
-    std::str::from_utf8(&property.value).unwrap_or("Invalid utf8")
+fn parse_string_property(property: &GetPropertyReply) -> String {
+    std::str::from_utf8(&property.value)
+        .unwrap_or("Invalid utf8")
+        .to_string()
 }
 
-fn parse_wm_class(property: &GetPropertyReply) -> (&str, &str) {
+fn parse_wm_class(property: &GetPropertyReply) -> (String, String) {
     if property.format != 8 {
         return (
-            "Malformed property: wrong format",
-            "Malformed property: wrong format",
+            "Malformed property: wrong format".to_string(),
+            "Malformed property: wrong format".to_string(),
         );
     }
     let value = &property.value;
@@ -101,10 +101,13 @@ fn parse_wm_class(property: &GetPropertyReply) -> (&str, &str) {
         let instance = std::str::from_utf8(instance);
         let class = std::str::from_utf8(class);
         (
-            instance.unwrap_or("Invalid utf8"),
-            class.unwrap_or("Invalid utf8"),
+            instance.unwrap_or("Invalid utf8").to_string(),
+            class.unwrap_or("Invalid utf8").to_string(),
         )
     } else {
-        ("Missing null byte", "Missing null byte")
+        (
+            "Missing null byte".to_string(),
+            "Missing null byte".to_string(),
+        )
     }
 }

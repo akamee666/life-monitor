@@ -45,6 +45,7 @@ impl EventsCounter {
 
 static mut LAST_X_PX: f64 = 0.0;
 static mut LAST_Y_PX: f64 = 0.0;
+
 fn callback(event: Event) {
     // each time an event occurs, increment the global var by one.
     match event.event_type {
@@ -86,7 +87,7 @@ fn callback(event: Event) {
 async fn main() {
     println!("By now the program does not too much, it capture the active window each five seconds and display the amount of times that you have used you keyboard/mouse since the program had started.");
 
-    //tokio::spawn(linux::process::track_processes());
+    tokio::spawn(linux::process::track_processes());
     if let Err(error) = listen(callback) {
         println!("Error: {:?}", error)
     }

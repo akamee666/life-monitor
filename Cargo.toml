@@ -19,7 +19,6 @@ features = [
   "Win32_UI_Input_KeyboardAndMouse",
 ]
 
-
-[target.'cfg(unix)'.dependencies]
-x11rb = "0.9"
-log = "0.4"
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = "0.11.1"
+user-idle = "0.6.0"

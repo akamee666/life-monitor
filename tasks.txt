@@ -3,15 +3,15 @@ The main goal is described either in README.md and in main.rs.
 Starting simple, at some point i will need to monitor the performance for this program to make it light and not fuck me while im playing or whatever.
 
 [x] Capture Keys and mouse movement.
-  [x] See how can i capturate events.
+  [x] See how can i capture events.
   [x] Check the type of the event.
   [x] Store values.
   [FAILED] Keys are not being capture while inside an vm, need to fix that.
-    [REASON] ==> It would be a pain in my ass to hook vmware keyboard driver, probably i would need to put less effort if i write code from both plataforms and have the code running out and in the vm.
+    [REASON] ==> It would be a pain in my ass to hook vmware keyboard driver, probably i would need to put less effort if i write code from both platforms and have the code running out and in the vm.
 [ ] Time tracking for apps.
   [x] Get active windows.
   [x] Understand how to write code to run in multiple threads. obs: i did not get it all yet, but its working so i will be moving.
-  [ ] Have it working for linux as well.
+  [x] Have it working for linux as well.
 
 [ ] Create tests 
 [ ] Send data to a api dont even know how i'm gonna do this 

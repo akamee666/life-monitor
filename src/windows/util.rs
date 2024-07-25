@@ -29,6 +29,7 @@ pub fn get_last_input_time() -> Duration {
     // we will be using it to get how much time was went since the last user input
     let tick_count = unsafe { GetTickCount() };
 
+    // struct defined by windows.
     let mut last_input_info = LASTINPUTINFO {
         cbSize: 8,
         dwTime: 0,
