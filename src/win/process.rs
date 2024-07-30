@@ -1,4 +1,4 @@
-use crate::windows::util::*;
+use crate::win::util::*;
 use std::time::Duration;
 use sysinfo::*;
 use tokio::time;
@@ -7,6 +7,7 @@ const IDLE_CHECK_SECS: i32 = 5;
 const IDLE_PERIOD: u64 = 10;
 
 pub async fn track_processes() {
+    println!("tracking");
     let mut interval = time::interval(Duration::from_secs(5));
 
     let mut i = 0;

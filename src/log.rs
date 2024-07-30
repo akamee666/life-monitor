@@ -1,31 +1,3 @@
-//
-// fn log_header(file: &mut File) {
-//     let os_info = {
-//         let info = os_info::get();
-//         format!(
-//             "OS: type: {}\nVersion: {}\n",
-//             info.os_type(),
-//             info.version()
-//         )
-//     };
-//
-//     log(file, os_info);
-//     let os_hostname = hostname::get().unwrap().into_string().unwrap();
-//     println!("hostname: {:?}", os_hostname);
-//     log(file, os_hostname);
-// }
-//
-//fn run_spy(fd: &mut File) {
-
-//GetUserDefaultLocaleName
-//GetForegroundWindow
-//GetwindowsthereadProcessId
-//OpenProcess
-//GetProcessImageFileNameW
-//GetWindowTextLengthW
-//GetWindowTextW
-//GetAsyncKeyState
-//}
 fn log(file: &mut File, s: String) {
     #[cfg(debug_assertions)]
     {
@@ -68,3 +40,19 @@ fn create_log_file() -> File {
     };
     logfile
 }
+
+// fn log_header(file: &mut File) {
+//     let os_info = {
+//         let info = os_info::get();
+//         format!(
+//             "OS: type: {}\nVersion: {}\n",
+//             info.os_type(),
+//             info.version()
+//         )
+//     };
+//
+//     log(file, os_info);
+//     let os_hostname = hostname::get().unwrap().into_string().unwrap();
+//     println!("hostname: {:?}", os_hostname);
+//     log(file, os_hostname);
+// }

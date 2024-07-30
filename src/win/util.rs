@@ -15,7 +15,7 @@ pub fn get_active_window() -> (u32, String) {
         let hwnd = GetForegroundWindow();
         let mut pid: u32 = 0;
 
-        // retrieves the pid/indentifier of the thread that created that window.
+        // Retrieves the pid/indentifier of the thread that created that window.
         GetWindowThreadProcessId(hwnd, Some(&mut pid));
         let mut bytes: [u16; 500] = [0; 500];
         let len = GetWindowTextW(hwnd, &mut bytes);
