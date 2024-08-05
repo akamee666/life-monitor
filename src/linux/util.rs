@@ -75,12 +75,6 @@ fn find_active_window(
     }
 }
 
-fn parse_string_property(property: &GetPropertyReply) -> String {
-    std::str::from_utf8(&property.value)
-        .unwrap_or("Invalid utf8")
-        .to_string()
-}
-
 fn parse_wm_class(property: &GetPropertyReply) -> (String, String) {
     if property.format != 8 {
         return (

@@ -4,24 +4,23 @@ use sysinfo::*;
 use tokio::time;
 
 const IDLE_CHECK_SECS: i32 = 5;
-const IDLE_PERIOD: u64 = 10;
+const IDLE_PERIOD: u64 = 20;
 
 pub async fn track_processes() {
-    println!("tracking");
-    let mut interval = time::interval(Duration::from_secs(5));
+    let mut interval = time::interval(Duration::from_secs(1));
 
     let mut i = 0;
     let mut idle = false;
 
     loop {
         i = i + 1;
-        // if i understand correctly im waiting 1 sec before each time i go trought it.
+
+        // wait one second each time through
         interval.tick().await;
 
+        // every five seconds we check if the last input time is greater than 30 seconds, if it's
+        // we pause tracking cause user is probably idle.
         if i == IDLE_CHECK_SECS {
-            // we check that the last time the user made any input
-            // was shorter ago than our idle(5 seconds) period.
-            // if it wasn't, we pause tracking
             let duration = get_last_input_time().as_secs();
             if IDLE_PERIOD > 0 && duration > IDLE_PERIOD {
                 idle = true;
@@ -48,11 +47,12 @@ async fn get_process() {
 
     let process = sys.processes().get(&Pid::from_u32(window_pid));
 
-    if let Some(_process) = process {
+    if let Some(process) = process {
+        // here comes store timestamp
         println!(
             "Active window[{}] title: {}",
             window_pid,
-            window_title.as_str()
+            window_title.as_str(),
         );
     }
 }

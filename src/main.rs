@@ -3,12 +3,14 @@
 * that i use the outputs of my setup, my keyboard, mouse and also monitor what i'm doing daily.
 * The whole point of this is to create some graphs in an personal blog as i explained in README.md
 */
+
 //#![windows_subsystem = "windows"]
 mod keylogger;
 
 #[cfg(target_os = "linux")]
 mod linux;
 
+mod time_tracking;
 #[cfg(target_os = "windows")]
 mod win;
 
@@ -19,13 +21,13 @@ async fn main() {
     #[cfg(target_os = "linux")]
     {
         tokio::spawn(crate::keylogger::KeyLogger::init());
-        tokio::spawn(crate::linux::process::track_processes()).await;
     }
 
     #[cfg(target_os = "windows")]
     {
         tokio::spawn(crate::keylogger::KeyLogger::init());
         tokio::spawn(crate::win::systray::init());
-        let _ = tokio::spawn(win::process::track_processes()).await;
     }
+
+    time_tracking::start_tracking().await;
 }

@@ -3,6 +3,7 @@ use rdev::{listen, Event};
 static mut EVENTS_COUNTER: KeyLogger = KeyLogger::new();
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct KeyLogger {
     pub left_clicks: i64,
     pub right_clicks: i64,
@@ -73,7 +74,7 @@ pub fn callback(event: Event) {
 
                 #[cfg(target_os = "windows")]
                 {
-                    // windows seems to fire more events than linux by some amount, so  by divinding by 3.0
+                    // windows seems to fire more events than linux by some amount, so  by divinding by 3.
                     // it looks like accurate but i guess it's not a solution for the problem and
                     // it will come back to bite my ass later.
                     // This should be converted only when the data is being sent to api.
