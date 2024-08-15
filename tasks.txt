@@ -16,16 +16,12 @@ Starting simple, at some point i will need to monitor the performance for this p
 ***** - [x] Create a system tray.
 
 # Current task.
-https://michellelim.dev/writing/measure-time-spent-in-app/ -- read this 
 
 ***** - [x] Create the time tracking to save how much time you are using an app.
-    ~ [x] linux.
-      ** [ ] Search for bugs(maybe create logs when something is off), rework the code for more performance
-   ~ [] windows.
+          ~ [x] linux.
+          ~ [ ] do same thing for windows.
 
-  ~ Windows 
-***** - [ ] Remove terminal to open and adjust options in system tray(see logs and open project repo)
-
+***** - [ ] Remove terminal to open and adjust options in system tray(see logs and open project repo).
 
 ***** - [ ] Create db to save data. 
 

@@ -28,11 +28,11 @@ pub fn get_active_window() -> Result<String, Box<dyn Error>> {
     // Get the property from the window that we need
     let name = conn.get_property(false, focus, net_wm_name, utf8_string, 0, u32::MAX)?;
     let class = conn.get_property(false, focus, wm_class, string, 0, u32::MAX)?;
-    let (_name, class) = (name.reply()?, class.reply()?);
+    let (name, class) = (name.reply()?, class.reply()?);
 
-    let (_instance, class) = parse_wm_class(&class);
+    let (_window_instance, class) = parse_wm_class(&class);
+    let _window_name = parse_string_property(&name);
     let window_class = class;
-
     Ok(window_class)
 }
 
@@ -44,6 +44,12 @@ fn get_or_intern_atom(conn: &RustConnection, name: &[u8]) -> Atom {
         .expect("Failed receive interned atom");
 
     result.atom
+}
+
+fn parse_string_property(property: &GetPropertyReply) -> String {
+    std::str::from_utf8(&property.value)
+        .unwrap_or("Invalid utf8")
+        .to_string()
 }
 
 fn find_active_window(

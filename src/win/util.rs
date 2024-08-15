@@ -3,13 +3,13 @@ use windows::{
     Win32::System::SystemInformation::GetTickCount,
     Win32::UI::{
         Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO},
-        WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId},
+        WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId},
     },
 };
 
 // god please bless the man who write this blog.
 // https://hellocode.co/blog/post/tracking-active-process-windows-rust/
-pub fn get_active_window() -> (u32, String) {
+pub fn get_active_window() -> u32 {
     unsafe {
         // That will give me a handle to the active window.
         let hwnd = GetForegroundWindow();
@@ -17,10 +17,7 @@ pub fn get_active_window() -> (u32, String) {
 
         // Retrieves the pid/indentifier of the thread that created that window.
         GetWindowThreadProcessId(hwnd, Some(&mut pid));
-        let mut bytes: [u16; 500] = [0; 500];
-        let len = GetWindowTextW(hwnd, &mut bytes);
-        let title = String::from_utf16_lossy(&bytes[..len as usize]);
-        (pid, title)
+        pid
     }
 }
 

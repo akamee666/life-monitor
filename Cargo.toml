@@ -7,7 +7,12 @@ edition = "2021"
 lazy_static = "1.5.0"
 rdev = "*"
 sysinfo = "^0"
-tokio = { version = "^1.19", features = ["rt-multi-thread", "time", "macros"] }
+tokio = { version = "^1.19", features = [
+  "rt-multi-thread",
+  "time",
+  "macros",
+  "sync",
+] }
 [target.'cfg(windows)'.dependencies.windows]
 version = "^0.52"
 features = [
