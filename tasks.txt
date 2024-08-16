@@ -15,13 +15,13 @@ Starting simple, at some point i will need to monitor the performance for this p
 
 ***** - [x] Create a system tray.
 
-# Current task.
-
 ***** - [x] Create the time tracking to save how much time you are using an app.
           ~ [x] linux.
-          ~ [ ] do same thing for windows.
+          ~ [x] do same thing for windows.
 
-***** - [ ] Remove terminal to open and adjust options in system tray(see logs and open project repo).
+***** - [x] Remove terminal to open and adjust options in system tray(see logs and open project repo).
+
+***** - upload data to a db?
 
 ***** - [ ] Create db to save data. 
 

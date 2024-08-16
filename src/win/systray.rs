@@ -7,12 +7,13 @@ enum Message {
 }
 
 pub async fn init() {
+    println!("starting systray");
     let mut tray = TrayItem::new("akame.spy", IconSource::Resource("makima_icon")).unwrap();
 
     let (tx, rx) = mpsc::sync_channel(1);
 
     let twitter_tx = tx.clone();
-    tray.add_menu_item("akame.twitter", move || {
+    tray.add_menu_item("Project Source", move || {
         twitter_tx.send(Message::GoTo).unwrap();
     })
     .unwrap();
@@ -27,11 +28,10 @@ pub async fn init() {
     loop {
         match rx.recv() {
             Ok(Message::Quit) => {
-                println!("Quitting");
                 std::process::exit(0);
             }
             Ok(Message::GoTo) => {
-                let _ = webbrowser::open("https://x.com/itsnotakame");
+                let _ = webbrowser::open("https://github.com/akame0x01/life-monitor");
             }
             _ => {}
         }

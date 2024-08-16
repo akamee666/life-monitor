@@ -4,8 +4,17 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+windows = { version = "^0.52", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_Threading",
+  "Win32_System_SystemInformation",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_Input_KeyboardAndMouse",
+] }
 lazy_static = "1.5.0"
-rdev = "*"
+rdev = { path = "rdev-0.5.3" }
+sqlite = "0.36.1"
 sysinfo = "^0"
 tokio = { version = "^1.19", features = [
   "rt-multi-thread",
@@ -13,25 +22,8 @@ tokio = { version = "^1.19", features = [
   "macros",
   "sync",
 ] }
-[target.'cfg(windows)'.dependencies.windows]
-version = "^0.52"
-features = [
-  "Win32_Foundation",
-  "Win32_Security",
-  "Win32_System_Threading",
-  "Win32_System_SystemInformation",
-  "Win32_UI_WindowsAndMessaging",
-  "Win32_UI_Input_KeyboardAndMouse",
-]
-
-[target.'cfg(windows)'.dependencies]
 tray-item = "0.10.0"
 webbrowser = "1.0.1"
-
-
-[target.'cfg(target_os = "linux")'.dependencies]
-x11rb = "0.11.1"
-user-idle = "0.6.0"
 
 [build-dependencies]
 embed-resource = "2.3"

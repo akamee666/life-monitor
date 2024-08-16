@@ -1,7 +1,7 @@
 use super::util::get_active_window;
+use crate::win::util::*;
 use lazy_static::lazy_static;
-use std::sync::{Mutex, MutexGuard};
-use std::thread::sleep;
+use std::sync::Mutex;
 use std::{collections::HashMap, time::Duration};
 use sysinfo::Pid;
 use sysinfo::System;
@@ -41,23 +41,27 @@ impl ProcessTracker {
         }
     }
 
-    // war against borrow checker below, probably there are some war crimes but it's not hurting
-    // performance too much
     pub async fn track_processes() {
-        let mut mutex_changer = TRACKER.lock().unwrap();
+        println!("starting tracking");
 
         let mut i = 0;
         let mut idle = false;
+
         loop {
             i = i + 1;
 
-            // wait one second each time through
-            sleep(Duration::from_secs(1));
+            std::thread::sleep(Duration::from_secs(1));
+
+            let mut changer = TRACKER.lock().expect("poisoned");
             // every five seconds we check if the last input time is greater than 30 seconds, if it's
             // we pause tracking cause user is probably idle.
-            if i == mutex_changer.idle_check {
-                let duration = super::util::get_last_input_time().as_secs();
-                if mutex_changer.idle_period > 0 && duration > mutex_changer.idle_period {
+            if i == changer.idle_check {
+                let duration = get_last_input_time().as_secs();
+
+                // need to sent data here.
+                println!("should be calling get db now");
+
+                if changer.idle_period > 0 && duration > changer.idle_period {
                     idle = true;
                 } else {
                     idle = false;
@@ -65,59 +69,63 @@ impl ProcessTracker {
                 i = 0;
             }
             if !idle {
-                Self::get_process(&mut mutex_changer)
+                let proc_name = Self::get_process(&changer.sys);
+                if !proc_name.is_empty() {
+                    let uptime = System::uptime();
+
+                    if !changer.last_window_name.is_empty() && changer.last_window_name != proc_name
+                    {
+                        let app_name: String = changer.last_window_name.clone();
+                        let time_diff = uptime - changer.time;
+                        changer.time = 0;
+                        Self::update_time_for_app(
+                            &mut changer.tracking_data,
+                            app_name.as_str(),
+                            time_diff,
+                        );
+                    }
+
+                    // it means that we are in the first call or in different window than before.
+                    if changer.time == 0 {
+                        changer.time = uptime;
+                        changer.last_window_name = proc_name.clone();
+                    }
+                }
             }
         }
     }
 
-    fn get_process(mutex_changer: &mut MutexGuard<ProcessTracker>) {
-        let window_pid = get_active_window();
+    // TODO: I NEED A FIX
+    fn get_process(sys: &System) -> String {
+        let (window_pid, title) = get_active_window();
 
         if window_pid == 0 {
-            return;
+            return "".to_string();
         }
 
-        // it's probably a skill issue do this in that way but i dont care fuck off
-        let sys = sysinfo::System::new_all();
-        let process = sys.process(Pid::from_u32(window_pid)).unwrap();
-        let process_name = process.name();
+        let process = sys.processes().get(&Pid::from_u32(window_pid));
+        if let Some(process) = process {
+            let process_name = process.name();
+            println!("Active window[{}] title: {}", window_pid, title);
 
-        println!("Active window[{}] title: {}", window_pid, process_name);
-
-        // it means that we are in the first call or in different window than before.
-        if mutex_changer.time == 0 {
-            mutex_changer.time = System::uptime();
-            mutex_changer.last_window_name = process_name.to_string();
-        }
-
-        if mutex_changer.last_window_name != process_name {
-            let time_spent_diff = System::uptime() - mutex_changer.time;
-            mutex_changer.time = 0;
-            let app_name = mutex_changer.last_window_name.clone();
-            Self::update_time_for_app(app_name.as_str(), time_spent_diff, mutex_changer);
+            return process_name.to_string();
+        } else {
+            return "".to_string();
         }
     }
 
-    fn update_time_for_app(
-        app_name: &str,
-        time: u64,
-        mutex_changer: &mut MutexGuard<ProcessTracker>,
-    ) {
-        if mutex_changer.tracking_data.contains_key(app_name) {
-            let mut time_from_app = *mutex_changer.tracking_data.get(app_name).unwrap();
-            time_from_app = time_from_app + time;
-            mutex_changer
-                .tracking_data
-                .insert(app_name.to_string(), time_from_app);
+    fn update_time_for_app(tracking_data: &mut HashMap<String, u64>, app_name: &str, time: u64) {
+        if tracking_data.contains_key(app_name) {
+            let time_from_app = tracking_data.get(app_name).unwrap();
+            let time_diff_to_add = time_from_app + time;
+            tracking_data.insert(app_name.to_string(), time_diff_to_add);
             println!("We already have this app in our hashmap, increasing time...");
         } else {
             println!("We dont have this app yet, inserting new value...");
-            mutex_changer
-                .tracking_data
-                .insert(app_name.to_string(), time);
+            tracking_data.insert(app_name.to_string(), time);
         }
 
-        for (name, time) in mutex_changer.tracking_data.iter() {
+        for (name, time) in tracking_data.iter() {
             println!("name:{name}, time spent: {time}");
         }
     }
