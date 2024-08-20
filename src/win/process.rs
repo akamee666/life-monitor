@@ -1,6 +1,8 @@
 use super::util::get_active_window;
+use crate::db::upload_data_to_db;
 use crate::win::util::*;
 use lazy_static::lazy_static;
+use log::{debug, info};
 use std::sync::Mutex;
 use std::{collections::HashMap, time::Duration};
 use sysinfo::Pid;
@@ -42,32 +44,34 @@ impl ProcessTracker {
     }
 
     pub async fn track_processes() {
-        println!("starting tracking");
+        info!("Spawned ProcessTracker thread");
 
         let mut i = 0;
         let mut idle = false;
+        let mut changer = TRACKER.lock().expect("poisoned");
 
         loop {
             i = i + 1;
 
             std::thread::sleep(Duration::from_secs(1));
 
-            let mut changer = TRACKER.lock().expect("poisoned");
             // every five seconds we check if the last input time is greater than 30 seconds, if it's
             // we pause tracking cause user is probably idle.
             if i == changer.idle_check {
+                debug!("Checking if user is idle");
                 let duration = get_last_input_time().as_secs();
-
-                // need to sent data here.
-                println!("should be calling get db now");
-
                 if changer.idle_period > 0 && duration > changer.idle_period {
                     idle = true;
+                    info!("Info is currently idle");
+
+                    upload_data_to_db();
                 } else {
                     idle = false;
+                    info!("Info is NOT idle")
                 }
                 i = 0;
             }
+
             if !idle {
                 let proc_name = Self::get_process(&changer.sys);
                 if !proc_name.is_empty() {
@@ -106,7 +110,7 @@ impl ProcessTracker {
         let process = sys.processes().get(&Pid::from_u32(window_pid));
         if let Some(process) = process {
             let process_name = process.name();
-            println!("Active window[{}] title: {}", window_pid, title);
+            debug!("Active window[{}] title: {}", window_pid, title);
 
             return process_name.to_string();
         } else {
@@ -119,9 +123,9 @@ impl ProcessTracker {
             let time_from_app = tracking_data.get(app_name).unwrap();
             let time_diff_to_add = time_from_app + time;
             tracking_data.insert(app_name.to_string(), time_diff_to_add);
-            println!("We already have this app in our hashmap, increasing time...");
+            info!("We already have this app in our hashmap, increasing time...");
         } else {
-            println!("We dont have this app yet, inserting new value...");
+            info!("We dont have this app yet, inserting new value...");
             tracking_data.insert(app_name.to_string(), time);
         }
 

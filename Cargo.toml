@@ -14,7 +14,6 @@ windows = { version = "^0.52", features = [
 ] }
 lazy_static = "1.5.0"
 rdev = "*"
-sqlite = "0.36.1"
 sysinfo = "^0"
 tokio = { version = "^1.19", features = [
   "rt-multi-thread",
@@ -24,6 +23,10 @@ tokio = { version = "^1.19", features = [
 ] }
 tray-item = "0.10.0"
 webbrowser = "1.0.1"
+sqlite = "0.36.1"
+log = "0.4.22"
+env_logger = "0.11.5"
+windows-service = "0.7.0"
 
 [build-dependencies]
 embed-resource = "2.3"

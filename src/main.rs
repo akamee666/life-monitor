@@ -1,133 +1,110 @@
-use rdev::listen;
-use std::{thread, time::Duration};
-use tokio::{sync::mpsc, time::interval};
+// #![windows_subsystem = "windows"]
+use env_logger;
+use log::*;
 
+pub mod db;
+mod keylogger;
+mod shutdown;
 mod win;
 
-// even if i read this data at the same time other thread is writing to it i dont think
-// there will be a problem, unless there are weird memory bugs it will be updated after some time
-// so maybe it's fine leave it that way.
-static mut EVENTS_COUNTER: KeyLogger = KeyLogger::new();
-static mut LAST_X_PX: f64 = 0.0;
-static mut LAST_Y_PX: f64 = 0.0;
+use db::upload_data_to_db;
+use std::ffi::OsString;
+use std::time::Duration;
+use windows_service::service::{
+    Service, ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus,
+    ServiceType,
+};
+use windows_service::service_control_handler::{self, ServiceControlHandlerResult};
+use windows_service::service_dispatcher;
+#[macro_use]
+extern crate windows_service;
 
-#[allow(dead_code)]
-#[derive(Debug)]
-pub struct KeyLogger {
-    pub left_clicks: i64,
-    pub right_clicks: i64,
-    pub middle_clicks: i64,
-    pub keys_pressed: i64,
-    pub pixels_moved: f64,
-    pub mouse_moved_cm: f64,
-}
-
-impl KeyLogger {
-    const fn new() -> KeyLogger {
-        let left_clicks = 0;
-        let right_clicks = 0;
-        let middle_clicks = 0;
-        let keys_pressed = 0;
-        let mouse_moved_cm = 0.0;
-        let pixels_moved = 0.0;
-
-        /* Return the values */
-        KeyLogger {
-            left_clicks,
-            right_clicks,
-            middle_clicks,
-            keys_pressed,
-            pixels_moved,
-            mouse_moved_cm,
-        }
-    }
-
-    pub fn print_counters(&mut self) {
-        println!("{:#?}", self);
-    }
-}
+define_windows_service!(ffi_service_main, service_main);
 
 #[tokio::main]
-async fn main() {
-    //     let connection = sqlite::open(":memory:").unwrap();
-    //     let create_query = "create table keys_input (key text, press_count integer);";
-    //     connection.execute(create_query).unwrap();
-    //     if false {
-    //         let query = "SELECT * FROM keys_input";
-    //         println!("printing database.");
-    //         connection
-    //             .iterate(query, |pairs| {
-    //                 for &(name, value) in pairs.iter() {
-    //                     println!("{} = {}", name, value.unwrap());
-    //                 }
-    //                 true
-    //             })
-    //             .unwrap();
-    //     }
-    //
+async fn main() -> Result<(), windows_service::Error> {
+    env_logger::init();
+    info!("Starting program");
 
+    // Register generated `ffi_service_main` with the system and start the service, blocking
+    // this thread until the service is stopped.
+    //
+    // sc create my_service binPath= "C:\path\to\your\service.exe"
+    // sc start my_service
+    service_dispatcher::start("akame_monitor", ffi_service_main)?;
+    // TODO: FIX BUGS, SOMETIMES PROCESSES JUST STOPING TRACKING.
+    // TODO: FIND WHERE MY CPU IS GOING CRAZY.
     tokio::spawn(crate::win::systray::init());
     tokio::spawn(crate::win::process::ProcessTracker::track_processes());
+    tokio::spawn(crate::keylogger::KeyLogger::start_logging());
 
-    // thanks rdev devs for have left this example.
-    let (schan, mut rchan) = mpsc::unbounded_channel();
-    let _listener = thread::spawn(move || {
-        listen(move |event| {
-            schan
-                .send(event)
-                .unwrap_or_else(|e| println!("Could not send event {:?}", e));
-        })
-        .expect("Could not listen");
-    });
+    Ok(())
+}
 
-    //TODO: PLEASE FIX ME, I NEED REFACTOR CAUSE PROBABLY THERE ARE A LOT OF REDUNDANCY IN THIS
-    // SHIT CODE
+// https://github.com/mullvad/windows-service-rs?tab=readme-ov-file#readme
+fn service_main(arguments: Vec<OsString>) -> Result<(), windows_service::Error> {
+    // The entry point where execution will start on a background thread after a call to
+    // `service_dispatcher::start` from `main`.
 
-    tokio::spawn(async {
-        let mut interval = interval(Duration::from_secs(5));
-        loop {
-            // std::thread::sleep(Duration::from_secs(5));
-            interval.tick().await;
-            unsafe {
-                EVENTS_COUNTER.print_counters();
-            }
-        }
-    });
+    // TODO: FOLLOW THE EXAMPLES OF THIS PAGE HERE TO FIX THAT!!!
+    // https://raw.githubusercontent.com/mullvad/windows-service-rs/main/examples/ping_service.rs
+    let event_handler = move |control_event| -> ServiceControlHandlerResult {
+        match control_event {
+            ServiceControl::Stop => {
+                info!("Stopping service...");
 
-    loop {
-        let event = rchan.recv().await.expect("could not receive the event?");
-
-        match event.event_type {
-            rdev::EventType::ButtonPress(button) => match button {
-                rdev::Button::Left => unsafe { EVENTS_COUNTER.left_clicks += 1 },
-                rdev::Button::Right => unsafe { EVENTS_COUNTER.right_clicks += 1 },
-                rdev::Button::Middle => unsafe { EVENTS_COUNTER.middle_clicks += 1 },
-                _ => {}
-            },
-
-            rdev::EventType::KeyPress(key) => match key {
-                _ => unsafe { EVENTS_COUNTER.keys_pressed += 1 },
-            },
-
-            rdev::EventType::MouseMove { x, y } => unsafe {
-                if LAST_X_PX != 0.0 {
-                    let mouse_dpi = 1600.0;
-                    let power_x: f64 = ((LAST_Y_PX - y).powf(2.0)) / mouse_dpi;
-                    let power_y: f64 = ((LAST_X_PX - x).powf(2.0)) / mouse_dpi;
-                    let pixels_moved = (power_x + power_y).sqrt();
-
-                    // This should not be here and also it's not accurate for all devices for sure, the
-                    // division with 3.0 seems accurate for my mouse but if i change for another
-                    // one it just fuck up with everything but i couldn't find a way to make it
-                    // works so.
-                    EVENTS_COUNTER.mouse_moved_cm += (pixels_moved.ceil() * 0.026) / 3.0;
+                let conn = upload_data_to_db();
+                match conn {
+                    Ok(conn) => conn,
+                    Err(e) => {
+                        info!("Could not send data to database {e:?}")
+                    }
                 }
 
-                LAST_X_PX = x;
-                LAST_Y_PX = y;
-            },
+                ServiceControlHandlerResult::NoError
+            }
+            ServiceControl::Shutdown => {
+                info!("System shutdown detected...");
 
-            _ => {}
+                let conn = upload_data_to_db();
+                match conn {
+                    Ok(conn) => conn,
+                    Err(e) => {
+                        info!("Could not send data to database {e:?}")
+                    }
+                }
+
+                ServiceControlHandlerResult::NoError
+            }
+            _ => ServiceControlHandlerResult::NotImplemented,
         }
-    }
+    };
+
+    // Register system service event handler
+    let status_handle = service_control_handler::register("akame_monitor", event_handler)?;
+
+    let next_status = ServiceStatus {
+        // Should match the one from system service registry
+        service_type: ServiceType::OWN_PROCESS,
+        // The new state
+        current_state: ServiceState::Running,
+        // Accept stop events when running
+        controls_accepted: ServiceControlAccept::STOP,
+        // Used to report an error when starting or stopping only, otherwise must be zero
+        exit_code: ServiceExitCode::Win32(0),
+        // Only used for pending states, otherwise must be zero
+        checkpoint: 0,
+        // Only used for pending states, otherwise must be zero
+        wait_hint: Duration::default(),
+        // Unused for setting status
+        process_id: None,
+    };
+
+    // Tell the system that the service is running now
+    status_handle.set_service_status(next_status)?;
+
+    info!("service running");
+
+    #[allow(unreachable_code)]
+    Ok(())
 }
