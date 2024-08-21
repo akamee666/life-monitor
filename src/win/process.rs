@@ -1,13 +1,15 @@
 use super::util::get_active_window;
-use crate::db::upload_data_to_db;
+use crate::db::update_time_table;
 use crate::win::util::*;
 use lazy_static::lazy_static;
-use log::{debug, info};
+use log::debug;
+use log::error;
 use std::sync::Mutex;
 use std::{collections::HashMap, time::Duration};
 use sysinfo::Pid;
 use sysinfo::System;
 
+// Unsafe Cell seems good enough in this case i think
 lazy_static! {
     static ref TRACKER: Mutex<ProcessTracker> = {
         let tracker = Mutex::new(ProcessTracker::new());
@@ -44,7 +46,7 @@ impl ProcessTracker {
     }
 
     pub async fn track_processes() {
-        info!("Spawned ProcessTracker thread");
+        debug!("Spawned ProcessTracker thread");
 
         let mut i = 0;
         let mut idle = false;
@@ -58,16 +60,23 @@ impl ProcessTracker {
             // every five seconds we check if the last input time is greater than 30 seconds, if it's
             // we pause tracking cause user is probably idle.
             if i == changer.idle_check {
-                debug!("Checking if user is idle");
+                // debug!("Checking if user is idle");
+                // check if later.
+                let result = update_time_table(&changer.tracking_data);
+                match result {
+                    Ok(_) => {}
+                    Err(e) => {
+                        // log somewhere in a file i think
+                        error!("Error sending data to time_wasted table. Error: {e:?}");
+                    }
+                }
                 let duration = get_last_input_time().as_secs();
                 if changer.idle_period > 0 && duration > changer.idle_period {
                     idle = true;
-                    info!("Info is currently idle");
-
-                    upload_data_to_db();
+                    // debug!("Info is currently idle");
                 } else {
                     idle = false;
-                    info!("Info is NOT idle")
+                    // debug!("Info is NOT idle")
                 }
                 i = 0;
             }
@@ -123,14 +132,14 @@ impl ProcessTracker {
             let time_from_app = tracking_data.get(app_name).unwrap();
             let time_diff_to_add = time_from_app + time;
             tracking_data.insert(app_name.to_string(), time_diff_to_add);
-            info!("We already have this app in our hashmap, increasing time...");
+            debug!("We already have this app in our hashmap, increasing time...");
         } else {
-            info!("We dont have this app yet, inserting new value...");
+            debug!("We dont have this app yet, inserting new value...");
             tracking_data.insert(app_name.to_string(), time);
         }
 
         for (name, time) in tracking_data.iter() {
-            println!("name:{name}, time spent: {time}");
+            debug!("name:{name}, time spent: {time}");
         }
     }
 }

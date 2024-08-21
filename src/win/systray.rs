@@ -1,5 +1,4 @@
-use crate::db::upload_data_to_db;
-use log::info;
+use log::debug;
 use std::sync::mpsc;
 use tray_item::{IconSource, TrayItem};
 enum Message {
@@ -8,7 +7,7 @@ enum Message {
 }
 
 pub async fn init() {
-    info!("Spawned systray thread");
+    debug!("Spawned systray thread");
     let mut tray = TrayItem::new("akame.spy", IconSource::Resource("makima_icon")).unwrap();
 
     let (tx, rx) = mpsc::sync_channel(1);
@@ -29,10 +28,10 @@ pub async fn init() {
     loop {
         match rx.recv() {
             Ok(Message::Quit) => {
-                upload_data_to_db();
                 std::process::exit(0);
             }
             Ok(Message::GoTo) => {
+                // TODO: Check error and log if it failed for some reason.
                 let _ = webbrowser::open("https://github.com/akame0x01/life-monitor");
             }
             _ => {}
