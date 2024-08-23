@@ -1,11 +1,10 @@
-use log::debug;
-use log::error;
 use rdev::listen;
 use std::ptr::addr_of;
 use std::thread;
 use tokio::sync::mpsc;
 use tokio::time::interval;
 use tokio::time::Duration;
+use tracing::{debug, error};
 
 use crate::db::update_input_table;
 

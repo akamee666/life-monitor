@@ -1,13 +1,8 @@
-use super::util::get_active_window;
-use crate::db::update_time_table;
-use crate::win::util::*;
+use crate::{db::update_time_table, win::util::get_active_window, win::util::get_last_input_time};
 use lazy_static::lazy_static;
-use log::debug;
-use log::error;
-use std::sync::Mutex;
-use std::{collections::HashMap, time::Duration};
-use sysinfo::Pid;
-use sysinfo::System;
+use std::{collections::HashMap, sync::Mutex, time::Duration};
+use sysinfo::{Pid, System};
+use tracing::{debug, error};
 
 // Unsafe Cell seems good enough in this case i think
 lazy_static! {

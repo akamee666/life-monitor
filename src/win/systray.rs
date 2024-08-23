@@ -1,6 +1,7 @@
-use log::debug;
-use std::sync::mpsc;
+use std::{process::Command, sync::mpsc, thread};
+use tracing::debug;
 use tray_item::{IconSource, TrayItem};
+
 enum Message {
     Quit,
     GoTo,
@@ -31,8 +32,14 @@ pub async fn init() {
                 std::process::exit(0);
             }
             Ok(Message::GoTo) => {
-                // TODO: Check error and log if it failed for some reason.
-                let _ = webbrowser::open("https://github.com/akame0x01/life-monitor");
+                let _child = Command::new("cmd.exe")
+                    .arg("/C")
+                    .arg("start")
+                    .arg("")
+                    .arg("http://www.github.com/akame0x01/life-monitor")
+                    .spawn()
+                    .expect("failed to launch browser");
+                thread::sleep(tokio::time::Duration::new(10, 0)); // Windows needs time!
             }
             _ => {}
         }

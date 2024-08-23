@@ -1,12 +1,11 @@
 use crate::keylogger::KeyLogger;
-use log::debug;
-use log::error;
-use log::info;
 use sqlite::Connection;
 use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use tracing::debug;
+use tracing::error;
 
 fn get_db_conn() -> Result<Connection, Box<dyn std::error::Error>> {
     debug!("Sarting db connection");
