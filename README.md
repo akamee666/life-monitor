@@ -13,10 +13,3 @@ git clone https://github.com/akame0x01/life-monitor.git && cd life-monitor
 rustup target add x86_64-pc-windows-gnu
 cargo build --target x86_64-pc-windows-gnu
 ```
-
-# Linux 
-
-```bash
-git clone https://github.com/akame0x01/life-monitor.git && cd life-monitor
-cargo run 
-```
