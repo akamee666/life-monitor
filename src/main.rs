@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 use keylogger::KeyLogger;
 use win::{process::ProcessTracker, systray};
 
