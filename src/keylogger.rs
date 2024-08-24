@@ -9,7 +9,6 @@ use tokio::{
 use tracing::{debug, error};
 
 static EVENTS_COUNTER: Lazy<Mutex<KeyLogger>> = Lazy::new(|| Mutex::new(KeyLogger::new()));
-
 static mut LAST_X_PX: f64 = 0.0;
 static mut LAST_Y_PX: f64 = 0.0;
 
@@ -65,10 +64,10 @@ impl KeyLogger {
         });
 
         tokio::spawn(async {
-            let mut interval = interval(Duration::from_secs(5));
+            // so each five minutes we send the data to db.
+            let mut interval = interval(Duration::from_secs(300));
             loop {
                 interval.tick().await;
-
                 {
                     let mut guard = EVENTS_COUNTER.lock().expect("poisoned");
                     guard.mouse_moved_cm = ((guard.pixels_moved * 0.026) / 3.0) as u64;

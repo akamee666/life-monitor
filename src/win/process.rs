@@ -23,12 +23,12 @@ pub struct ProcessTracker {
 impl ProcessTracker {
     pub fn new() -> ProcessTracker {
         let sys = sysinfo::System::new_all();
-        let idle_check = 5;
+        let idle_check = 10;
         let idle_period = 20;
         let time = 0;
         let last_window_name = String::new();
         let tracking_data =
-            get_process_data().expect("something fails getting the processes data from db");
+            get_process_data().expect("something failed getting the processes data from db");
 
         /* Return the values */
         ProcessTracker {
@@ -44,18 +44,36 @@ impl ProcessTracker {
     pub async fn track_processes() {
         debug!("Spawned ProcessTracker thread");
 
+        let pause_to_send_data = 300;
         let mut i = 0;
         let mut idle = false;
         let mut changer = TRACKER.lock().expect("poisoned");
+        let mut j = 0;
 
+        //  So basically we check everytime if in the last ten seconds any input were received.
+        //  If after twenty seconds any inputs were received, user is probably idle so we pause
+        //  tracking and send data to database cause nothing is being received so it's just
+        //  wasteful if we keep sending the same data over and over again.
+        //
         loop {
             i = i + 1;
+            j = j + 1;
 
             std::thread::sleep(Duration::from_secs(1));
 
-            // every five seconds we check if the last input time is greater than 30 seconds, if it's
-            // we pause tracking cause user is probably idle.
             if i == changer.idle_check {
+                let duration = get_last_input_time().as_secs();
+
+                if duration > changer.idle_period {
+                    idle = true;
+                    debug!("Info is currently idle, we should stoping tracking!");
+                } else {
+                    idle = false;
+                }
+                i = 0;
+            }
+
+            if j == pause_to_send_data {
                 let result = send_to_process_table(&changer.tracking_data);
                 match result {
                     Ok(_) => {}
@@ -63,15 +81,7 @@ impl ProcessTracker {
                         error!("Error sending data to time_wasted table. Error: {e:?}");
                     }
                 }
-                let duration = get_last_input_time().as_secs();
-                if changer.idle_period > 0 && duration > changer.idle_period {
-                    idle = true;
-                    // debug!("Info is currently idle");
-                } else {
-                    idle = false;
-                    // debug!("Info is NOT idle")
-                }
-                i = 0;
+                j = 0;
             }
 
             if !idle {
@@ -101,7 +111,6 @@ impl ProcessTracker {
         }
     }
 
-    // TODO: I NEED A FIX
     fn get_process(sys: &System) -> String {
         let (window_pid, title) = get_active_window();
 
@@ -125,14 +134,8 @@ impl ProcessTracker {
             let time_from_app = tracking_data.get(app_name).unwrap();
             let time_diff_to_add = time_from_app + time;
             tracking_data.insert(app_name.to_string(), time_diff_to_add);
-            debug!("We already have this app in our hashmap, increasing time...");
         } else {
-            debug!("We dont have this app yet, inserting new value...");
             tracking_data.insert(app_name.to_string(), time);
-        }
-
-        for (name, time) in tracking_data.iter() {
-            debug!("name:{name}, time spent: {time}");
         }
     }
 }

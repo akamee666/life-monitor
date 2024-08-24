@@ -9,7 +9,7 @@ enum Message {
 
 pub async fn init() {
     debug!("Spawned systray thread");
-    let mut tray = TrayItem::new("akame.spy", IconSource::Resource("makima_icon")).unwrap();
+    let mut tray = TrayItem::new("akame.666 spy", IconSource::Resource("makima_icon")).unwrap();
 
     let (tx, rx) = mpsc::sync_channel(1);
 
