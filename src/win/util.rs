@@ -23,6 +23,7 @@ pub fn get_active_window() -> (u32, String) {
         (pid, title)
     }
 }
+
 pub fn get_last_input_time() -> Duration {
     // Retrieves the number of milliseconds that have elapsed since the system was started, up to 49.7 days.
     // we will be using it to get how much time was went since the last user input

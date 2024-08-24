@@ -1,16 +1,14 @@
-use crate::{db::update_time_table, win::util::get_active_window, win::util::get_last_input_time};
-use lazy_static::lazy_static;
+use crate::{
+    db::{get_process_data, send_to_process_table},
+    win::util::get_active_window,
+    win::util::get_last_input_time,
+};
+use once_cell::sync::Lazy;
 use std::{collections::HashMap, sync::Mutex, time::Duration};
 use sysinfo::{Pid, System};
 use tracing::{debug, error};
 
-// Unsafe Cell seems good enough in this case i think
-lazy_static! {
-    static ref TRACKER: Mutex<ProcessTracker> = {
-        let tracker = Mutex::new(ProcessTracker::new());
-        tracker
-    };
-}
+static TRACKER: Lazy<Mutex<ProcessTracker>> = Lazy::new(|| Mutex::new(ProcessTracker::new()));
 
 #[derive(Debug)]
 pub struct ProcessTracker {
@@ -29,7 +27,10 @@ impl ProcessTracker {
         let idle_period = 20;
         let time = 0;
         let last_window_name = String::new();
-        let tracking_data = HashMap::new();
+        let tracking_data =
+            get_process_data().expect("something fails getting the processes data from db");
+
+        /* Return the values */
         ProcessTracker {
             time,
             last_window_name,
@@ -55,13 +56,10 @@ impl ProcessTracker {
             // every five seconds we check if the last input time is greater than 30 seconds, if it's
             // we pause tracking cause user is probably idle.
             if i == changer.idle_check {
-                // debug!("Checking if user is idle");
-                // check if later.
-                let result = update_time_table(&changer.tracking_data);
+                let result = send_to_process_table(&changer.tracking_data);
                 match result {
                     Ok(_) => {}
                     Err(e) => {
-                        // log somewhere in a file i think
                         error!("Error sending data to time_wasted table. Error: {e:?}");
                     }
                 }
@@ -116,7 +114,7 @@ impl ProcessTracker {
             let process_name = process.name();
             debug!("Active window[{}] title: {}", window_pid, title);
 
-            return process_name.to_string();
+            return process_name.to_str().unwrap().to_string();
         } else {
             return "".to_string();
         }

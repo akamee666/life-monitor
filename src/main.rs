@@ -1,6 +1,6 @@
 use keylogger::KeyLogger;
 
-pub mod db;
+mod db;
 mod keylogger;
 mod logger;
 mod shutdown;
