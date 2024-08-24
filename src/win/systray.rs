@@ -36,7 +36,7 @@ pub async fn init() {
                     .arg("/C")
                     .arg("start")
                     .arg("")
-                    .arg("http://www.github.com/akame0x01/life-monitor")
+                    .arg("http://www.github.com/akamee666/life-monitor")
                     .spawn()
                     .expect("failed to launch browser");
                 thread::sleep(tokio::time::Duration::new(10, 0)); // Windows needs time!
