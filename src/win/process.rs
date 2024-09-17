@@ -1,42 +1,36 @@
 use crate::{
     db::{get_process_data, send_to_process_table},
-    win::util::get_active_window,
+    processinfo::ProcessInfo,
+    win::util::get_focused_window,
     win::util::get_last_input_time,
 };
 use once_cell::sync::Lazy;
-use std::{collections::HashMap, sync::Mutex, time::Duration};
-use sysinfo::{Pid, System};
-use tracing::{debug, error};
+use std::{sync::Mutex, time::Duration};
+use sysinfo::System;
+use tracing::*;
 
 static TRACKER: Lazy<Mutex<ProcessTracker>> = Lazy::new(|| Mutex::new(ProcessTracker::new()));
-
 #[derive(Debug)]
 pub struct ProcessTracker {
     time: u64,
     last_window_name: String,
     idle_check: i32,
     idle_period: u64,
-    sys: System,
-    tracking_data: HashMap<String, u64>,
+    tracking_data: Vec<ProcessInfo>,
 }
 
 impl ProcessTracker {
     pub fn new() -> ProcessTracker {
-        let sys = sysinfo::System::new_all();
         let idle_check = 10;
         let idle_period = 20;
         let time = 0;
         let last_window_name = String::new();
-        let tracking_data =
-            get_process_data().expect("something failed getting the processes data from db");
-
-        /* Return the values */
+        let tracking_data = get_process_data().expect("Could not receive data from database!\n");
         ProcessTracker {
             time,
             last_window_name,
             idle_check,
             idle_period,
-            sys,
             tracking_data,
         }
     }
@@ -50,14 +44,9 @@ impl ProcessTracker {
         let mut changer = TRACKER.lock().expect("poisoned");
         let mut j = 0;
 
-        //  So basically we check everytime if in the last ten seconds any input were received.
-        //  If after twenty seconds any inputs were received, user is probably idle so we pause
-        //  tracking and send data to database cause nothing is being received so it's just
-        //  wasteful if we keep sending the same data over and over again.
-        //
         loop {
-            i = i + 1;
-            j = j + 1;
+            i += 1;
+            j += 1;
 
             std::thread::sleep(Duration::from_secs(1));
 
@@ -66,7 +55,7 @@ impl ProcessTracker {
 
                 if duration > changer.idle_period {
                     idle = true;
-                    debug!("Info is currently idle, we should stoping tracking!");
+                    debug!("Info is currently idle, we should stop tracking!");
                 } else {
                     idle = false;
                 }
@@ -85,57 +74,57 @@ impl ProcessTracker {
             }
 
             if !idle {
-                let proc_name = Self::get_process(&changer.sys);
-                if !proc_name.is_empty() {
-                    let uptime = System::uptime();
+                let (name, class) =
+                    get_focused_window().unwrap_or(("".to_string(), "".to_string()));
 
-                    if !changer.last_window_name.is_empty() && changer.last_window_name != proc_name
-                    {
-                        let app_name: String = changer.last_window_name.clone();
+                debug!("name: {}, class: {}", name, class);
+                if !class.is_empty() {
+                    let uptime = System::uptime();
+                    if !changer.last_window_name.is_empty() && changer.last_window_name != class {
                         let time_diff = uptime - changer.time;
                         changer.time = 0;
                         Self::update_time_for_app(
                             &mut changer.tracking_data,
-                            app_name.as_str(),
+                            name.as_str(),
                             time_diff,
+                            &class,
                         );
                     }
 
-                    // it means that we are in the first call or in different window than before.
                     if changer.time == 0 {
                         changer.time = uptime;
-                        changer.last_window_name = proc_name.clone();
+                        changer.last_window_name = class;
                     }
+                } else {
+                    error!("Could not get active window!");
                 }
             }
         }
     }
 
-    fn get_process(sys: &System) -> String {
-        let (window_pid, title) = get_active_window();
+    fn update_time_for_app(
+        tracking_data: &mut Vec<ProcessInfo>,
+        app_name: &str,
+        time: u64,
+        window_class: &str, // Add window_class as a parameter
+    ) {
+        let mut found = false;
 
-        if window_pid == 0 {
-            return "".to_string();
+        for info in tracking_data.iter_mut() {
+            if info.name == app_name {
+                info.time_spent += time;
+                found = true;
+                break;
+            }
         }
 
-        let process = sys.processes().get(&Pid::from_u32(window_pid));
-        if let Some(process) = process {
-            let process_name = process.name();
-            debug!("Active window[{}] title: {}", window_pid, title);
-
-            return process_name.to_str().unwrap().to_string();
-        } else {
-            return "".to_string();
-        }
-    }
-
-    fn update_time_for_app(tracking_data: &mut HashMap<String, u64>, app_name: &str, time: u64) {
-        if tracking_data.contains_key(app_name) {
-            let time_from_app = tracking_data.get(app_name).unwrap();
-            let time_diff_to_add = time_from_app + time;
-            tracking_data.insert(app_name.to_string(), time_diff_to_add);
-        } else {
-            tracking_data.insert(app_name.to_string(), time);
+        if !found {
+            tracking_data.push(ProcessInfo {
+                name: app_name.to_string(),
+                time_spent: time,
+                instance: window_class.to_string(), // Set instance to window_class
+                window_class: window_class.to_string(),
+            });
         }
     }
 }

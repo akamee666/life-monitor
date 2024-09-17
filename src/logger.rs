@@ -1,4 +1,5 @@
 use std::{fs::File, sync::Arc};
+use tracing_subscriber::EnvFilter;
 use tracing_subscriber::{filter, prelude::*};
 
 // A layer that logs events to stdout using the human-readable "pretty"
@@ -27,14 +28,19 @@ pub fn init_logger() {
     // A layer that collects metrics using specific events.
     let metrics_layer = /* ... */ filter::LevelFilter::INFO;
 
+    let env_filter_std =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let env_filter_file =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::registry()
         .with(
             stdout_log
                 // Add an `INFO` filter to the stdout logging layer
-                .with_filter(filter::LevelFilter::INFO)
+                .with_filter(env_filter_std)
                 // Combine the filtered `stdout_log` layer with the
                 // `debug_log` layer, producing a new `Layered` layer.
                 .and_then(debug_log)
+                .with_filter(env_filter_file)
                 // Add a filter to *both* layers that rejects spans and
                 // events whose targets start with `metrics`.
                 .with_filter(filter::filter_fn(|metadata| {
