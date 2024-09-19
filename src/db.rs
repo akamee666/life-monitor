@@ -1,18 +1,17 @@
-use crate::keylogger::KeyLogger;
+use crate::{keylogger::KeyLogger, processinfo::ProcessInfo};
 use rusqlite::{params, Connection};
 use std::{
-    collections::HashMap,
     env, fs,
     path::{Path, PathBuf},
 };
-use tracing::{debug, info, warn};
+use tracing::*;
 
 // it would be pretty cool to have generics stuff and send to db the correct data based on the
 // struct that i provided but that seems a lot of pain and quite hard.
 // Since i have only two different struct that hold the data, have two different functions seems
 // a lot simple and it will make a lot easy to understand the code later.
 pub fn send_to_input_table(logger_data: &KeyLogger) -> Result<(), Box<dyn std::error::Error>> {
-    warn!("Sending data to inputs table");
+    debug!("Sending data to inputs table");
     let conn = get_db_conn()?;
 
     let query_update = "
@@ -62,69 +61,110 @@ pub fn get_input_data() -> Result<KeyLogger, Box<dyn std::error::Error>> {
     Ok(row)
 }
 
-pub fn get_process_data() -> Result<HashMap<String, u64>, Box<dyn std::error::Error>> {
+pub fn get_process_data() -> Result<Vec<ProcessInfo>, Box<dyn std::error::Error>> {
     let conn = get_db_conn()?;
 
     let query = "
-        SELECT process_name, seconds_spent
+        SELECT process_name, seconds_spent, instance, window_class
         FROM time_wasted;
     ";
 
     let mut stmt = conn.prepare(query)?;
 
-    let mut process_map = HashMap::new();
+    let process_vec = stmt
+        .query_map([], |row| {
+            Ok(ProcessInfo {
+                name: row.get(0)?,
+                time_spent: row.get(1)?,
+                instance: row.get(2)?,
+                window_class: row.get(3)?,
+            })
+        })?
+        .collect::<Result<Vec<ProcessInfo>, _>>()?;
 
-    let rows = stmt.query_map([], |row| {
-        Ok((
-            row.get::<_, String>(0)?, // process_name
-            row.get::<_, u64>(1)?,    // seconds_spent
-        ))
-    })?;
-
-    for row in rows {
-        let (process_name, seconds_spent) = row?;
-        process_map.insert(process_name, seconds_spent);
-    }
-
-    Ok(process_map)
+    Ok(process_vec)
 }
 
 pub fn send_to_process_table(
-    process_map: &HashMap<String, u64>,
+    process_vec: &Vec<ProcessInfo>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    warn!("Sending Data to processes table");
+    debug!("Sending Data to processes table");
     let conn = get_db_conn()?;
 
-    // Iterate over each process and time in the map
-    for (process, time) in process_map {
+    for process in process_vec {
         // Check if the process already exists in the table
         let query_check = "SELECT 1 FROM time_wasted WHERE process_name = ? LIMIT 1;";
         let mut stmt_check = conn.prepare(query_check)?;
-        let exists = stmt_check.exists(params![process])?;
+        let exists = stmt_check.exists(params![&process.name])?;
 
         if exists {
             debug!(
                 "Already have this program in processes table, updating values for {}",
-                process
+                process.name
             );
-            let query_update = "UPDATE time_wasted SET seconds_spent = ? WHERE process_name = ?;";
-            conn.execute(query_update, params![time, process])?;
+            let query_update = "UPDATE time_wasted SET seconds_spent = ?, instance = ?, window_class = ? WHERE process_name = ?;";
+            conn.execute(
+                query_update,
+                params![
+                    process.time_spent,
+                    process.instance,
+                    process.window_class,
+                    process.name
+                ],
+            )?;
         } else {
-            let query_insert =
-                "INSERT INTO time_wasted (process_name, seconds_spent) VALUES (?, ?);";
-            conn.execute(query_insert, params![process, time])?;
+            let query_insert = "INSERT INTO time_wasted (process_name, seconds_spent, instance, window_class) VALUES (?, ?, ?, ?);";
+            conn.execute(
+                query_insert,
+                params![
+                    process.name,
+                    process.time_spent,
+                    process.instance,
+                    process.window_class
+                ],
+            )?;
         }
     }
     Ok(())
 }
 
-fn get_db_conn() -> Result<Connection, Box<dyn std::error::Error>> {
-    info!("Sarting db connection");
+fn get_db_path() -> Result<PathBuf, std::io::Error> {
+    use std::io;
+    let path = if cfg!(target_os = "windows") {
+        let local_app_data = env::var("LOCALAPPDATA").map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "LOCALAPPDATA environment variable not set",
+                // TODO:
+                // #1 create function to receive path as argument.
+            )
+        })?;
+        let mut path = PathBuf::from(local_app_data);
+        path.push("akame_monitor");
+        path.push("tracked_data.db");
+        path
+    } else if cfg!(target_os = "linux") {
+        let home_dir = env::var("HOME").map_err(|_| {
+            io::Error::new(io::ErrorKind::NotFound, "HOME environment variable not set")
+        })?;
+        let mut path = PathBuf::from(home_dir);
+        path.push(".local");
+        path.push("share");
+        path.push("akame_monitor");
+        path.push("tracked_data.db");
+        path
+    } else {
+        // Handle other OSes if needed
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Unsupported operating system",
+        ));
+    };
 
-    let local_app_data = env::var("LOCALAPPDATA").unwrap_or_else(|_| "C:\\Temp".into());
-    let mut path = PathBuf::from(&local_app_data);
-    path.push("akame_monitor");
-    path.push("tracked_data.db");
+    Ok(path)
+}
+fn get_db_conn() -> Result<Connection, Box<dyn std::error::Error>> {
+    let path = get_db_path()?;
 
     if let Some(parent_dir) = path.parent() {
         fs::create_dir_all(parent_dir)?;
@@ -156,11 +196,13 @@ fn get_db_conn() -> Result<Connection, Box<dyn std::error::Error>> {
         conn.execute(query_insert_initial_rows, [])?;
 
         let query_create_time_wasted_table = "
-            CREATE TABLE time_wasted (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                process_name TEXT NOT NULL,
-                seconds_spent INTEGER NOT NULL
-            );
+    CREATE TABLE time_wasted (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        process_name TEXT NOT NULL,
+        seconds_spent INTEGER NOT NULL,
+        instance TEXT,
+        window_class TEXT NOT NULL
+    );
         ";
         conn.execute(query_create_time_wasted_table, [])?;
 
