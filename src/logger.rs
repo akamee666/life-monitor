@@ -2,36 +2,44 @@ use std::{fs::File, sync::Arc};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::{filter, prelude::*};
 
-// A layer that logs events to stdout using the human-readable "pretty"
-// format.
-//// This event will *only* be recorded by the metrics layer.
-// tracing::info!(target: "metrics::cool_stuff_count", value = 42);
+pub fn init(enable_debug: bool) {
+    if enable_debug {
+        // Display only error and warns to stdout by default, use RUST_LOG to change filter.
+        let env_filter_std =
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
 
-// This event will only be seen by the debug log file layer:
-// tracing::debug!("this is a message, and part of a system of messages");
+        // Display info, warn, error and debug prints to the file by default.
+        let env_filter_file = EnvFilter::new("debug");
 
-// This event will be seen by both the stdout log layer *and*
-// the debug log file layer, but not by the metrics layer.
-// tracing::warn!("the message is a warning about danger!");
-pub fn init_logger() {
+        registry(env_filter_file, env_filter_std);
+    } else {
+        // Display only error and warns to stdout by default, use RUST_LOG to change filter.
+        let env_filter_std =
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
+
+        // Display only error and warns to file.
+        let env_filter_file = EnvFilter::new("warn");
+
+        registry(env_filter_file, env_filter_std);
+    }
+}
+
+fn registry(env_filter_file: EnvFilter, env_filter_std: EnvFilter) {
     let stdout_log = tracing_subscriber::fmt::layer().pretty();
     // A layer that logs events to a file.
-    let file = File::create("debug.log");
+    let file = File::create("logs");
+
     let file = match file {
         Ok(file) => file,
         Err(error) => panic!("Error: {:?}", error),
     };
+
     let debug_log = tracing_subscriber::fmt::layer()
         .with_writer(Arc::new(file))
         .with_ansi(false);
 
     // A layer that collects metrics using specific events.
     let metrics_layer = /* ... */ filter::LevelFilter::INFO;
-
-    let env_filter_std =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    let env_filter_file =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::registry()
         .with(
             stdout_log

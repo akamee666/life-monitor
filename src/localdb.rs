@@ -1,18 +1,13 @@
 use crate::{keylogger::KeyLogger, processinfo::ProcessInfo};
 use rusqlite::{params, Connection};
-use std::{
-    env, fs,
-    path::{Path, PathBuf},
-};
+use std::{env, fs, path::PathBuf};
 use tracing::*;
 
-// it would be pretty cool to have generics stuff and send to db the correct data based on the
-// struct that i provided but that seems a lot of pain and quite hard.
-// Since i have only two different struct that hold the data, have two different functions seems
-// a lot simple and it will make a lot easy to understand the code later.
-pub fn send_to_input_table(logger_data: &KeyLogger) -> Result<(), Box<dyn std::error::Error>> {
+pub fn send_to_input_table(
+    conn: &Connection,
+    logger_data: &KeyLogger,
+) -> Result<(), Box<dyn std::error::Error>> {
     debug!("Sending data to inputs table");
-    let conn = get_db_conn()?;
 
     let query_update = "
         UPDATE input_logs
@@ -36,18 +31,19 @@ pub fn send_to_input_table(logger_data: &KeyLogger) -> Result<(), Box<dyn std::e
 
     Ok(())
 }
-pub fn get_input_data() -> Result<KeyLogger, Box<dyn std::error::Error>> {
+
+pub fn get_input_data(conn: &Connection) -> Result<KeyLogger, Box<dyn std::error::Error>> {
     let query = "
     SELECT left_clicks, right_clicks, middle_clicks, keys_pressed, mouse_moved_cm 
     FROM input_logs 
     LIMIT 1;
     ";
 
-    let conn = get_db_conn()?;
     let mut stmt = conn.prepare(query)?;
 
     // Assuming there is only one row
     let row = stmt.query_row([], |row| {
+        //FIX: SAVE CALIBRATION.
         Ok(KeyLogger {
             left_clicks: row.get(0)?,
             right_clicks: row.get(1)?,
@@ -55,15 +51,16 @@ pub fn get_input_data() -> Result<KeyLogger, Box<dyn std::error::Error>> {
             keys_pressed: row.get(3)?,
             mouse_moved_cm: row.get(4)?,
             pixels_moved: 0.0, // Default or computed value
+            calibration_pixels: 0.0,
+            calibration_distance_cm: 0.0,
+            mouse_dpi: 0.0,
         })
     })?;
 
     Ok(row)
 }
 
-pub fn get_process_data() -> Result<Vec<ProcessInfo>, Box<dyn std::error::Error>> {
-    let conn = get_db_conn()?;
-
+pub fn get_process_data(conn: &Connection) -> Result<Vec<ProcessInfo>, Box<dyn std::error::Error>> {
     let query = "
         SELECT process_name, seconds_spent, instance, window_class
         FROM time_wasted;
@@ -86,10 +83,10 @@ pub fn get_process_data() -> Result<Vec<ProcessInfo>, Box<dyn std::error::Error>
 }
 
 pub fn send_to_process_table(
+    conn: &Connection,
     process_vec: &Vec<ProcessInfo>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     debug!("Sending Data to processes table");
-    let conn = get_db_conn()?;
 
     for process in process_vec {
         // Check if the process already exists in the table
@@ -135,8 +132,6 @@ fn get_db_path() -> Result<PathBuf, std::io::Error> {
             io::Error::new(
                 io::ErrorKind::NotFound,
                 "LOCALAPPDATA environment variable not set",
-                // TODO:
-                // #1 create function to receive path as argument.
             )
         })?;
         let mut path = PathBuf::from(local_app_data);
@@ -163,18 +158,23 @@ fn get_db_path() -> Result<PathBuf, std::io::Error> {
 
     Ok(path)
 }
-fn get_db_conn() -> Result<Connection, Box<dyn std::error::Error>> {
+
+pub fn open_con() -> Result<Connection, Box<dyn std::error::Error>> {
     let path = get_db_path()?;
 
+    // Create parent directory if it does not exist
     if let Some(parent_dir) = path.parent() {
         fs::create_dir_all(parent_dir)?;
     }
 
-    let conn = if !Path::new(&path).exists() {
-        debug!("Database created at: {}", path.display());
-        let conn = Connection::open(&path)?;
+    // Open the database connection, create if do not exist
+    let conn = Connection::open(&path)?;
 
-        // Create tables
+    // Check if the database is new and create tables if it is
+    if fs::metadata(&path).is_err() {
+        debug!("Database does not exist, creating tables.");
+
+        // Create input_logs table
         let query_create_input_logs_table = "
             CREATE TABLE input_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -185,31 +185,31 @@ fn get_db_conn() -> Result<Connection, Box<dyn std::error::Error>> {
                 mouse_moved_cm INTEGER NOT NULL
             );
         ";
-
         conn.execute(query_create_input_logs_table, [])?;
 
+        // Insert initial row into input_logs table
         let query_insert_initial_rows = "
             INSERT INTO input_logs (left_clicks, right_clicks, middle_clicks, keys_pressed, mouse_moved_cm)
             VALUES (0, 0, 0, 0, 0);
         ";
-
         conn.execute(query_insert_initial_rows, [])?;
 
+        // Create time_wasted table
         let query_create_time_wasted_table = "
-    CREATE TABLE time_wasted (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        process_name TEXT NOT NULL,
-        seconds_spent INTEGER NOT NULL,
-        instance TEXT,
-        window_class TEXT NOT NULL
-    );
+            CREATE TABLE time_wasted (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                process_name TEXT NOT NULL,
+                seconds_spent INTEGER NOT NULL,
+                instance TEXT,
+                window_class TEXT NOT NULL
+            );
         ";
         conn.execute(query_create_time_wasted_table, [])?;
 
-        conn
+        debug!("Tables created successfully.");
     } else {
-        Connection::open(&path)?
-    };
+        debug!("Database exists, opening connection.");
+    }
 
     Ok(conn)
 }

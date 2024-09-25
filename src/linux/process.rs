@@ -1,11 +1,15 @@
 use crate::{
-    db::*,
     linux::util::{get_focused_window, get_idle_time},
+    localdb::*,
     processinfo::ProcessInfo,
 };
 use once_cell::sync::Lazy;
-use std::{sync::Mutex, time::Duration};
+use std::sync::Mutex;
 use sysinfo::System;
+use tokio::{
+    sync::mpsc,
+    time::{interval, Duration},
+};
 use tracing::*;
 
 static TRACKER: Lazy<Mutex<ProcessTracker>> = Lazy::new(|| Mutex::new(ProcessTracker::new()));
@@ -14,117 +18,169 @@ static TRACKER: Lazy<Mutex<ProcessTracker>> = Lazy::new(|| Mutex::new(ProcessTra
 pub struct ProcessTracker {
     time: u64,
     last_window_name: String,
-    idle_check: i32,
     idle_period: u64,
-    tracking_data: Vec<ProcessInfo>,
+    procs: Vec<ProcessInfo>,
 }
 
 impl ProcessTracker {
-    pub fn new() -> ProcessTracker {
-        let idle_check = 10;
-        let idle_period = 20;
-        let time = 0;
-        let last_window_name = String::new();
-        let tracking_data = get_process_data().expect("Could not receive data from database!");
+    fn new() -> Self {
+        // Get values stored in database, open_con already check if there is a database to get data
+        // from.
+        let con = open_con().unwrap_or_else(|err| {
+            debug!(
+                "Could not open a connection with local database, quitting! Err: {:?}",
+                err
+            );
+            panic!(
+                "Could not open a connection with local database, quitting! Err: {:?}",
+                err
+            );
+        });
+
+        let d = get_process_data(&con).unwrap_or_else(|err| {
+            debug!(
+                "Could not open a connection with local database, quitting! Err: {:?}",
+                err
+            );
+            panic!(
+                "Could not open a connection with local database, quitting! Err: {:?}",
+                err
+            );
+        });
 
         ProcessTracker {
-            time,
-            last_window_name,
-            idle_check,
-            idle_period,
-            tracking_data,
+            time: 0,
+            last_window_name: String::new(),
+            idle_period: 20,
+            procs: d,
         }
     }
+}
 
-    pub async fn track_processes() {
-        debug!("Spawned ProcessTracker thread");
+#[derive(Copy, Clone)]
+enum Event {
+    Tick,
+    IdleCheck,
+    DbUpdate,
+}
 
-        let pause_to_send_data = 300;
-        let mut i = 0;
-        let mut j = 0;
-        let mut idle = false;
+pub async fn init() {
+    debug!("Process task spawned!");
 
-        // Lock tracker for thread safety
+    // I should reuse the connection from new somehow but in that way is simple and i think the overload should not
+    // be to great since it's only at the start.
+    let con = open_con().unwrap_or_else(|err| {
+        debug!(
+            "Could not open a connection with local database, quitting! Err: {:?}",
+            err
+        );
+        panic!(
+            "Could not open a connection with local database, quitting! Err: {:?}",
+            err
+        );
+    });
+
+    // Create a channel and spawn tasks that needs to run at certain periods.
+    // I really don't know if it's ok to clone the sender, but it's work so i'll let it.
+    let (tx, mut rx) = mpsc::channel(100);
+    spawn_ticker(tx.clone(), Duration::from_secs(1), Event::Tick);
+    spawn_ticker(tx.clone(), Duration::from_secs(10), Event::IdleCheck);
+    spawn_ticker(tx.clone(), Duration::from_secs(300), Event::DbUpdate);
+
+    let mut idle = false;
+
+    while let Some(event) = rx.recv().await {
         let mut tracker = TRACKER.lock().expect("poisoned");
 
-        //  So basically we check everytime if in the last ten seconds any input were received.
-        //  If after twenty seconds any inputs were received, user is probably idle so we pause
-        //  tracking and send data to database cause nothing is being received so it's just
-        //  wasteful if we keep sending the same data over and over again.
-        loop {
-            i += 1;
-            j += 1;
-
-            std::thread::sleep(Duration::from_secs(1));
-
-            if i == tracker.idle_check {
-                let duration = get_idle_time().unwrap().as_secs();
-
-                if duration > tracker.idle_period {
-                    idle = true;
-                    debug!("Info is currently idle, we should stop tracking!");
-                } else {
-                    idle = false;
+        match event {
+            Event::Tick => {
+                if !idle {
+                    handle_active_window(&mut tracker).await;
                 }
-                i = 0;
             }
-
-            if j == pause_to_send_data {
-                let result = send_to_process_table(&tracker.tracking_data);
-                if let Err(e) = result {
+            Event::IdleCheck => {
+                idle = check_idle(&tracker);
+            }
+            Event::DbUpdate => {
+                if let Err(e) = send_to_process_table(&con, &tracker.procs) {
                     error!("Error sending data to time_wasted table. Error: {e:?}");
-                }
-                j = 0;
-            }
-
-            if !idle {
-                let (name, instance, class) = get_focused_window().unwrap_or_default();
-                debug!("name: {}, instance: {}, class: {}.", name, instance, class);
-
-                if !class.is_empty() {
-                    let uptime = System::uptime();
-
-                    if !tracker.last_window_name.is_empty() && tracker.last_window_name != class {
-                        let time_diff = uptime - tracker.time;
-                        tracker.time = 0;
-
-                        // Update process info
-                        Self::update_time_for_app(
-                            &mut tracker.tracking_data,
-                            &name,
-                            time_diff,
-                            instance,
-                            &class,
-                        );
-                    }
-
-                    if tracker.time == 0 {
-                        tracker.time = uptime;
-                        tracker.last_window_name = class;
-                    }
                 }
             }
         }
     }
+}
 
-    fn update_time_for_app(
-        tracking_data: &mut Vec<ProcessInfo>,
-        app_name: &str,
-        time: u64,
-        instance: String,
-        window_class: &str,
-    ) {
-        if let Some(info) = tracking_data.iter_mut().find(|p| p.name == app_name) {
-            info.time_spent += time;
-            info.instance = instance;
-            info.window_class = window_class.to_string();
-        } else {
-            tracking_data.push(ProcessInfo {
-                name: app_name.to_string(),
-                time_spent: time,
-                instance,
-                window_class: window_class.to_string(),
-            });
+fn spawn_ticker(tx: mpsc::Sender<Event>, duration: Duration, event: Event) {
+    tokio::spawn(async move {
+        let mut interval = interval(duration);
+        loop {
+            interval.tick().await;
+            if tx.send(event).await.is_err() {
+                break;
+            }
         }
+    });
+}
+
+async fn handle_active_window(tracker: &mut ProcessTracker) {
+    // get_focused_window returns a error if there is no window focused, like when you are in the
+    // workspace.
+    //
+    // Below i tried to reduce the overload by only updating the time of the proc of the active
+    // window only when the window have changed, don't know how much this worth is though.
+    //
+    // The time in the window focused in calculate using the difference in the system time between
+    // the function call.
+    match get_focused_window() {
+        Ok((name, instance, class)) => {
+            let uptime = System::uptime();
+
+            // if last_window_name is emtpy we are in the first window, without this the program
+            // update time in the wrong order.
+            if !tracker.last_window_name.is_empty() && tracker.last_window_name != class {
+                let time_diff = uptime - tracker.time;
+                tracker.time = 0;
+
+                update_time_for_app(&mut tracker.procs, &name, time_diff, instance, &class);
+            }
+
+            if tracker.time == 0 {
+                tracker.time = uptime;
+                tracker.last_window_name = class;
+            }
+        }
+
+        Err(_) => {}
+    };
+}
+
+fn check_idle(tracker: &ProcessTracker) -> bool {
+    let duration = get_idle_time().unwrap().as_secs();
+    if duration > tracker.idle_period {
+        debug!("Info is currently idle, we should stop tracking!");
+        true
+    } else {
+        false
+    }
+}
+
+fn update_time_for_app(
+    tracking_data: &mut Vec<ProcessInfo>,
+    app_name: &str,
+    time: u64,
+    instance: String,
+    window_class: &str,
+) {
+    if let Some(info) = tracking_data.iter_mut().find(|p| p.name == app_name) {
+        info.time_spent += time;
+        info.instance = instance;
+        info.window_class = window_class.to_string();
+    } else {
+        tracking_data.push(ProcessInfo {
+            name: app_name.to_string(),
+            time_spent: time,
+            instance,
+            window_class: window_class.to_string(),
+        });
     }
 }

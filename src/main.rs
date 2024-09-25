@@ -1,36 +1,115 @@
-//#![windows_subsystem = "windows"]
+use clap::Parser;
+use life_monitor::{keylogger, linux::process, logger};
+use tokio::join;
 
-mod db;
-mod keylogger;
-mod logger;
-mod processinfo;
+// Define arguments that can be used by the program.
+#[derive(Parser, Debug)]
+#[command(name = "Life Monitor")]
+#[command(about = "A program to monitor daily activity, see help for default behavior", long_about = None)]
+struct Cli {
+    /// Interval in seconds for logging data (default is 300 seconds)
+    #[arg(
+        short = 't',
+        long,
+        default_value_t = 300,
+        help = "Set the interval (in seconds) for send the stored data to the database."
+    )]
+    interval: u64,
 
-#[cfg(target_os = "windows")]
-mod win;
+    /// Disable keys and mouse tracking
+    #[arg(
+        short = 'k',
+        long,
+        default_value_t = false,
+        help = "If true, disables tracking of key presses and mouse movements. [default: false]",
+        conflicts_with = "no_window"
+    )]
+    no_keys: bool,
+    /// Disable tracking based on activity window
+    #[arg(
+        short = 'w',
+        long,
+        default_value_t = false,
+        help = "If true, disables tracking based on the currently active window. [default: false]",
+        conflicts_with = "no_keys"
+    )]
+    no_window: bool,
 
-#[cfg(target_os = "windows")]
+    /// Disable systray icon
+    #[arg(
+        short = 's',
+        long,
+        default_value_t = false,
+        help = "If true, disables the system tray icon, this option is ignored in linux. [default: false]"
+    )]
+    no_systray: bool,
+
+    //FIX: PATH AND HELP
+    #[arg(
+        short = 'b',
+        long,
+        default_value = "localhost",
+        help = "",
+        conflicts_with = "api"
+    )]
+    path: String,
+
+    // Enable debug to file.
+    #[arg(
+        short = 'd',
+        long,
+        default_value = "false",
+        help = "If true, enables debug output to log file, RUST_LOG can be used for enable debug messages in stdout. [default: false]"
+    )]
+    debug: bool,
+
+    // Enable remote database through api.
+    #[arg(
+        short = 'a',
+        long,
+        default_value = "false",
+        help = "If true, enables updates to database through an api(BETA). [default: false]",
+        conflicts_with = "path"
+    )]
+    //FIX: PATH INSTEAD OF BOOL.
+    api: bool,
+
+    // Enable remote database through api.
+    // FIX: Link a explanation in github.
+    #[arg(
+        short = 'p',
+        long,
+        default_value = "0",
+        required = true,
+        help = "If true, enables to database through an api(BETA). [default: false]",
+        conflicts_with = "no_keys"
+    )]
+    dpi: u64,
+}
+
 #[tokio::main]
 async fn main() {
-    // TODO:
-    // 1# Ask for arguments to where save db file.
-    // 2# Print a message and flags to remove features.
-    // 3# Fix mouse accuracy.
-    // 4# Change data struct when getting processes to handle name of the window as well.
-
-    logger::init_logger();
-    tokio::spawn(win::systray::init());
-    tokio::spawn(win::process::ProcessTracker::track_processes());
-
-    keylogger::KeyLogger::start_logging().await;
+    //debug!("Arguments: {:?}", args);
+    let args = Cli::parse();
+    run(args).await;
 }
 
 #[cfg(target_os = "linux")]
-mod linux;
+async fn run(args: Cli) {
+    //FIX: UNIT TESTS TO LOGGER?
+    logger::init(args.debug);
 
-#[cfg(target_os = "linux")]
-#[tokio::main]
-async fn main() {
-    logger::init_logger();
-    tokio::spawn(linux::process::ProcessTracker::track_processes());
-    keylogger::KeyLogger::start_logging().await;
+    // https://docs.rs/tokio/latest/tokio/macro.join.html
+    // Running tasks in parallel, these will not finish.
+    join!(process::init(), keylogger::init());
+}
+
+// FIX: REWRITE PROCESS LIKE LINUX.
+#[cfg(target_os = "windows")]
+async fn run(args: Cli) {
+    logger::init(args.debug);
+
+    // https://docs.rs/tokio/latest/tokio/macro.join.html
+    // Running tasks in parallel, these will not finish.
+    join!(process::init(), keylogger::init(), systray::init());
 }

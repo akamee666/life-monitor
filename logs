@@ -1,0 +1,15 @@
+2024-09-30T18:12:10.735011Z DEBUG life_monitor::linux::process: Process task spawned!
+2024-09-30T18:12:10.735205Z DEBUG life_monitor::localdb: Database exists, opening connection.
+2024-09-30T18:12:10.735268Z DEBUG life_monitor::keylogger: Keylogger spawned!
+2024-09-30T18:12:10.735412Z DEBUG life_monitor::localdb: Database exists, opening connection.
+2024-09-30T18:12:10.736551Z DEBUG life_monitor::localdb: Database exists, opening connection.
+2024-09-30T18:12:10.736559Z DEBUG life_monitor::localdb: Database exists, opening connection.
+2024-09-30T18:12:10.736790Z DEBUG life_monitor::localdb: Sending data to inputs table
+2024-09-30T18:12:10.736796Z DEBUG life_monitor::localdb: Sending Data to processes table
+2024-09-30T18:12:10.736908Z DEBUG life_monitor::localdb: Already have this program in processes table, updating values for cargo run ~/w/life-monitor
+2024-09-30T18:12:10.736972Z DEBUG life_monitor::localdb: Already have this program in processes table, updating values for Commits · akamee666/life-monitor — Mozilla Firefox
+2024-09-30T18:12:10.737026Z DEBUG life_monitor::localdb: Already have this program in processes table, updating values for ChatGPT — Mozilla Firefox
+2024-09-30T18:12:10.737079Z DEBUG life_monitor::localdb: Already have this program in processes table, updating values for git log --oneline ~/w/life-monitor
+2024-09-30T18:12:10.737127Z DEBUG life_monitor::localdb: Already have this program in processes table, updating values for RUST_LOG=debug cargo ~/w/life-monitor
+2024-09-30T18:12:10.737176Z DEBUG life_monitor::localdb: Already have this program in processes table, updating values for Win10 - VMware Workstation
+2024-09-30T18:12:10.737225Z DEBUG life_monitor::localdb: Already have this program in processes table, updating values for Play Date • Melanie Martinez — Mozilla Firefox

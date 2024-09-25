@@ -1,6 +1,0 @@
-2024-09-18T20:26:58.606036Z ERROR life_agent_for_windows: hellooo
-2024-09-18T20:26:58.606069Z  WARN life_agent_for_windows: hello
-2024-09-18T20:26:58.606105Z DEBUG life_agent_for_windows::keylogger: Spawned KeyLogger thread
-2024-09-18T20:26:58.606153Z DEBUG life_agent_for_windows::linux::process: Spawned ProcessTracker thread
-2024-09-18T20:26:58.607664Z DEBUG life_agent_for_windows::db: Sending data to inputs table
-2024-09-18T20:26:59.607230Z DEBUG life_agent_for_windows::linux::process: name: RUST_LOG=debug cargo ~/w/life-monitor, instance: Alacritty, class: Alacritty.
