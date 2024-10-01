@@ -25,7 +25,7 @@ pub fn init(enable_debug: bool) {
 }
 
 fn registry(env_filter_file: EnvFilter, env_filter_std: EnvFilter) {
-    let stdout_log = tracing_subscriber::fmt::layer().pretty();
+    let stdout_log = tracing_subscriber::fmt::layer();
     // A layer that logs events to a file.
     let file = File::create("logs");
 

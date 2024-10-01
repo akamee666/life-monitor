@@ -1,4 +1,4 @@
-use crate::localdb::{get_input_data, open_con, send_to_input_table};
+use crate::localdb::*;
 use once_cell::sync::Lazy;
 use rdev::listen;
 use std::sync::{Arc, RwLock};
@@ -7,21 +7,22 @@ use tokio::{
     time::{interval, Duration},
 };
 use tracing::*;
+
 // RwLock for read/write access to KeyLogger
 static EVENTS_COUNTER: Lazy<Arc<RwLock<KeyLogger>>> =
     Lazy::new(|| Arc::new(RwLock::new(KeyLogger::new())));
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct KeyLogger {
     pub left_clicks: u64,
     pub right_clicks: u64,
     pub middle_clicks: u64,
     pub keys_pressed: u64,
     pub pixels_moved: f64,
-    pub mouse_moved_cm: u64,
-    pub mouse_dpi: f64,
-    pub calibration_distance_cm: f64,
-    pub calibration_pixels: f64,
+    pub mouse_moved_cm: f64,
+    pub mouse_dpi: u64,
+    pub last_x: f64,
+    pub last_y: f64,
 }
 
 impl KeyLogger {
@@ -50,56 +51,65 @@ impl KeyLogger {
 
         // FIX: I NEED TO STORE THE DATA FROM DPI IN THE DATABASE SO I DO NOT ASK EVERYTIME I START
         // THE PROGRAM.
-        // Initialize with default values
-        d.mouse_dpi = 1000.0; // Default DPI
-        d.calibration_distance_cm = 10.0; // Default calibration distance
-        d.calibration_pixels = 0.0; // Will be set during calibration
+        d.mouse_dpi = 800; // Default DPI
 
         d
     }
 
-    fn update_mouse_movement(&mut self, delta_x: f64, delta_y: f64) {
-        let pixels_moved = (delta_x.powf(2.0) + delta_y.powf(2.0)).sqrt();
-        self.pixels_moved += pixels_moved;
+    fn update_delta(&mut self, x: f64, y: f64) {
+        // FIX: Remove from here.
+        //match get_mouse_acceleration() {
+        //    Ok((numerator, denominator, threshold)) => {
+        //        info!("Mouse Acceleration: {}/{}", numerator, denominator);
+        //        info!("Mouse Threshold: {}", threshold);
+        //    }
+        //    Err(e) => eprintln!("Failed to get mouse acceleration: {:?}", e),
+        //}
+
+        // Euclidean Distace.
+        if self.last_x != 0.0 || self.last_y != 0.0 {
+            let distance_moved = ((self.last_x - x).powi(2) + (self.last_y - y).powi(2)).sqrt();
+            // If the movement exceeds the threshold, apply the acceleration factor
+            let threshold = 4;
+            let accel_denominator = 1;
+            let accel_numerator = 2;
+            let adjusted_distance = if distance_moved as i16 > threshold {
+                let accel_factor = accel_numerator as f64 / accel_denominator as f64;
+                (distance_moved - threshold as f64) * accel_factor + threshold as f64
+            } else {
+                distance_moved
+            };
+
+            // Accumulate the adjusted distance in pixels
+            self.pixels_moved += adjusted_distance;
+            self.update_to_cm();
+        }
+
+        self.last_x = x;
+        self.last_y = y;
     }
 
-    // I googled and copied the first formula that i saw, i dont know how much accurate is it.
-    fn calibrate(&mut self, pixels_moved: f64) {
-        self.calibration_pixels = pixels_moved;
-        self.mouse_dpi = (pixels_moved / self.calibration_distance_cm) * 2.54;
-        info!("Mouse calibrated. DPI: {}", self.mouse_dpi);
+    fn update_to_cm(&mut self) {
+        let inches = self.pixels_moved / self.mouse_dpi as f64;
+        let cm = inches * 2.54;
+        self.mouse_moved_cm = cm;
+
+        //info!("Mouse moved cm: {}", self.mouse_moved_cm);
+        //info!("cm: {}", cm);
+        //debug!("inches: {}", inches);
     }
 
-    fn to_cm(&mut self) {
-        let cm = (self.pixels_moved / self.mouse_dpi) * 2.54;
-        self.mouse_moved_cm = cm as u64;
+    fn get_args(&mut self, dpi: u64) {
+        self.mouse_dpi = dpi;
     }
 }
 
-pub struct MousePosition {
-    x: f64,
-    y: f64,
-}
-
-impl MousePosition {
-    fn new() -> Self {
-        MousePosition { x: 0.0, y: 0.0 }
-    }
-
-    fn update(&mut self, x: f64, y: f64) -> (f64, f64) {
-        let delta_x = self.x - x;
-        let delta_y = self.y - y;
-        self.x = x;
-        self.y = y;
-        (delta_x, delta_y)
-    }
-}
-
-pub async fn init() {
+pub async fn init(dpi_arg: u64) {
     debug!("Keylogger spawned!");
 
-    // FIX: Only if dpi is not provided or is zero,
-    //calibrate_mouse().await;
+    let mut guard = EVENTS_COUNTER.write().unwrap();
+    guard.get_args(dpi_arg);
+    drop(guard);
 
     // Periodic task for sending data to the DB every 5 minutes.
     tokio::spawn(async {
@@ -113,13 +123,14 @@ pub async fn init() {
                 err
             );
         });
-        let mut interval = interval(Duration::from_secs(300));
+        let mut interval = interval(Duration::from_secs(5));
+
         loop {
             interval.tick().await;
 
             // Acquire read lock to send data to the DB
             let mut guard = EVENTS_COUNTER.write().unwrap();
-            guard.to_cm();
+            guard.update_to_cm();
             if let Err(e) = send_to_input_table(&con, &guard) {
                 error!("Error sending data to input table. Error: {e:?}");
             }
@@ -145,9 +156,6 @@ pub async fn init() {
 }
 
 async fn handle_event(event: rdev::Event) {
-    // Do i really need to start this everytime? Is the old me dumb? But I guess there is no problem since they are only
-    // two floats.
-    let mut mousepos = MousePosition::new();
     let mut guard = EVENTS_COUNTER.write().unwrap();
 
     // Basically the code just increment depending on the event type.
@@ -161,120 +169,69 @@ async fn handle_event(event: rdev::Event) {
         },
         rdev::EventType::KeyPress(_) => guard.keys_pressed += 1,
         rdev::EventType::MouseMove { x, y } => {
-            let (delta_x, delta_y) = mousepos.update(x, y);
-            if delta_x != 0.0 || delta_y != 0.0 {
-                guard.update_mouse_movement(delta_x, delta_y);
-            }
+            guard.update_delta(x, y);
         }
         _ => {}
     }
 }
 
-// I suck at math so i just ask to claude do this, as everything in this code i do know expect the
-// perfect accuracy from this but i guess that's better than guessing your dpi.
-async fn calibrate_mouse() {
-    println!("Try moving your mouse around 10 cm to any direction and press any key after that.");
-    let (tx, mut rx) = mpsc::unbounded_channel();
-    let mut start_pos = None;
-    let mut end_pos = None;
-
-    let _listener = tokio::spawn(async move {
-        listen(move |event| {
-            tx.send(event).unwrap_or_else(|e| {
-                error!("Could not send event by bounded channel. err: {:?}", e)
-            });
-        })
-        .expect("Could not listen to keys");
-    });
-
-    while let Some(event) = rx.recv().await {
-        match event.event_type {
-            rdev::EventType::MouseMove { x, y } => {
-                if start_pos.is_none() {
-                    start_pos = Some((x, y));
-                }
-                end_pos = Some((x, y));
-            }
-            rdev::EventType::KeyPress(_) => {
-                if let (Some(start), Some(end)) = (start_pos, end_pos) {
-                    let pixels_moved =
-                        ((end.0 - start.0).powf(2.0) + (end.1 - start.1).powf(2.0)).sqrt();
-                    let mut guard = EVENTS_COUNTER.write().unwrap();
-                    guard.calibrate(pixels_moved);
-                    break;
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use approx::assert_relative_eq;
 
     #[test]
-    fn test_keylogger_new() {
-        let keylogger = KeyLogger::new();
-        assert_eq!(keylogger.left_clicks, 0);
-        assert_eq!(keylogger.right_clicks, 0);
-        assert_eq!(keylogger.middle_clicks, 0);
-        assert_eq!(keylogger.keys_pressed, 0);
-        assert_eq!(keylogger.pixels_moved, 0.0);
-        assert_eq!(keylogger.mouse_dpi, 1000.0);
-        assert_eq!(keylogger.calibration_distance_cm, 10.0);
-        assert_eq!(keylogger.calibration_pixels, 0.0);
-    }
+    fn test_calc_deta() {
+        let mut keylogger = KeyLogger {
+            ..Default::default()
+        };
 
-    #[test]
-    fn test_update_mouse_movement() {
-        let mut keylogger = KeyLogger::new();
-        keylogger.update_mouse_movement(3.0, 4.0);
-        assert_relative_eq!(keylogger.pixels_moved, 5.0);
-        keylogger.update_mouse_movement(-3.0, -4.0);
-        assert_relative_eq!(keylogger.pixels_moved, 10.0);
-    }
-
-    #[test]
-    fn test_calibrate() {
-        let mut keylogger = KeyLogger::new();
-        keylogger.calibrate(1000.0);
-        assert_eq!(keylogger.calibration_pixels, 1000.0);
-        assert_relative_eq!(keylogger.mouse_dpi, 254.0);
+        keylogger.update_delta(3.0, 4.0);
+        assert_relative_eq!(keylogger.pixels_moved, 7.0);
+        keylogger.update_delta(0.0, 0.0);
+        assert_relative_eq!(keylogger.pixels_moved, 14.0);
+        keylogger.update_delta(0.0, 0.0);
+        assert_relative_eq!(keylogger.pixels_moved, 14.0);
+        keylogger.update_delta(-3.0, -4.0);
+        assert_relative_eq!(keylogger.pixels_moved, 21.0);
+        keylogger.update_delta(3.0, 4.0);
+        assert_relative_eq!(keylogger.pixels_moved, 35.0);
     }
 
     #[test]
     fn test_to_cm() {
-        let mut keylogger = KeyLogger::new();
-        keylogger.mouse_dpi = 254.0; // Set DPI to 254 (100 pixels per cm)
+        // create real case test here.
+        let mut keylogger = KeyLogger {
+            ..Default::default()
+        };
+        keylogger.mouse_dpi = 800;
         keylogger.pixels_moved = 1000.0;
-        keylogger.to_cm();
-        assert_eq!(keylogger.mouse_moved_cm, 10.0 as u64);
+        keylogger.update_to_cm();
+        assert_relative_eq!(keylogger.mouse_moved_cm, 26.0);
     }
 
     #[test]
-    fn test_mouse_position() {
-        let mut pos = MousePosition::new();
-        assert_eq!(pos.x, 0.0);
-        assert_eq!(pos.y, 0.0);
+    fn test_mouse_accuracy() {
+        // create real case test here.
+        let mut keylogger = KeyLogger {
+            ..Default::default()
+        };
 
-        let (dx, dy) = pos.update(3.0, 4.0);
-        assert_eq!(dx, 3.0);
-        assert_eq!(dy, 4.0);
-        assert_eq!(pos.x, 3.0);
-        assert_eq!(pos.y, 4.0);
-
-        let (dx, dy) = pos.update(1.0, 1.0);
-        assert_eq!(dx, -2.0);
-        assert_eq!(dy, -3.0);
-        assert_eq!(pos.x, 1.0);
-        assert_eq!(pos.y, 1.0);
+        keylogger.mouse_dpi = 800;
+        keylogger.update_delta(0.0, 0.0);
+        keylogger.update_delta(1920.0, 1080.0);
+        assert_relative_eq!(keylogger.pixels_moved, 3000.0);
+        keylogger.update_to_cm();
+        assert_relative_eq!(keylogger.mouse_moved_cm, 26.0 * 3 as f64);
     }
 
     #[tokio::test]
     async fn test_handle_event() {
-        let keylogger = KeyLogger::new();
+        let keylogger = KeyLogger {
+            ..Default::default()
+        };
+
         *EVENTS_COUNTER.write().unwrap() = keylogger.clone();
 
         // Test left click
@@ -302,6 +259,6 @@ mod tests {
             name: None,
         })
         .await;
-        assert_relative_eq!(EVENTS_COUNTER.read().unwrap().pixels_moved, 5.0);
+        assert_relative_eq!(EVENTS_COUNTER.read().unwrap().pixels_moved, 7.0);
     }
 }

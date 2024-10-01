@@ -4,7 +4,7 @@ use crate::{
     processinfo::ProcessInfo,
 };
 use once_cell::sync::Lazy;
-use std::sync::Mutex;
+use std::sync::{Arc, RwLock};
 use sysinfo::System;
 use tokio::{
     sync::mpsc,
@@ -12,7 +12,8 @@ use tokio::{
 };
 use tracing::*;
 
-static TRACKER: Lazy<Mutex<ProcessTracker>> = Lazy::new(|| Mutex::new(ProcessTracker::new()));
+static TRACKER: Lazy<Arc<RwLock<ProcessTracker>>> =
+    Lazy::new(|| Arc::new(RwLock::new(ProcessTracker::new())));
 
 #[derive(Debug)]
 pub struct ProcessTracker {
@@ -90,18 +91,20 @@ pub async fn init() {
     let mut idle = false;
 
     while let Some(event) = rx.recv().await {
-        let mut tracker = TRACKER.lock().expect("poisoned");
-
         match event {
             Event::Tick => {
+                let mut tracker = TRACKER.write().expect("poisoned");
+
                 if !idle {
                     handle_active_window(&mut tracker).await;
                 }
             }
             Event::IdleCheck => {
+                let tracker = TRACKER.read().expect("poisoned");
                 idle = check_idle(&tracker);
             }
             Event::DbUpdate => {
+                let tracker = TRACKER.read().expect("poisoned");
                 if let Err(e) = send_to_process_table(&con, &tracker.procs) {
                     error!("Error sending data to time_wasted table. Error: {e:?}");
                 }
@@ -131,26 +134,22 @@ async fn handle_active_window(tracker: &mut ProcessTracker) {
     //
     // The time in the window focused in calculate using the difference in the system time between
     // the function call.
-    match get_focused_window() {
-        Ok((name, instance, class)) => {
-            let uptime = System::uptime();
+    if let Ok((name, instance, class)) = get_focused_window() {
+        let uptime = System::uptime();
 
-            // if last_window_name is emtpy we are in the first window, without this the program
-            // update time in the wrong order.
-            if !tracker.last_window_name.is_empty() && tracker.last_window_name != class {
-                let time_diff = uptime - tracker.time;
-                tracker.time = 0;
+        // if last_window_name is emtpy we are in the first window, without this the program
+        // update time in the wrong order.
+        if !tracker.last_window_name.is_empty() && tracker.last_window_name != class {
+            let time_diff = uptime - tracker.time;
+            tracker.time = 0;
 
-                update_time_for_app(&mut tracker.procs, &name, time_diff, instance, &class);
-            }
-
-            if tracker.time == 0 {
-                tracker.time = uptime;
-                tracker.last_window_name = class;
-            }
+            update_time_for_app(&mut tracker.procs, &name, time_diff, instance, &class);
         }
 
-        Err(_) => {}
+        if tracker.time == 0 {
+            tracker.time = uptime;
+            tracker.last_window_name = class;
+        }
     };
 }
 

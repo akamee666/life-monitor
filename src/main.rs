@@ -25,6 +25,7 @@ struct Cli {
         conflicts_with = "no_window"
     )]
     no_keys: bool,
+
     /// Disable tracking based on activity window
     #[arg(
         short = 'w',
@@ -44,16 +45,6 @@ struct Cli {
     )]
     no_systray: bool,
 
-    //FIX: PATH AND HELP
-    #[arg(
-        short = 'b',
-        long,
-        default_value = "localhost",
-        help = "",
-        conflicts_with = "api"
-    )]
-    path: String,
-
     // Enable debug to file.
     #[arg(
         short = 'd',
@@ -68,20 +59,18 @@ struct Cli {
         short = 'a',
         long,
         default_value = "false",
-        help = "If true, enables updates to database through an api(BETA). [default: false]",
-        conflicts_with = "path"
+        help = "If true, enables updates to database through an api(BETA). [default: false]"
     )]
-    //FIX: PATH INSTEAD OF BOOL.
+    // FIX: Link a explanation in github.
     api: bool,
 
-    // Enable remote database through api.
-    // FIX: Link a explanation in github.
+    // Specify DPI for mouse tracking.
     #[arg(
         short = 'p',
         long,
         default_value = "0",
         required = true,
-        help = "If true, enables to database through an api(BETA). [default: false]",
+        help = "This option is required, if you don't know how much dpi you're using, use 0 as value to make a calibration test. [default: 800]",
         conflicts_with = "no_keys"
     )]
     dpi: u64,
@@ -90,6 +79,7 @@ struct Cli {
 #[tokio::main]
 async fn main() {
     //debug!("Arguments: {:?}", args);
+
     let args = Cli::parse();
     run(args).await;
 }
@@ -101,7 +91,7 @@ async fn run(args: Cli) {
 
     // https://docs.rs/tokio/latest/tokio/macro.join.html
     // Running tasks in parallel, these will not finish.
-    join!(process::init(), keylogger::init());
+    join!(process::init(), keylogger::init(args.dpi));
 }
 
 // FIX: REWRITE PROCESS LIKE LINUX.

@@ -1,7 +1,10 @@
 use std::time::Duration;
-use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
 use x11rb::rust_connection::RustConnection;
+
+use x11rb::connection::Connection;
+use x11rb::errors::ConnectionError;
+use x11rb::protocol::xproto::ConnectionExt;
 
 // https://www.reddit.com/r/rust/comments/f7yrle/get_information_about_current_window_xorg/
 // Returns name, instance and class of the focused window in that order.
@@ -37,6 +40,47 @@ pub fn get_focused_window() -> Result<(String, String, String), Box<dyn std::err
     Ok((name, instance, class))
 }
 
+pub fn get_screen_dpi() -> Result<f64, ConnectionError> {
+    // Open connection to the X server
+    let (conn, screen_num) = RustConnection::connect(None).unwrap();
+
+    // Get the setup and screen information
+    let setup = conn.setup();
+    let screen = &setup.roots[screen_num];
+
+    // Get screen dimensions in pixels and millimeters
+    let width_px = screen.width_in_pixels as f64;
+    let height_px = screen.height_in_pixels as f64;
+
+    let width_mm = screen.width_in_millimeters as f64;
+    let height_mm = screen.height_in_millimeters as f64;
+
+    // Calculate DPI
+    let dpi_x = (width_px / width_mm) * 25.4; // 25.4 mm in an inch
+    let dpi_y = (height_px / height_mm) * 25.4;
+
+    // Use the average DPI of the x and y dimensions
+    let average_dpi = (dpi_x + dpi_y) / 2.0;
+
+    Ok(average_dpi)
+}
+pub fn get_mouse_acceleration() -> Result<(u16, u16, u16), ConnectionError> {
+    // Open connection to the X server
+    let (conn, _) = RustConnection::connect(None).unwrap();
+
+    // Get the mouse acceleration settings
+    let pointer_control = conn.get_pointer_control().unwrap().reply().unwrap();
+
+    // The values are:
+    // - `acceleration_numerator`: Numerator for pointer acceleration
+    // - `acceleration_denominator`: Denominator for pointer acceleration
+    // - `threshold`: The threshold before acceleration applies
+    let acceleration_numerator = pointer_control.acceleration_numerator;
+    let acceleration_denominator = pointer_control.acceleration_denominator;
+    let threshold = pointer_control.threshold;
+
+    Ok((acceleration_numerator, acceleration_denominator, threshold))
+}
 pub fn get_idle_time() -> Result<Duration, Box<dyn std::error::Error>> {
     use std::time::Duration;
     use x11rb::connection::Connection;
