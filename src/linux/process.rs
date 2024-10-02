@@ -170,6 +170,7 @@ fn update_time_for_app(
     instance: String,
     window_class: &str,
 ) {
+    // FIX: Need to cover cases where is the same instace but with different name like firefox.
     if let Some(info) = tracking_data.iter_mut().find(|p| p.name == app_name) {
         info.time_spent += time;
         info.instance = instance;

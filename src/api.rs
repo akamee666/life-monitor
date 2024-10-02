@@ -87,7 +87,7 @@ mod tests {
                 "middle_clicks": 10,
                 "keys_pressed": 1000,
                 "pixels_moved": 5000.5,
-                "mouse_moved_cm": 200,
+                "mouse_moved_cm": 200.0,
             })))
             .with_status(200)
             .create();
@@ -196,7 +196,7 @@ mod tests {
                 "middle_clicks": 10,
                 "keys_pressed": 1000,
                 "pixels_moved": 5000.5,
-                "mouse_moved_cm": 200,
+                "mouse_moved_cm": 200.0,
             })
         );
     }

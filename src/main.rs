@@ -1,3 +1,4 @@
+use clap::value_parser;
 use clap::Parser;
 use life_monitor::{keylogger, linux::process, logger};
 use tokio::join;
@@ -14,7 +15,7 @@ struct Cli {
         default_value_t = 300,
         help = "Set the interval (in seconds) for send the stored data to the database."
     )]
-    interval: u64,
+    interval: u32,
 
     /// Disable keys and mouse tracking
     #[arg(
@@ -68,12 +69,13 @@ struct Cli {
     #[arg(
         short = 'p',
         long,
-        default_value = "0",
+        default_value = "800",
         required = true,
-        help = "This option is required, if you don't know how much dpi you're using, use 0 as value to make a calibration test. [default: 800]",
-        conflicts_with = "no_keys"
-    )]
-    dpi: u64,
+        help = "This option is required, since it's used to get better results measuring how much you are moving your mouse. [default: 800]",
+        conflicts_with = "no_keys",
+        value_parser = value_parser!(u32).range(1..),
+   )]
+    dpi: u32,
 }
 
 #[tokio::main]
@@ -86,7 +88,6 @@ async fn main() {
 
 #[cfg(target_os = "linux")]
 async fn run(args: Cli) {
-    //FIX: UNIT TESTS TO LOGGER?
     logger::init(args.debug);
 
     // https://docs.rs/tokio/latest/tokio/macro.join.html

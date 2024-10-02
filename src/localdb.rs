@@ -15,7 +15,8 @@ pub fn send_to_input_table(
             right_clicks = ?,
             middle_clicks = ?,
             keys_pressed = ?,
-            mouse_moved_cm = ?;
+            mouse_moved_cm = ?,
+            mouse_dpi = ?;
     ";
 
     conn.execute(
@@ -26,6 +27,7 @@ pub fn send_to_input_table(
             logger_data.middle_clicks,
             logger_data.keys_pressed,
             logger_data.mouse_moved_cm,
+            logger_data.mouse_dpi,
         ],
     )?;
 
@@ -33,8 +35,10 @@ pub fn send_to_input_table(
 }
 
 pub fn get_input_data(conn: &Connection) -> Result<KeyLogger, Box<dyn std::error::Error>> {
+    debug!("Getting data from inputs table");
+
     let query = "
-    SELECT left_clicks, right_clicks, middle_clicks, keys_pressed, mouse_moved_cm 
+    SELECT left_clicks, right_clicks, middle_clicks, keys_pressed, mouse_moved_cm, mouse_dpi
     FROM input_logs 
     LIMIT 1;
     ";
@@ -49,9 +53,7 @@ pub fn get_input_data(conn: &Connection) -> Result<KeyLogger, Box<dyn std::error
             middle_clicks: row.get(2)?,
             keys_pressed: row.get(3)?,
             mouse_moved_cm: row.get(4)?,
-            pixels_moved: 0.0, // Default or computed value
-            //FIX: me
-            mouse_dpi: 0,
+            mouse_dpi: row.get(5)?,
             ..Default::default()
         })
     })?;
@@ -60,6 +62,7 @@ pub fn get_input_data(conn: &Connection) -> Result<KeyLogger, Box<dyn std::error
 }
 
 pub fn get_process_data(conn: &Connection) -> Result<Vec<ProcessInfo>, Box<dyn std::error::Error>> {
+    debug!("Getting data from proc table");
     let query = "
         SELECT process_name, seconds_spent, instance, window_class
         FROM time_wasted;
@@ -203,15 +206,16 @@ pub fn open_con() -> Result<Connection, Box<dyn std::error::Error>> {
                 right_clicks INTEGER NOT NULL,
                 middle_clicks INTEGER NOT NULL,
                 keys_pressed INTEGER NOT NULL,
-                mouse_moved_cm INTEGER NOT NULL
+                mouse_moved_cm INTEGER NOT NULL,
+                mouse_dpi INTEGER NOT NULL
             );
         ";
         conn.execute(query_create_input_logs_table, [])?;
 
         // Insert initial row into input_logs table
         let query_insert_initial_rows = "
-            INSERT INTO input_logs (left_clicks, right_clicks, middle_clicks, keys_pressed, mouse_moved_cm)
-            VALUES (0, 0, 0, 0, 0);
+            INSERT INTO input_logs (left_clicks, right_clicks, middle_clicks, keys_pressed, mouse_moved_cm, mouse_dpi)
+            VALUES (0, 0, 0, 0, 0, 0);
         ";
         conn.execute(query_insert_initial_rows, [])?;
 
@@ -235,6 +239,7 @@ pub fn open_con() -> Result<Connection, Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::panic;
     use std::error::Error;
     // Helper function to create an in-memory database for testing
     fn create_test_db() -> Result<Connection, Box<dyn std::error::Error>> {
@@ -248,7 +253,8 @@ mod tests {
             right_clicks INTEGER NOT NULL,
             middle_clicks INTEGER NOT NULL,
             keys_pressed INTEGER NOT NULL,
-            mouse_moved_cm INTEGER NOT NULL
+            mouse_moved_cm INTEGER NOT NULL,
+            mouse_dpi INTEGER NOT NULL
         )",
             [],
         )?;
@@ -285,13 +291,14 @@ mod tests {
         send_to_input_table(&conn, &logger_data)?;
 
         // Verify the data was inserted correctly
-        let row: (i32, i32, i32, i32, i32) = conn.query_row(
-        "SELECT left_clicks, right_clicks, middle_clicks, keys_pressed, mouse_moved_cm FROM input_logs",
+        let row: (i32, i32, i32, i32, i32, i32) = conn.query_row(
+        "SELECT left_clicks, right_clicks, middle_clicks, keys_pressed, mouse_moved_cm, mouse_dpi FROM input_logs",
         [],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?),),
     )?;
 
-        assert_eq!(row, (10, 5, 2, 100, 50));
+        panic!();
+        assert_eq!(row, (10, 5, 2, 100, 50, 1600));
 
         Ok(())
     }
@@ -302,8 +309,8 @@ mod tests {
 
         // Insert test data
         conn.execute(
-        "INSERT INTO input_logs (left_clicks, right_clicks, middle_clicks, keys_pressed, mouse_moved_cm) VALUES (?, ?, ?, ?, ?)",
-        params![5, 3, 1, 50, 25],
+        "INSERT INTO input_logs (left_clicks, right_clicks, middle_clicks, keys_pressed, mouse_moved_cm, mouse_dpi) VALUES (?, ?, ?, ?, ?, ?)",
+        params![5, 3, 1, 50, 25,800],
     )?;
 
         let result = get_input_data(&conn)?;
@@ -313,6 +320,7 @@ mod tests {
         assert_eq!(result.middle_clicks, 1);
         assert_eq!(result.keys_pressed, 50);
         assert_eq!(result.mouse_moved_cm, 25.0);
+        assert_eq!(result.mouse_dpi, 800);
 
         Ok(())
     }

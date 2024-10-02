@@ -3,7 +3,6 @@ use x11rb::protocol::xproto::*;
 use x11rb::rust_connection::RustConnection;
 
 use x11rb::connection::Connection;
-use x11rb::errors::ConnectionError;
 use x11rb::protocol::xproto::ConnectionExt;
 
 // https://www.reddit.com/r/rust/comments/f7yrle/get_information_about_current_window_xorg/
@@ -40,9 +39,9 @@ pub fn get_focused_window() -> Result<(String, String, String), Box<dyn std::err
     Ok((name, instance, class))
 }
 
-pub fn get_screen_dpi() -> Result<f64, ConnectionError> {
+pub fn get_screen_dpi() -> Result<f64, Box<dyn std::error::Error>> {
     // Open connection to the X server
-    let (conn, screen_num) = RustConnection::connect(None).unwrap();
+    let (conn, screen_num) = RustConnection::connect(None)?;
 
     // Get the setup and screen information
     let setup = conn.setup();
@@ -64,23 +63,27 @@ pub fn get_screen_dpi() -> Result<f64, ConnectionError> {
 
     Ok(average_dpi)
 }
-pub fn get_mouse_acceleration() -> Result<(u16, u16, u16), ConnectionError> {
+
+pub fn get_mouse_acceleration() -> Result<(u16, u16, u16), Box<dyn std::error::Error>> {
     // Open connection to the X server
-    let (conn, _) = RustConnection::connect(None).unwrap();
+    let (conn, _) = RustConnection::connect(None)?;
 
     // Get the mouse acceleration settings
-    let pointer_control = conn.get_pointer_control().unwrap().reply().unwrap();
+    let pointer_control = conn.get_pointer_control()?.reply()?;
 
     // The values are:
     // - `acceleration_numerator`: Numerator for pointer acceleration
     // - `acceleration_denominator`: Denominator for pointer acceleration
     // - `threshold`: The threshold before acceleration applies
+    // These values are set to 1,1,0 respectively if no mouse acceleration is active, which will
+    // not changes the results if used later.
     let acceleration_numerator = pointer_control.acceleration_numerator;
     let acceleration_denominator = pointer_control.acceleration_denominator;
     let threshold = pointer_control.threshold;
 
     Ok((acceleration_numerator, acceleration_denominator, threshold))
 }
+
 pub fn get_idle_time() -> Result<Duration, Box<dyn std::error::Error>> {
     use std::time::Duration;
     use x11rb::connection::Connection;
