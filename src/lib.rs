@@ -8,4 +8,4 @@ pub mod processinfo;
 pub mod linux;
 
 #[cfg(target_os = "windows")]
-mod win;
+pub mod win;

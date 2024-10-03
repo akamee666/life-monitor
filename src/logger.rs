@@ -1,7 +1,7 @@
 use std::{fs::File, sync::Arc};
+use tracing_subscriber::fmt::time::{SystemTime, Uptime};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::{filter, prelude::*};
-
 pub fn init(enable_debug: bool) {
     if enable_debug {
         // Display only error and warns to stdout by default, use RUST_LOG to change filter.
@@ -25,7 +25,6 @@ pub fn init(enable_debug: bool) {
 }
 
 fn registry(env_filter_file: EnvFilter, env_filter_std: EnvFilter) {
-    let stdout_log = tracing_subscriber::fmt::layer();
     // A layer that logs events to a file.
     let file = File::create("logs");
 
@@ -34,9 +33,14 @@ fn registry(env_filter_file: EnvFilter, env_filter_std: EnvFilter) {
         Err(error) => panic!("Error: {:?}", error),
     };
 
+    let stdout_log = tracing_subscriber::fmt::layer()
+        .with_target(false)
+        .without_time();
+
     let debug_log = tracing_subscriber::fmt::layer()
         .with_writer(Arc::new(file))
-        .with_ansi(false);
+        .with_ansi(false)
+        .with_target(false);
 
     // A layer that collects metrics using specific events.
     let metrics_layer = /* ... */ filter::LevelFilter::INFO;

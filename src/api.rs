@@ -102,7 +102,6 @@ mod tests {
             keys_pressed: 1000,
             pixels_moved: 5000.5,
             mouse_moved_cm: 200.0,
-            mouse_dpi: 1600,
             ..Default::default()
         };
 
@@ -166,7 +165,6 @@ mod tests {
             keys_pressed: 1000,
             pixels_moved: 5000.5,
             mouse_moved_cm: 200.0,
-            mouse_dpi: 1600,
             ..Default::default()
         };
 
@@ -183,7 +181,6 @@ mod tests {
             keys_pressed: 1000,
             pixels_moved: 5000.5,
             mouse_moved_cm: 200.0,
-            mouse_dpi: 1600,
             ..Default::default()
         };
 

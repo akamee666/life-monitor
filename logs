@@ -1,31 +1,12 @@
-2024-10-02T17:33:30.325678Z DEBUG life_monitor::linux::process: Process task spawned!
-2024-10-02T17:33:30.325719Z DEBUG life_monitor::localdb: Parent from database: /home/akame/.local/share/akame_monitor
-2024-10-02T17:33:30.325861Z DEBUG life_monitor::keylogger: Keylogger spawned!
-2024-10-02T17:33:30.325890Z DEBUG life_monitor::localdb: Parent from database: /home/akame/.local/share/akame_monitor
-2024-10-02T17:33:30.325972Z DEBUG life_monitor::localdb: Getting data from inputs table
-2024-10-02T17:33:30.326640Z DEBUG life_monitor::localdb: Parent from database: /home/akame/.local/share/akame_monitor
-2024-10-02T17:33:30.326657Z DEBUG life_monitor::localdb: Parent from database: /home/akame/.local/share/akame_monitor
-2024-10-02T17:33:30.326749Z DEBUG life_monitor::localdb: Getting data from proc table
-2024-10-02T17:33:30.327344Z DEBUG life_monitor::localdb: Sending Data to processes table
-2024-10-02T17:33:30.327892Z DEBUG life_monitor::keylogger: Mouse moved cm: 18.891740094339408
-2024-10-02T17:33:30.327912Z DEBUG life_monitor::localdb: Sending data to inputs table
-2024-10-02T17:33:35.327982Z DEBUG life_monitor::keylogger: Mouse moved cm: 41.11711162672097
-2024-10-02T17:33:35.328019Z DEBUG life_monitor::localdb: Sending data to inputs table
-2024-10-02T17:33:40.328534Z DEBUG life_monitor::keylogger: Mouse moved cm: 57.59189185604784
-2024-10-02T17:33:40.328566Z DEBUG life_monitor::localdb: Sending data to inputs table
-2024-10-02T17:33:45.328079Z DEBUG life_monitor::keylogger: Mouse moved cm: 88.01242177665823
-2024-10-02T17:33:45.328133Z DEBUG life_monitor::localdb: Sending data to inputs table
-2024-10-02T17:33:50.327811Z DEBUG life_monitor::keylogger: Mouse moved cm: 136.81579672103985
-2024-10-02T17:33:50.327843Z DEBUG life_monitor::localdb: Sending data to inputs table
-2024-10-02T17:33:55.328433Z DEBUG life_monitor::keylogger: Mouse moved cm: 168.16028689447427
-2024-10-02T17:33:55.328465Z DEBUG life_monitor::localdb: Sending data to inputs table
-2024-10-02T17:34:00.327828Z DEBUG life_monitor::keylogger: Mouse moved cm: 168.16028689447427
-2024-10-02T17:34:00.327857Z DEBUG life_monitor::localdb: Sending data to inputs table
-2024-10-02T17:34:05.327851Z DEBUG life_monitor::keylogger: Mouse moved cm: 168.17840695850452
-2024-10-02T17:34:05.327885Z DEBUG life_monitor::localdb: Sending data to inputs table
-2024-10-02T17:34:10.327568Z DEBUG life_monitor::keylogger: Mouse moved cm: 169.35148296214177
-2024-10-02T17:34:10.327610Z DEBUG life_monitor::localdb: Sending data to inputs table
-2024-10-02T17:34:15.328348Z DEBUG life_monitor::keylogger: Mouse moved cm: 173.1251459822019
-2024-10-02T17:34:15.328381Z DEBUG life_monitor::localdb: Sending data to inputs table
-2024-10-02T17:34:20.327764Z DEBUG life_monitor::keylogger: Mouse moved cm: 174.46872808597166
-2024-10-02T17:34:20.327803Z DEBUG life_monitor::localdb: Sending data to inputs table
+2024-10-07T17:13:36.870915Z DEBUG WindowTracker spawned.
+2024-10-07T17:13:36.870937Z DEBUG Opening connection for window tracker.
+2024-10-07T17:13:36.871062Z DEBUG Creating channels for events.
+2024-10-07T17:13:36.871092Z DEBUG Keylogger spawned!
+2024-10-07T17:13:36.871108Z DEBUG Opening connection for keylogger.
+2024-10-07T17:13:36.871183Z DEBUG Dpi argument provided, changing values.
+2024-10-07T17:13:36.871258Z DEBUG Getting data from inputs table
+2024-10-07T17:13:36.871839Z DEBUG Creating tickers for database updates.
+2024-10-07T17:13:36.872291Z DEBUG Getting data from proc table
+2024-10-07T17:13:36.872380Z DEBUG Sending Data to processes table
+2024-10-07T17:13:36.874828Z DEBUG Database event tick, sending data from keylogger.
+2024-10-07T17:13:36.874857Z DEBUG Mouse moved cm: 0

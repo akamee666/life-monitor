@@ -64,7 +64,38 @@ pub fn get_screen_dpi() -> Result<f64, Box<dyn std::error::Error>> {
     Ok(average_dpi)
 }
 
-pub fn get_mouse_acceleration() -> Result<(u16, u16, u16), Box<dyn std::error::Error>> {
+#[derive(Debug)]
+pub struct MouseSettings {
+    pub threshold: u16,
+    pub acceleration_denominator: u16,
+    pub acceleration_numerator: u16,
+    pub dpi: u32,
+}
+
+// Default values from ArchLinux, didn't check for other OS's.
+impl Default for MouseSettings {
+    fn default() -> Self {
+        MouseSettings {
+            threshold: 4,
+            acceleration_numerator: 2,
+            acceleration_denominator: 1,
+            dpi: 800,
+        }
+    }
+}
+
+impl MouseSettings {
+    pub fn noacc_default() -> Self {
+        MouseSettings {
+            acceleration_numerator: 1,
+            acceleration_denominator: 1,
+            threshold: 0,
+            dpi: 800,
+        }
+    }
+}
+
+pub fn get_mouse_settings() -> Result<MouseSettings, Box<dyn std::error::Error>> {
     // Open connection to the X server
     let (conn, _) = RustConnection::connect(None)?;
 
@@ -81,7 +112,13 @@ pub fn get_mouse_acceleration() -> Result<(u16, u16, u16), Box<dyn std::error::E
     let acceleration_denominator = pointer_control.acceleration_denominator;
     let threshold = pointer_control.threshold;
 
-    Ok((acceleration_numerator, acceleration_denominator, threshold))
+    let s: MouseSettings = MouseSettings {
+        acceleration_numerator,
+        acceleration_denominator,
+        threshold,
+        ..Default::default()
+    };
+    Ok(s)
 }
 
 pub fn get_idle_time() -> Result<Duration, Box<dyn std::error::Error>> {
