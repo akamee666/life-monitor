@@ -4,12 +4,9 @@ use crate::{
     win::util::*,
 };
 use once_cell::sync::Lazy;
-use std::{
-    sync::{Arc, RwLock},
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 use sysinfo::System;
-use tokio::{sync::mpsc, time::interval};
+use tokio::{sync::mpsc, sync::RwLock, time::interval};
 use tracing::*;
 
 static TRACKER: Lazy<Arc<RwLock<ProcessTracker>>> =
@@ -23,7 +20,7 @@ pub struct ProcessTracker {
     procs: Vec<ProcessInfo>,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 enum Event {
     Tick,
     IdleCheck,
@@ -66,6 +63,7 @@ impl ProcessTracker {
 }
 
 fn spawn_ticker(tx: mpsc::Sender<Event>, duration: Duration, event: Event) {
+    debug!("Spawning ticker: {:?}", event);
     tokio::spawn(async move {
         let mut interval = interval(duration);
         loop {
@@ -87,8 +85,16 @@ fn check_idle(tracker: &ProcessTracker) -> bool {
     }
 }
 
-pub async fn init() {
+pub async fn init(interval: Option<u32>) {
     debug!("Process task spawned!");
+    debug!("Opening connection for window tracker.");
+
+    let mut db_interval = 300;
+    if interval.is_some() {
+        debug!("Interval argument provided, changing values.");
+        db_interval = interval.unwrap();
+    }
+
     let con = open_con().unwrap_or_else(|err| {
         debug!(
             "Could not open a connection with local database, quitting! Err: {:?}",
@@ -100,27 +106,31 @@ pub async fn init() {
         );
     });
 
+    debug!("Creating channels for events.");
     let (tx, mut rx) = mpsc::channel(100);
     spawn_ticker(tx.clone(), Duration::from_secs(1), Event::Tick);
     spawn_ticker(tx.clone(), Duration::from_secs(20), Event::IdleCheck);
-    spawn_ticker(tx.clone(), Duration::from_secs(300), Event::DbUpdate);
+    spawn_ticker(
+        tx.clone(),
+        Duration::from_secs(db_interval.into()),
+        Event::DbUpdate,
+    );
 
     let mut idle = false;
-
     while let Some(event) = rx.recv().await {
         match event {
             Event::Tick => {
-                let mut tracker = TRACKER.write().unwrap();
+                let mut tracker = TRACKER.write().await;
                 if !idle {
                     handle_active_window(&mut tracker).await;
                 }
             }
             Event::IdleCheck => {
-                let tracker = TRACKER.read().expect("poisoned");
+                let tracker = TRACKER.read().await;
                 idle = check_idle(&tracker);
             }
             Event::DbUpdate => {
-                let tracker = TRACKER.read().expect("poisoned");
+                let tracker = TRACKER.read().await;
                 if let Err(e) = update_proct(&con, &tracker.procs) {
                     error!("Error sending data to time_wasted table. Error: {e:?}");
                 }
@@ -129,16 +139,25 @@ pub async fn init() {
     }
 }
 
+// get_focused_window returns a error if there is no window focused, like when you are in the
+// workspace.
+//
+// Below i tried to reduce the overload by only updating the time of the proc of the active
+// window only when the window have changed, don't know how much this worth is though.
+//
+// The time in the window focused in calculate using the difference in the system time between
+// the function call.
+
 async fn handle_active_window(tracker: &mut ProcessTracker) {
-    // get_focused_window returns a error if there is no window focused, like when you are in the
-    // workspace.
-    //
-    // Below i tried to reduce the overload by only updating the time of the proc of the active
-    // window only when the window have changed, don't know how much this worth is though.
-    //
-    // The time in the window focused in calculate using the difference in the system time between
-    // the function call.
+    debug!("Handle tick received! Handling active window");
     if let Ok((name, class)) = get_focused_window() {
+        // Uncomment this for more detailed info about the window.
+        //debug!(
+        //    "Window name:[{}], Window instance:[{}], Window class:[{}]",
+        //    name, instance, class
+        //);
+        debug!("Window class:[{}]", class);
+
         let uptime = System::uptime();
 
         // if last_window_name is emtpy we are in the first window, without this the program
@@ -147,7 +166,7 @@ async fn handle_active_window(tracker: &mut ProcessTracker) {
             let time_diff = uptime - tracker.time;
             tracker.time = 0;
 
-            update_time_for_app(&mut tracker.procs, &name, &class, time_diff);
+            update_time_for_app(&mut tracker.procs, name, &class, time_diff);
         }
 
         if tracker.time == 0 {
@@ -157,27 +176,34 @@ async fn handle_active_window(tracker: &mut ProcessTracker) {
     };
 }
 
+// TODO: This function is confusing, i should doc it better cause i do not think there is a better
+// way to write this code.
 fn update_time_for_app(
     tracking_data: &mut Vec<ProcessInfo>,
-    window_name: &str,
-    window_class: &str,
+    window_name: String,
+    window_class: &String,
     time: u64,
 ) {
-    let mut found = false;
-
-    for info in tracking_data.iter_mut() {
-        if info.name == window_name {
-            info.time_spent += time;
-            found = true;
-            break;
+    debug!(
+        "We have a different window, updating time from: [{}]",
+        window_class
+    );
+    if let Some(info) = tracking_data
+        .iter_mut()
+        .find(|p| p.window_class == *window_class)
+    {
+        // Update existing entry.
+        info.time_spent += time;
+        // Update name if it's different.
+        if info.name != window_name {
+            info.name = window_name;
         }
-    }
-
-    if !found {
+    } else {
+        // Add new entry
         tracking_data.push(ProcessInfo {
-            name: window_name.to_string(),
+            name: window_name,
             time_spent: time,
-            instance: window_class.to_string(), // Set instance to window_class
+            instance: "".to_string(),
             window_class: window_class.to_string(),
         });
     }

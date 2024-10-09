@@ -102,8 +102,6 @@ pub fn update_proct(
     conn: &Connection,
     process_vec: &Vec<ProcessInfo>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    debug!("Sending Data to processes table");
-
     for process in process_vec {
         // Check if the process already exists in the table
         let query_check = "SELECT 1 FROM time_wasted WHERE process_name = ? LIMIT 1;";

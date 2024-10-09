@@ -17,7 +17,7 @@ Note: To cross compile, you may need to install additional packages. cross-compi
 
 ### Contribute
 
-The program is almost finished. It has some bugs and it's not exactly what I want yet, but it's usable, I guess. I'll continue working on it and adding features, of course. Go ahead if you want to try it; the worst that can happen is incorrect data being sent to the database or the program crashes. Also, if you think you've found a bug, I would be happy if you report it to me so I can fix it as soon as possible. If you want some kind of feature, you can fork and open a PR, and I will accept it as soon as possible, or just clone and do whatever you want. If you want some kind of feature but don't want to code it, contact me or open an issue, and I'll try to add it as soon as possible.
+The program is almost finished. It has some bugs and it's not exactly what I want yet, but it's usable, I guess. I'll continue working on it and adding features, of course. Go ahead if you want to try it; the worst that can happen is incorrect data being sent to the database or the program crashes. Also, if you think you've found a bug, I would be happy if you report it to me so I can fix it as soon as possible. If you want some kind of feature, you can fork and open a PR, and I will accept it as soon as possible, or just clone and do whatever you want. One people ask me if it was okay to clone the repo to learning purpose, so I did add some comments to help. If you want some kind of feature but don't want to code it, contact me or open an issue, and I'll try to add it as soon as possible.
 
 ### What life-monitor does
 

@@ -86,10 +86,6 @@ impl KeyLogger {
         debug!("Mouse moved cm: {}", self.mouse_moved_cm);
     }
 
-    fn get_arg(&mut self, dpi: u32) {
-        self.mouse_settings.dpi = dpi;
-    }
-
     #[cfg(target_os = "linux")]
     fn update_distance(&mut self, x: f64, y: f64) {
         // Only calculate distance if we have a previous position
@@ -161,9 +157,21 @@ fn spawn_ticker(tx: mpsc::Sender<Event>, duration: Duration, event: Event) {
     });
 }
 
-pub async fn init(dpi_arg: u32) {
+pub async fn init(dpi_arg: Option<u32>, interval: Option<u32>) {
     debug!("Keylogger spawned!");
     debug!("Opening connection for keylogger.");
+    let mut db_interval = 300;
+    if dpi_arg.is_some() {
+        debug!("Dpi argument provided, changing values.");
+        let mut guard = EVENTS_COUNTER.write().unwrap();
+        guard.mouse_settings.dpi = dpi_arg.unwrap();
+    }
+
+    if interval.is_some() {
+        debug!("Interval argument provided, changing values.");
+        db_interval = interval.unwrap();
+    }
+
     let con = open_con().unwrap_or_else(|err| {
         error!(
             "Could not open a connection with local database, quitting! Err: {:?}",
@@ -175,23 +183,33 @@ pub async fn init(dpi_arg: u32) {
         );
     });
 
-    if dpi_arg != 800 {
-        debug!("Dpi argument provided, changing values.");
-        let mut guard = EVENTS_COUNTER.write().unwrap();
-        guard.get_arg(dpi_arg);
-    }
-
-    debug!("Creating tickers for database updates.");
+    debug!(
+        "Creating tickers for database updates, interval:[{}]",
+        db_interval
+    );
     let (tx_ticker, mut rx_ticker) = channel(100);
-    spawn_ticker(tx_ticker.clone(), Duration::from_secs(300), Event::DbUpdate);
+    spawn_ticker(
+        tx_ticker.clone(),
+        Duration::from_secs(db_interval.into()),
+        Event::DbUpdate,
+    );
 
     while let Some(event) = rx_ticker.recv().await {
         match event {
             // Add events here as needed.
             Event::DbUpdate => {
                 debug!("Database event tick, sending data from keylogger.");
+
+                // WARN: Write lock is used here cause casting every time i receive a event is more
+                // expensive. But locking write here means we need to wait until the database
+                // operation is done to write to it again. Maybe that doesn't matter here cause of
+                // the channels buffer as far i know? not sure though.
                 let mut guard = EVENTS_COUNTER.write().expect("poisoned");
                 guard.update_to_cm();
+
+                // TEMPORARY FIX.
+                drop(guard);
+                let guard = EVENTS_COUNTER.read().unwrap();
                 if let Err(e) = update_keyst(&con, &guard) {
                     error!("Error sending data to input table. Error: {e:?}");
                 }
@@ -226,16 +244,20 @@ async fn handle_event(event: rdev::Event) {
             rdev::Button::Left => guard.left_clicks += 1,
             rdev::Button::Right => guard.right_clicks += 1,
             rdev::Button::Middle => guard.middle_clicks += 1,
+            // Rest doesn't matter.
             _ => {}
         },
+        // Rest doesn't matter.
         rdev::EventType::KeyPress(_) => guard.keys_pressed += 1,
         rdev::EventType::MouseMove { x, y } => {
             guard.update_distance(x, y);
         }
+        // Rest doesn't matter.
         _ => {}
     }
 }
 
+// FIX: Create for both os.
 #[cfg(target_os = "linux")]
 #[cfg(test)]
 mod tests {

@@ -1,5 +1,4 @@
 use std::{fs::File, sync::Arc};
-use tracing_subscriber::fmt::time::{SystemTime, Uptime};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::{filter, prelude::*};
 pub fn init(enable_debug: bool) {
