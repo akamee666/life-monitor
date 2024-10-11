@@ -1,3 +1,6 @@
+#![windows_subsystem = "windows"]
+// used to close the terminal.
+
 use clap::{value_parser, Parser};
 use tokio::task::JoinSet;
 use tracing::*;

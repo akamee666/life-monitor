@@ -30,7 +30,7 @@ pub struct KeyLogger {
     pub mouse_settings: MouseSettings,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum Event {
     DbUpdate,
 }

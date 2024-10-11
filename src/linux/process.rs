@@ -59,7 +59,7 @@ impl ProcessTracker {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 enum Event {
     Tick,
     IdleCheck,
