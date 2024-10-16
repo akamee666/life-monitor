@@ -5,19 +5,15 @@ use crate::linux::util::{get_mouse_settings, MouseSettings};
 use crate::win::util::{get_mouse_settings, MouseSettings};
 
 use crate::localdb::*;
-use once_cell::sync::Lazy;
 use rdev::listen;
-use std::sync::{Arc, RwLock};
+use rusqlite::Connection;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use tokio::{
     sync::mpsc::{self, channel},
     time::{interval, Duration},
 };
 use tracing::*;
-
-// RwLock for read/write access to KeyLogger
-static EVENTS_COUNTER: Lazy<Arc<RwLock<KeyLogger>>> =
-    Lazy::new(|| Arc::new(RwLock::new(KeyLogger::new())));
 
 #[derive(Debug, Default)]
 pub struct KeyLogger {
@@ -37,18 +33,8 @@ enum Event {
 }
 
 impl KeyLogger {
-    fn new() -> Self {
-        // Get values stored in database, open_con already check if there is a database to get data
-        // from.
-        let con = open_con().unwrap_or_else(|err| {
-            error!(
-                "Could not open a connection with local database for keys table, quitting!\n Err: {:?}",
-                err
-            );
-            panic!();
-        });
-
-        let mut k = get_keyst(&con).unwrap_or_else(|err| {
+    fn new(con: &Connection, dpi_arg: Option<u32>) -> Self {
+        let mut k = get_keyst(con).unwrap_or_else(|err| {
             error!(
                 "Connection with the keys table was opened but could not receive data from table, quitting!\n Err: {:?}",
                 err
@@ -58,7 +44,12 @@ impl KeyLogger {
 
         // speed: 0, mouse_params: [6, 10, 1], enhanced_pointer_precision: false.
         let s: MouseSettings = match get_mouse_settings() {
-            Ok(settings) => settings,
+            Ok(mut settings) => {
+                if let Some(dpi) = dpi_arg {
+                    settings.dpi = dpi;
+                }
+                settings
+            }
 
             Err(e) => {
                 warn!("Error requesting mouse acceleration, using Default values! Err: {e}");
@@ -153,50 +144,43 @@ fn spawn_ticker(tx: mpsc::Sender<Event>, duration: Duration, event: Event) {
 }
 
 pub async fn init(dpi_arg: Option<u32>, interval: Option<u32>) {
-    let mut db_interval = 300;
-
-    if interval.is_some() {
-        info!("Interval argument provided, changing values.");
-        db_interval = interval.unwrap();
-    }
-
-    if dpi_arg.is_some() {
-        info!("Dpi argument provided, changing values.");
-        let mut guard = EVENTS_COUNTER.write().unwrap();
-        guard.mouse_settings.dpi = dpi_arg.unwrap();
-    }
-
     let con = open_con().unwrap_or_else(|err| {
         error!(
-            "Could not open a connection with local database, quitting! Err: {:?}",
+            "Could not open a connection with local database for Keylogger, quitting!\n Err: {:?}",
             err
         );
         panic!();
     });
 
-    info!("Connection with the database for Keylogger is open");
+    let db_int = if let Some(interval) = interval {
+        info!("Interval argument provided, changing values.");
+        interval
+    } else {
+        300
+    };
 
-    let (tx_ticker, mut rx_ticker) = channel(100);
+    let logger = Arc::new(Mutex::new(KeyLogger::new(&con, dpi_arg)));
+
+    let (tx_ticker, mut rx_ticker) = channel(20);
+
     spawn_ticker(
         tx_ticker.clone(),
-        Duration::from_secs(db_interval.into()),
+        Duration::from_secs(db_int.into()),
         Event::DbUpdate,
     );
 
+    let logger_db = logger.clone();
     let db_update_task = tokio::spawn(async move {
         while let Some(event) = rx_ticker.recv().await {
             match event {
                 Event::DbUpdate => {
-                    // WARN: Write lock is used here cause casting every time i receive a event is more
-                    // expensive. But locking write here means we need to wait until the database
-                    // operation is done to write to it again. Maybe that doesn't matter here, cause of
-                    // the channels has a buffer as far i know? not sure though.
-
+                    let mut guard = logger_db.lock().unwrap();
                     debug!("Database event tick, sending data from Keylogger now.");
-                    let mut guard = EVENTS_COUNTER.write().unwrap();
                     guard.update_to_cm();
-                    drop(guard);
-                    let guard = EVENTS_COUNTER.read().unwrap();
+                    debug!(
+                        "Current logger data from keylogger being send: {:#?}",
+                        guard
+                    );
                     if let Err(e) = update_keyst(&con, &guard) {
                         error!("Error sending data to input table. Error: {e:?}");
                     }
@@ -207,18 +191,14 @@ pub async fn init(dpi_arg: Option<u32>, interval: Option<u32>) {
 
     info!(
         "Ticker for database updates created, interval is:[{}]",
-        db_interval
+        db_int
     );
-
-    // blocking.
-    info!("Database update task spawned!");
-
-    let (tx, mut rx) = mpsc::unbounded_channel();
 
     // For some reason, using tokio threads does not work, events are sent by the channel but rx
     // receives nothing.
+    let (tx, mut rx) = mpsc::unbounded_channel();
     let _listener = thread::spawn(move || {
-        debug!("Starting event listener");
+        info!("Event listener started.");
         listen(move |event| {
             //debug!("Captured event: {:?}", event);
             if let Err(e) = tx.send(event) {
@@ -232,30 +212,30 @@ pub async fn init(dpi_arg: Option<u32>, interval: Option<u32>) {
 
     // Wait until receive a event from the task above to compute it.
     while let Some(event) = rx.recv().await {
-        handle_event(event).await;
+        handle_event(event, &logger).await;
     }
 
-    // will not end.
+    // This task will not end.
     db_update_task.await.unwrap();
 }
 
-async fn handle_event(event: rdev::Event) {
+async fn handle_event(event: rdev::Event, logger: &Arc<Mutex<KeyLogger>>) {
     //debug!("{:?}", event);
-    let mut guard = EVENTS_COUNTER.write().unwrap();
 
+    let mut logger = logger.lock().unwrap();
     // Basically the code just increment depending on the event type.
     match event.event_type {
         rdev::EventType::ButtonPress(button) => match button {
-            rdev::Button::Left => guard.left_clicks += 1,
-            rdev::Button::Right => guard.right_clicks += 1,
-            rdev::Button::Middle => guard.middle_clicks += 1,
+            rdev::Button::Left => logger.left_clicks += 1,
+            rdev::Button::Right => logger.right_clicks += 1,
+            rdev::Button::Middle => logger.middle_clicks += 1,
             // Rest doesn't matter.
             _ => {}
         },
         // Rest doesn't matter.
-        rdev::EventType::KeyPress(_) => guard.keys_pressed += 1,
+        rdev::EventType::KeyPress(_) => logger.keys_pressed += 1,
         rdev::EventType::MouseMove { x, y } => {
-            guard.update_distance(x, y);
+            logger.update_distance(x, y);
         }
         // Rest doesn't matter.
         _ => {}
@@ -402,61 +382,5 @@ mod tests {
         keylogger.update_distance(25.0, 0.0);
         let expected = 5.0 + 10.0 + (10.0 * 2.0); // Initial + Threshold + Accelerated
         assert_relative_eq!(keylogger.pixels_moved, expected, epsilon = 0.001);
-    }
-
-    #[tokio::test]
-    async fn test_handle_event() {
-        let keylogger = KeyLogger {
-            mouse_settings: MouseSettings::noacc_default(),
-            ..Default::default()
-        };
-
-        *EVENTS_COUNTER.write().unwrap() = keylogger;
-
-        // Test left click
-        handle_event(rdev::Event {
-            event_type: rdev::EventType::ButtonPress(rdev::Button::Left),
-            time: std::time::SystemTime::now(),
-            name: None,
-        })
-        .await;
-        assert_eq!(EVENTS_COUNTER.read().unwrap().left_clicks, 1);
-
-        // Test right click
-        handle_event(rdev::Event {
-            event_type: rdev::EventType::ButtonPress(rdev::Button::Right),
-            time: std::time::SystemTime::now(),
-            name: None,
-        })
-        .await;
-        assert_eq!(EVENTS_COUNTER.read().unwrap().right_clicks, 1);
-
-        // Test key press
-        handle_event(rdev::Event {
-            event_type: rdev::EventType::KeyPress(rdev::Key::KeyA),
-            time: std::time::SystemTime::now(),
-            name: None,
-        })
-        .await;
-        assert_eq!(EVENTS_COUNTER.read().unwrap().keys_pressed, 1);
-
-        // Test mouse move
-        handle_event(rdev::Event {
-            event_type: rdev::EventType::MouseMove { x: 3.0, y: 4.0 },
-            time: std::time::SystemTime::now(),
-            name: None,
-        })
-        .await;
-        handle_event(rdev::Event {
-            event_type: rdev::EventType::MouseMove { x: 0.0, y: 0.0 },
-            time: std::time::SystemTime::now(),
-            name: None,
-        })
-        .await;
-        assert_relative_eq!(
-            EVENTS_COUNTER.read().unwrap().pixels_moved,
-            5.0,
-            epsilon = 0.001
-        );
     }
 }

@@ -1,0 +1,5 @@
+{
+  "base_url": "https://api.example.com",
+  "keys_endpoint": "/v1/keys",
+  "proc_endpoint": "/v1/proc"
+}

@@ -30,4 +30,5 @@ If you followed the [building section](#building), that should start the life-mo
  [x] - Mouse movement is stuck at zero
 [x] - More descriptive error messages for debug.
 [ ] - create how to use the API flag.
+ [ ] - routes and base url are from json config file and api key(if you have one is from environment)
 Obs: I am not sure of how i should do this though, ask for routes in the args?

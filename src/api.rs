@@ -1,48 +1,89 @@
-use crate::{keylogger::KeyLogger, processinfo::ProcessInfo};
-use reqwest::Client;
-use serde_json::json;
-use std::error::Error;
-use tracing::*;
-
 // Requesting processes and keylogger data from my api>>
 // /v1/keys - POST || GET
 // /v1/proc - POST || GET
 // Both wait for a json.
 //
+use crate::{keylogger::KeyLogger, processinfo::ProcessInfo};
+use reqwest::Client;
+use serde_json::json;
+use std::env;
+use std::error::Error;
+use tracing::*;
 
-// TODO:
-// 1. How should i make it usable for other users?
-// 2. API KEY is missing.
+#[derive(Clone, serde::Deserialize, Debug)]
+pub struct ApiConfig {
+    base_url: String,
+    api_key: Option<String>,
+    keys_endpoint: String,
+    proc_endpoint: String,
+}
+
+impl Default for ApiConfig {
+    fn default() -> Self {
+        Self {
+            base_url: "https://api.example.com".to_string(),
+            api_key: None,
+            keys_endpoint: "/v1/keys".to_string(),
+            proc_endpoint: "/v1/proc".to_string(),
+        }
+    }
+}
+
+impl ApiConfig {
+    pub fn from_env() -> Self {
+        let base_url =
+            env::var("API_BASE_URL").unwrap_or_else(|_| "https://api.example.com".to_string());
+        let api_key = env::var("API_KEY").ok();
+        let keys_endpoint =
+            env::var("API_KEYS_ENDPOINT").unwrap_or_else(|_| "/v1/keys".to_string());
+        let proc_endpoint =
+            env::var("API_PROC_ENDPOINT").unwrap_or_else(|_| "/v1/proc".to_string());
+
+        Self {
+            base_url,
+            api_key,
+            keys_endpoint,
+            proc_endpoint,
+        }
+    }
+
+    pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let config_str = std::fs::read_to_string(path)?;
+        let config: ApiConfig = serde_json::from_str(&config_str)?;
+        info!("config: {:?}", config);
+        Ok(config)
+    }
+}
+
 pub trait ApiSendable {
-    fn get_route(&self) -> &str;
+    fn get_route(&self, config: &ApiConfig) -> String;
     fn to_json(&self) -> serde_json::Value;
 }
 
 impl ApiSendable for KeyLogger {
-    fn get_route(&self) -> &str {
-        "/v1/keys"
+    fn get_route(&self, config: &ApiConfig) -> String {
+        config.keys_endpoint.clone()
     }
 
-    // FIX: Update values.
     fn to_json(&self) -> serde_json::Value {
         json!({
             "left_clicks": self.left_clicks,
             "right_clicks": self.right_clicks,
             "middle_clicks": self.middle_clicks,
             "keys_pressed": self.keys_pressed,
-            "pixels_moved": self.pixels_moved,
             "mouse_moved_cm": self.mouse_moved_cm,
+            "mouse_dpi": self.mouse_settings.dpi,
         })
     }
 }
 
 impl ApiSendable for Vec<ProcessInfo> {
-    fn get_route(&self) -> &str {
-        "/v1/proc"
+    fn get_route(&self, config: &ApiConfig) -> String {
+        config.proc_endpoint.clone()
     }
 
-    // FIX: Update values.
     fn to_json(&self) -> serde_json::Value {
+        // FIX:
         json!(self
             .iter()
             .map(|info| {
@@ -59,14 +100,19 @@ impl ApiSendable for Vec<ProcessInfo> {
 
 pub async fn send_to_api<T: ApiSendable>(
     client: &Client,
-    base_url: &str,
+    config: &ApiConfig,
     data: &T,
 ) -> Result<(), Box<dyn Error>> {
-    let url = format!("{}{}", base_url, data.get_route());
-    debug!(url);
+    let url = format!("{}{}", config.base_url, data.get_route(config));
+    debug!("Sending data to URL: {}", url);
     let json_data = data.to_json();
 
-    let response = client.post(&url).json(&json_data).send().await?;
+    let mut request = client.post(&url).json(&json_data);
+    if let Some(api_key) = &config.api_key {
+        request = request.header("Authorization", format!("Bearer {}", api_key));
+    }
+
+    let response = request.send().await?;
 
     if response.status().is_success() {
         debug!("Data sent successfully to {}", url);
@@ -76,12 +122,23 @@ pub async fn send_to_api<T: ApiSendable>(
     }
 }
 
+// FIX:
 #[cfg(test)]
 mod tests {
     use super::*;
     use mockito::mock;
     use mockito::server_url;
     use reqwest::Client;
+
+    fn mock_api_config() -> ApiConfig {
+        let base_url = server_url();
+        ApiConfig {
+            base_url,
+            api_key: None, // For testing, you may leave it None
+            keys_endpoint: "/v1/keys".to_string(),
+            proc_endpoint: "/v1/proc".to_string(),
+        }
+    }
 
     #[tokio::test]
     async fn test_send_keylogger_data() {
@@ -98,7 +155,7 @@ mod tests {
             .create();
 
         let client = Client::new();
-        let base_url = server_url();
+        let config = mock_api_config();
 
         let key_logger = KeyLogger {
             left_clicks: 100,
@@ -110,7 +167,8 @@ mod tests {
             ..Default::default()
         };
 
-        let _ = send_to_api(&client, &base_url, &key_logger).await;
+        let result = send_to_api(&client, &config, &key_logger).await;
+        assert!(result.is_ok());
         m.assert();
     }
 
@@ -135,7 +193,7 @@ mod tests {
             .create();
 
         let client = Client::new();
-        let base_url = server_url();
+        let config = mock_api_config();
 
         let process_info = vec![
             ProcessInfo {
@@ -152,7 +210,8 @@ mod tests {
             },
         ];
 
-        let _ = send_to_api(&client, &base_url, &process_info).await;
+        let result = send_to_api(&client, &config, &process_info).await;
+        assert!(result.is_ok());
         m.assert();
     }
 
@@ -161,7 +220,7 @@ mod tests {
         let m = mock("POST", "/v1/keys").with_status(500).create();
 
         let client = Client::new();
-        let base_url = server_url();
+        let config = mock_api_config();
 
         let key_logger = KeyLogger {
             left_clicks: 100,
@@ -173,7 +232,8 @@ mod tests {
             ..Default::default()
         };
 
-        let _ = send_to_api(&client, &base_url, &key_logger).await;
+        let result = send_to_api(&client, &config, &key_logger).await;
+        assert!(result.is_err());
         m.assert();
     }
 

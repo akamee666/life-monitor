@@ -101,9 +101,7 @@ fn create_file() -> Result<File, std::io::Error> {
             fs::create_dir_all(parent_dir)?;
         }
 
-        let file = fs::File::create(path).unwrap();
-
-        file
+        fs::File::create(path).unwrap()
     } else if cfg!(target_os = "linux") {
         let home_dir = env::var("HOME").map_err(|_| {
             io::Error::new(io::ErrorKind::NotFound, "HOME environment variable not set")
@@ -118,9 +116,7 @@ fn create_file() -> Result<File, std::io::Error> {
             fs::create_dir_all(parent_dir)?;
         }
 
-        let file = fs::File::create(path).unwrap();
-
-        file
+        fs::File::create(path).unwrap()
     } else {
         // Handle other OSes if needed
         return Err(io::Error::new(

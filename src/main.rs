@@ -1,7 +1,10 @@
 #![windows_subsystem = "windows"]
 // used to close the terminal and create a no gui window.
 
+use core::panic;
+
 use clap::{value_parser, Parser};
+use life_monitor::api::ApiConfig;
 use tokio::task::JoinSet;
 use tracing::*;
 
@@ -55,20 +58,19 @@ pub struct Cli {
         short = 'd',
         long,
         default_value_t = false,
-        help = "If true, enables debug mode with more frequent updates and additional logging.",
+        help = "If true, enables debug mode with more frequent updates and additional logging. [default: false]",
         long_help = "Enabling debug mode does two things: First, it increases the frequency of database updates, allowing for more real-time data analysis. Second, it enables debug output to both a log file and stdout. Note that stdout output only works if the RUST_LOG environment variable is set to 'debug'. This mode is useful for troubleshooting issues or for developers working on extending the program's functionality. Interval option WILL overwrite the interval defined by this option."
     )]
     debug: bool,
 
-    // FIX: NOT READY TO USE.
     #[arg(
         short = 'a',
         long,
-        default_value_t = false,
-        help = "If true, enables updates to database through an API (NOT READY TO USE). [default: false]",
-        long_help = "This is not ready to use, this feature enables the program to update a remote database through an API instead of or in addition to the local database. This can be useful for centralized data collection or for accessing your data from multiple devices. However, as this is a beta feature, it may not be as stable or secure as the local database option. It's usable but only for a specific case see the explanation in github page if you still want to use it anyway"
+        value_name = "config.json",
+        help = "If true, enables updates to database through an API determined by a json config file. [default: config.json]",
+        long_help = "this feature enables the program to update a remote database through an API instead of or in addition to the local database, see [link] to how use it. This can be useful for centralized data collection or for accessing your data from multiple devices. However, as this is a beta feature, it may not be as stable or secure as the local database option. It's usable but only for a specific case see the explanation in github page if you still want to use it anyway"
     )]
-    api: bool,
+    api: Option<String>,
 
     #[arg(
         short = 'p',
@@ -83,11 +85,11 @@ pub struct Cli {
     #[arg(
         short = 'c',
         long,
-        default_value_t = false,
-        help = "If true, deletes all previously collected data and starts fresh. [default: false]",
-        long_help = "This option, when enabled, will delete all data collected in previous sessions of the program and start with a clean slate. This can be useful if you want to reset your tracking, perhaps after a significant change in your work habits or if you suspect there are issues with the existing data. Be very careful when using this option, as it will permanently delete all existing data. It's recommended to backup your data before using this option."
+        help = "If true, deletes all previously collected data and starts a new database. [default: false]",
+        conflicts_with = "api",
+        long_help = "This option, when enabled, will delete all data collected in previous sessions of the program and start with a clean state. This can be useful if you want to reset your tracking, perhaps after a significant change in your work habits or if you suspect there are issues with the existing data. Be very careful when using this option, as it will permanently delete all existing data. It's recommended to backup your data before using this option."
     )]
-    clean: bool,
+    clear: bool,
 }
 
 #[tokio::main]
@@ -96,17 +98,33 @@ async fn main() {
     use life_monitor::logger;
 
     let mut args = Cli::parse();
+    info!("Arguments provided: {:?}", args);
 
-    // The target os doesn't matter in these two fn.
     logger::init(args.debug);
     info!("spy.log file created!");
 
-    info!("Arguments provided: {:?}", args);
+    // what do i with this now daidbnaiudnaw
+    let _api_config: Option<ApiConfig> = if let Some(ref config_path) = args.api {
+        info!("api config path: {:?}", config_path);
+        let cfg = ApiConfig::from_file(config_path).unwrap_or_else(|err| {
+            error!("Could not parse {}. Error: {}", config_path, err);
+            panic!()
+        });
 
-    if args.clean {
-        info!("Clean argument provided, cleaning database!");
-        clean_database().unwrap();
-    }
+        Some(cfg)
+    } else {
+        info!("Api argument not used, using local database.");
+        if args.clear {
+            info!("Clean argument provided, cleaning database!");
+            match clean_database() {
+                Ok(_) => {}
+                Err(e) => {
+                    error!("Could not delete database, because of error: {e}. Most likely the database does not exist already, continuing with the execution");
+                }
+            }
+        };
+        None
+    };
 
     // Only change interval to five for debug reasons if inverval option is not provided.
     if args.debug && args.interval.is_none() {
@@ -140,7 +158,10 @@ async fn run(args: Cli) {
             // That should not occur.
             Ok(_) => error!("A task has unexpectedly finished"),
             // panicked!
-            Err(e) => error!("A task has panicked: {}", e),
+            Err(e) => {
+                error!("A task has panicked: {}", e);
+                panic!()
+            }
         }
     }
 }
