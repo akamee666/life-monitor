@@ -8,6 +8,7 @@ use crate::localdb::*;
 use once_cell::sync::Lazy;
 use rdev::listen;
 use std::sync::{Arc, RwLock};
+use std::thread;
 use tokio::{
     sync::mpsc::{self, channel},
     time::{interval, Duration},
@@ -41,24 +42,18 @@ impl KeyLogger {
         // from.
         let con = open_con().unwrap_or_else(|err| {
             error!(
-                "Could not open a connection with local database, quitting! Err: {:?}",
+                "Could not open a connection with local database for keys table, quitting!\n Err: {:?}",
                 err
             );
-            panic!(
-                "Could not open a connection with local database, quitting! Err: {:?}",
-                err
-            );
+            panic!();
         });
 
         let mut k = get_keyst(&con).unwrap_or_else(|err| {
             error!(
-                "Could not open a connection with local database, quitting! Err: {:?}",
+                "Connection with the keys table was opened but could not receive data from table, quitting!\n Err: {:?}",
                 err
             );
-            panic!(
-                "Could not open a connection with local database, quitting! Err: {:?}",
-                err
-            );
+            panic!();
         });
 
         // speed: 0, mouse_params: [6, 10, 1], enhanced_pointer_precision: false.
@@ -66,7 +61,7 @@ impl KeyLogger {
             Ok(settings) => settings,
 
             Err(e) => {
-                error!("Error requesting mouse acceleration, using Default values! Err: {e}");
+                warn!("Error requesting mouse acceleration, using Default values! Err: {e}");
                 MouseSettings {
                     ..Default::default()
                 }
@@ -101,7 +96,7 @@ impl KeyLogger {
             } else {
                 distance_moved
             };
-
+            //debug!("adjusted_distance: {adjusted_distance}");
             // Accumulate the adjusted distance in pixels
             self.pixels_moved += adjusted_distance;
         }
@@ -158,18 +153,17 @@ fn spawn_ticker(tx: mpsc::Sender<Event>, duration: Duration, event: Event) {
 }
 
 pub async fn init(dpi_arg: Option<u32>, interval: Option<u32>) {
-    debug!("Keylogger spawned!");
-    debug!("Opening connection for keylogger.");
     let mut db_interval = 300;
-    if dpi_arg.is_some() {
-        debug!("Dpi argument provided, changing values.");
-        let mut guard = EVENTS_COUNTER.write().unwrap();
-        guard.mouse_settings.dpi = dpi_arg.unwrap();
-    }
 
     if interval.is_some() {
-        debug!("Interval argument provided, changing values.");
+        info!("Interval argument provided, changing values.");
         db_interval = interval.unwrap();
+    }
+
+    if dpi_arg.is_some() {
+        info!("Dpi argument provided, changing values.");
+        let mut guard = EVENTS_COUNTER.write().unwrap();
+        guard.mouse_settings.dpi = dpi_arg.unwrap();
     }
 
     let con = open_con().unwrap_or_else(|err| {
@@ -177,16 +171,11 @@ pub async fn init(dpi_arg: Option<u32>, interval: Option<u32>) {
             "Could not open a connection with local database, quitting! Err: {:?}",
             err
         );
-        panic!(
-            "Could not open a connection with local database, quitting! Err: {:?}",
-            err
-        );
+        panic!();
     });
 
-    debug!(
-        "Creating tickers for database updates, interval:[{}]",
-        db_interval
-    );
+    info!("Connection with the database for Keylogger is open");
+
     let (tx_ticker, mut rx_ticker) = channel(100);
     spawn_ticker(
         tx_ticker.clone(),
@@ -194,37 +183,49 @@ pub async fn init(dpi_arg: Option<u32>, interval: Option<u32>) {
         Event::DbUpdate,
     );
 
-    while let Some(event) = rx_ticker.recv().await {
-        match event {
-            // Add events here as needed.
-            Event::DbUpdate => {
-                debug!("Database event tick, sending data from keylogger.");
+    let db_update_task = tokio::spawn(async move {
+        while let Some(event) = rx_ticker.recv().await {
+            match event {
+                Event::DbUpdate => {
+                    // WARN: Write lock is used here cause casting every time i receive a event is more
+                    // expensive. But locking write here means we need to wait until the database
+                    // operation is done to write to it again. Maybe that doesn't matter here, cause of
+                    // the channels has a buffer as far i know? not sure though.
 
-                // WARN: Write lock is used here cause casting every time i receive a event is more
-                // expensive. But locking write here means we need to wait until the database
-                // operation is done to write to it again. Maybe that doesn't matter here cause of
-                // the channels buffer as far i know? not sure though.
-                let mut guard = EVENTS_COUNTER.write().expect("poisoned");
-                guard.update_to_cm();
-
-                // TEMPORARY FIX.
-                drop(guard);
-                let guard = EVENTS_COUNTER.read().unwrap();
-                if let Err(e) = update_keyst(&con, &guard) {
-                    error!("Error sending data to input table. Error: {e:?}");
+                    debug!("Database event tick, sending data from Keylogger now.");
+                    let mut guard = EVENTS_COUNTER.write().unwrap();
+                    guard.update_to_cm();
+                    drop(guard);
+                    let guard = EVENTS_COUNTER.read().unwrap();
+                    if let Err(e) = update_keyst(&con, &guard) {
+                        error!("Error sending data to input table. Error: {e:?}");
+                    }
                 }
             }
         }
-    }
+    });
+
+    info!(
+        "Ticker for database updates created, interval is:[{}]",
+        db_interval
+    );
+
+    // blocking.
+    info!("Database update task spawned!");
 
     let (tx, mut rx) = mpsc::unbounded_channel();
 
-    // As listen blocks, need a task/thread and channels.
-    let _listener = tokio::spawn(async move {
+    // For some reason, using tokio threads does not work, events are sent by the channel but rx
+    // receives nothing.
+    let _listener = thread::spawn(move || {
+        debug!("Starting event listener");
         listen(move |event| {
-            tx.send(event).unwrap_or_else(|e| {
-                error!("Could not send event by bounded channel. err: {:?}", e)
-            });
+            //debug!("Captured event: {:?}", event);
+            if let Err(e) = tx.send(event) {
+                error!("Could not send event through channel. err: {:?}", e);
+            } else {
+                //debug!("Event sent through channel successfully");
+            }
         })
         .expect("Could not listen to keys");
     });
@@ -233,9 +234,13 @@ pub async fn init(dpi_arg: Option<u32>, interval: Option<u32>) {
     while let Some(event) = rx.recv().await {
         handle_event(event).await;
     }
+
+    // will not end.
+    db_update_task.await.unwrap();
 }
 
 async fn handle_event(event: rdev::Event) {
+    //debug!("{:?}", event);
     let mut guard = EVENTS_COUNTER.write().unwrap();
 
     // Basically the code just increment depending on the event type.

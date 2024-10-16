@@ -33,24 +33,19 @@ impl ProcessTracker {
         // from.
         let con = open_con().unwrap_or_else(|err| {
             error!(
-                "Could not open a connection with local database, quitting! Err: {:?}",
+                "Could not open a connection with local database for procs table, quitting!\n Err: {:?}",
                 err
             );
             panic!(
-                "Could not open a connection with local database, quitting! Err: {:?}",
-                err
             );
         });
 
         let d = get_proct(&con).unwrap_or_else(|err| {
             error!(
-                "Could get existing data from local database, quitting to not overwrite! Err: {:?}",
+                "Connection with the proc table was opened but could not receive data from table, quitting!\n Err: {:?}",
                 err
             );
-            panic!(
-                "Could get existing data from local database, quitting to not overwrite! Err: {:?}",
-                err
-            );
+            panic!();
         });
 
         ProcessTracker {
@@ -86,27 +81,21 @@ fn check_idle(tracker: &ProcessTracker) -> bool {
 }
 
 pub async fn init(interval: Option<u32>) {
-    debug!("Process task spawned!");
-    debug!("Opening connection for window tracker.");
-
     let mut db_interval = 300;
     if interval.is_some() {
-        debug!("Interval argument provided, changing values.");
+        info!("Interval argument provided, changing values.");
         db_interval = interval.unwrap();
     }
 
     let con = open_con().unwrap_or_else(|err| {
         debug!(
-            "Could not open a connection with local database, quitting! Err: {:?}",
+            "Could not open a connection with local database for process, quitting! Err: {:?}",
             err
         );
-        panic!(
-            "Could not open a connection with local database, quitting! Err: {:?}",
-            err
-        );
+        panic!();
     });
 
-    debug!("Creating channels for events.");
+    info!("Creating channels for events.");
     let (tx, mut rx) = mpsc::channel(100);
     spawn_ticker(tx.clone(), Duration::from_secs(1), Event::Tick);
     spawn_ticker(tx.clone(), Duration::from_secs(20), Event::IdleCheck);
@@ -147,9 +136,7 @@ pub async fn init(interval: Option<u32>) {
 //
 // The time in the window focused in calculate using the difference in the system time between
 // the function call.
-
 async fn handle_active_window(tracker: &mut ProcessTracker) {
-    debug!("Handle tick received! Handling active window");
     if let Ok((name, class)) = get_focused_window() {
         // Uncomment this for more detailed info about the window.
         //debug!(

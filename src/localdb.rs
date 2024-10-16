@@ -46,8 +46,6 @@ pub fn update_keyst(
 }
 
 pub fn get_keyst(conn: &Connection) -> Result<KeyLogger, Box<dyn std::error::Error>> {
-    debug!("Getting data from inputs table");
-
     let query = "
     SELECT left_clicks, right_clicks, middle_clicks, keys_pressed, mouse_moved_cm,mouse_dpi
     FROM input_logs 
@@ -109,10 +107,10 @@ pub fn update_proct(
         let exists = stmt_check.exists(params![&process.name])?;
 
         if exists {
-            debug!(
-                "Already have this program in processes table, updating values for {}",
-                process.name
-            );
+            //debug!(
+            //    "Already have this program in processes table, updating values for {}",
+            //    process.name
+            //);
             let query_update = "UPDATE time_wasted SET seconds_spent = ?, instance = ?, window_class = ? WHERE process_name = ?;";
             conn.execute(
                 query_update,

@@ -1,6 +1,11 @@
+use std::env;
+use std::fs;
+use std::io;
+use std::path::*;
 use std::{fs::File, sync::Arc};
 use tracing_subscriber::EnvFilter;
-use tracing_subscriber::{filter, prelude::*};
+use tracing_subscriber::{filter, fmt, prelude::*};
+
 pub fn init(enable_debug: bool) {
     if enable_debug {
         // Display only error and warns to stdout by default, use RUST_LOG to change filter.
@@ -25,21 +30,32 @@ pub fn init(enable_debug: bool) {
 
 fn registry(env_filter_file: EnvFilter, env_filter_std: EnvFilter) {
     // A layer that logs events to a file.
-    let file = File::create("logs");
 
-    let file = match file {
+    let file = match create_file() {
         Ok(file) => file,
         Err(error) => panic!("Error: {:?}", error),
     };
 
-    let stdout_log = tracing_subscriber::fmt::layer()
-        .with_target(false)
-        .without_time();
+    let stdout_log = fmt::layer().with_target(false).without_time().event_format(
+        fmt::format()
+            .with_file(true)
+            .with_line_number(true)
+            .without_time()
+            .with_target(false),
+    );
 
-    let debug_log = tracing_subscriber::fmt::layer()
+    let debug_log = fmt::layer()
         .with_writer(Arc::new(file))
         .with_ansi(false)
-        .with_target(false);
+        .with_target(false)
+        .without_time()
+        .event_format(
+            fmt::format()
+                .with_file(true)
+                .with_line_number(true)
+                .without_time()
+                .with_target(false),
+        );
 
     // A layer that collects metrics using specific events.
     let metrics_layer = /* ... */ filter::LevelFilter::INFO;
@@ -66,4 +82,52 @@ fn registry(env_filter_file: EnvFilter, env_filter_std: EnvFilter) {
             })),
         )
         .init();
+}
+
+fn create_file() -> Result<File, std::io::Error> {
+    // Find a proper file to store the database in both os, create if already not exist
+    let file = if cfg!(target_os = "windows") {
+        let local_app_data = env::var("LOCALAPPDATA").map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "LOCALAPPDATA environment variable not set",
+            )
+        })?;
+        let mut path = PathBuf::from(local_app_data);
+        path.push("akame_monitor");
+        path.push("spy.log");
+
+        if let Some(parent_dir) = path.parent() {
+            fs::create_dir_all(parent_dir)?;
+        }
+
+        let file = fs::File::create(path).unwrap();
+
+        file
+    } else if cfg!(target_os = "linux") {
+        let home_dir = env::var("HOME").map_err(|_| {
+            io::Error::new(io::ErrorKind::NotFound, "HOME environment variable not set")
+        })?;
+        let mut path = PathBuf::from(home_dir);
+        path.push(".local");
+        path.push("share");
+        path.push("akame_monitor");
+        path.push("spy.log");
+
+        if let Some(parent_dir) = path.parent() {
+            fs::create_dir_all(parent_dir)?;
+        }
+
+        let file = fs::File::create(path).unwrap();
+
+        file
+    } else {
+        // Handle other OSes if needed
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Unsupported operating system",
+        ));
+    };
+
+    Ok(file)
 }

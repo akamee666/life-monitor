@@ -1,5 +1,5 @@
 #![windows_subsystem = "windows"]
-// used to close the terminal.
+// used to close the terminal and create a no gui window.
 
 use clap::{value_parser, Parser};
 use tokio::task::JoinSet;
@@ -60,15 +60,16 @@ pub struct Cli {
     )]
     debug: bool,
 
-    // FIX: Handle this one.
-    //#[arg(
-    //    short = 'a',
-    //    long,
-    //    default_value_t = false,
-    //    help = "If true, enables updates to database through an API (BETA). [default: false]",
-    //    long_help = "This BETA feature enables the program to update a remote database through an API instead of or in addition to the local database. This can be useful for centralized data collection or for accessing your data from multiple devices. However, as this is a beta feature, it may not be as stable or secure as the local database option. It's usable but only for a specific case see the explanation in github page if you still want to use it anyway"
-    //)]
-    //api: bool,
+    // FIX: NOT READY TO USE.
+    #[arg(
+        short = 'a',
+        long,
+        default_value_t = false,
+        help = "If true, enables updates to database through an API (NOT READY TO USE). [default: false]",
+        long_help = "This is not ready to use, this feature enables the program to update a remote database through an API instead of or in addition to the local database. This can be useful for centralized data collection or for accessing your data from multiple devices. However, as this is a beta feature, it may not be as stable or secure as the local database option. It's usable but only for a specific case see the explanation in github page if you still want to use it anyway"
+    )]
+    api: bool,
+
     #[arg(
         short = 'p',
         long,
@@ -98,13 +99,18 @@ async fn main() {
 
     // The target os doesn't matter in these two fn.
     logger::init(args.debug);
-    debug!("Arguments: {:?}", args);
+    info!("spy.log file created!");
+
+    info!("Arguments provided: {:?}", args);
+
     if args.clean {
+        info!("Clean argument provided, cleaning database!");
         clean_database().unwrap();
     }
 
     // Only change interval to five for debug reasons if inverval option is not provided.
-    if args.debug || args.interval.is_none() {
+    if args.debug && args.interval.is_none() {
+        info!("Debug is true but no interval value provided, using default five seconds!");
         args.interval = 5.into();
     }
 

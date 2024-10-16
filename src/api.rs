@@ -8,8 +8,11 @@ use tracing::*;
 // /v1/keys - POST || GET
 // /v1/proc - POST || GET
 // Both wait for a json.
-// fantasyrealm.xyz
 //
+
+// TODO:
+// 1. How should i make it usable for other users?
+// 2. API KEY is missing.
 pub trait ApiSendable {
     fn get_route(&self) -> &str;
     fn to_json(&self) -> serde_json::Value;
@@ -20,6 +23,7 @@ impl ApiSendable for KeyLogger {
         "/v1/keys"
     }
 
+    // FIX: Update values.
     fn to_json(&self) -> serde_json::Value {
         json!({
             "left_clicks": self.left_clicks,
@@ -37,6 +41,7 @@ impl ApiSendable for Vec<ProcessInfo> {
         "/v1/proc"
     }
 
+    // FIX: Update values.
     fn to_json(&self) -> serde_json::Value {
         json!(self
             .iter()

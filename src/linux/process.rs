@@ -3,6 +3,7 @@ use crate::{
     localdb::*,
     processinfo::ProcessInfo,
 };
+use core::panic;
 use once_cell::sync::Lazy;
 use std::sync::Arc;
 use sysinfo::System;
@@ -29,25 +30,19 @@ impl ProcessTracker {
         // Get values stored in database, open_con already check if there is a database to get data
         // from.
         let con = open_con().unwrap_or_else(|err| {
-            debug!(
-                "Could not open a connection with local database, quitting! Err: {:?}",
+            error!(
+                "Could not open a connection with local database for procs table, quitting!\n Err: {:?}",
                 err
             );
-            panic!(
-                "Could not open a connection with local database, quitting! Err: {:?}",
-                err
-            );
+            panic!();
         });
 
         let d = get_proct(&con).unwrap_or_else(|err| {
-            debug!(
-                "Could not open a connection with local database, quitting! Err: {:?}",
+            error!(
+                "Connection with the proc table was opened but could not receive data from table, quitting!\n Err: {:?}",
                 err
             );
-            panic!(
-                "Could not open a connection with local database, quitting! Err: {:?}",
-                err
-            );
+            panic!("{err}");
         });
 
         ProcessTracker {
@@ -67,29 +62,23 @@ enum Event {
 }
 
 pub async fn init(interval: Option<u32>) {
-    debug!("WindowTracker spawned.");
-    debug!("Opening connection for window tracker.");
-
     let mut db_interval = 300;
     if interval.is_some() {
-        debug!("Interval argument provided, changing values.");
+        info!("Interval argument provided, changing values.");
         db_interval = interval.unwrap();
     }
 
     let con = open_con().unwrap_or_else(|err| {
         debug!(
-            "Could not open a connection with local database, quitting! Err: {:?}",
+            "Could not open a connection with local database for init windowtracker, quitting! Err: {:?}",
             err
         );
-        panic!(
-            "Could not open a connection with local database, quitting! Err: {:?}",
-            err
-        );
+        panic!();
     });
 
     // Create a channel and spawn tasks that needs to run at certain periods.
     // I really don't know if it's ok to clone the sender, but it's work so i'll let it.
-    debug!("Creating channels for events.");
+    info!("Creating channels for events.");
     let (tx, mut rx) = mpsc::channel(100);
     spawn_ticker(tx.clone(), Duration::from_secs(1), Event::Tick);
     spawn_ticker(tx.clone(), Duration::from_secs(20), Event::IdleCheck);
@@ -113,6 +102,8 @@ pub async fn init(interval: Option<u32>) {
                 idle = check_idle(&tracker);
             }
             Event::DbUpdate => {
+                debug!("Database event tick, sending data from procs now.");
+
                 let tracker = TRACKER.read().await;
                 if let Err(e) = update_proct(&con, &tracker.procs) {
                     error!("Error sending data to time_wasted table. Error: {e:?}");
@@ -144,14 +135,14 @@ fn spawn_ticker(tx: mpsc::Sender<Event>, duration: Duration, event: Event) {
 // The time in the window focused in calculate using the difference in the system time between
 // the function call.
 async fn handle_active_window(tracker: &mut ProcessTracker) {
-    debug!("Handle tick received! Handling active window");
+    //debug!("Handle tick received! Handling active window");
     if let Ok((name, instance, class)) = get_focused_window() {
         // Uncomment this for more detailed info about the window.
         //debug!(
         //    "Window name:[{}], Window instance:[{}], Window class:[{}]",
         //    name, instance, class
         //);
-        debug!("Window class:[{}]", class);
+        //debug!("Window class:[{}]", class);
 
         let uptime = System::uptime();
 

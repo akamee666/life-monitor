@@ -23,3 +23,11 @@ The program is almost finished, no entirely cause i didn't test it enough. It pr
 
 If you followed the [building section](#building), that should start the life-monitor and close the current CMD. Life-monitor will start tracking your activities and send them to a db file at %LOCALAPPDATA%\akame_monitor\forgotthename.db. After that, it's all up to you to use the data collected by the life-monitor however you want. You can stop its process by using the system tray item that should be spawned in the taskbar when you start life-monitor. Life-monitor does not start with your system; you need to run it from CMD every time you boot (I'll add an option to activate this soon). If you have the feeling that the data isn't accurate (which I am almost sure it wouldn't be for mouse distance, I'll try to fix that as well), has weird names, or whatever kind of weird behavior, please open an issue or contact me somewhere, and I'll try to fix it as soon as possible. AVs can flag life-monitor as malware (which is reasonable) due to its functionalities, but life-monitor will NOT steal or send your data to other places. You can read the code and confirm it yourself or debug it (which I do not recommend, see this issue). If you are struggling to understand, contact me somewhere, and I will do my best to explain it to you.
 
+
+## TODO
+
+[x] - Fixes.
+ [x] - Mouse movement is stuck at zero
+[x] - More descriptive error messages for debug.
+[ ] - create how to use the API flag.
+Obs: I am not sure of how i should do this though, ask for routes in the args?
