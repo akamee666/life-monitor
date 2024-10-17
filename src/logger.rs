@@ -1,28 +1,43 @@
 use std::env;
 use std::fs;
+use std::fs::File;
 use std::io;
 use std::path::*;
-use std::{fs::File, sync::Arc};
+use std::sync::Arc;
+
+use tracing::info;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::{filter, fmt, prelude::*};
 
 pub fn init(enable_debug: bool) {
     if enable_debug {
         // Display only error and warns to stdout by default, use RUST_LOG to change filter.
-        let env_filter_std =
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
+        let env_filter_std = EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| EnvFilter::new("warn"))
+            .add_directive("hyper=off".parse().unwrap())
+            .add_directive("hyper_util=off".parse().unwrap())
+            .add_directive("reqwest=off".parse().unwrap());
 
         // Display info, warn, error and debug prints to the file by default.
-        let env_filter_file = EnvFilter::new("debug");
+        let env_filter_file = EnvFilter::new("debug")
+            .add_directive("hyper=off".parse().unwrap())
+            .add_directive("hyper_util=off".parse().unwrap())
+            .add_directive("reqwest=off".parse().unwrap());
 
         registry(env_filter_file, env_filter_std);
     } else {
         // Display only error and warns to stdout by default, use RUST_LOG to change filter.
-        let env_filter_std =
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
+        let env_filter_std = EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| EnvFilter::new("warn"))
+            .add_directive("hyper=off".parse().unwrap())
+            .add_directive("hyper_util=off".parse().unwrap())
+            .add_directive("reqwest=off".parse().unwrap());
 
         // Display only error and warns to file.
-        let env_filter_file = EnvFilter::new("warn");
+        let env_filter_file = EnvFilter::new("warn")
+            .add_directive("hyper=off".parse().unwrap())
+            .add_directive("hyper_util=off".parse().unwrap())
+            .add_directive("reqwest=off".parse().unwrap());
 
         registry(env_filter_file, env_filter_std);
     }
@@ -82,6 +97,8 @@ fn registry(env_filter_file: EnvFilter, env_filter_std: EnvFilter) {
             })),
         )
         .init();
+
+    info!("spy.log file created!");
 }
 
 fn create_file() -> Result<File, std::io::Error> {

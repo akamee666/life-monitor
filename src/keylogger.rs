@@ -1,48 +1,63 @@
 #[cfg(target_os = "linux")]
 use crate::linux::util::{get_mouse_settings, MouseSettings};
-
 #[cfg(target_os = "windows")]
 use crate::win::util::{get_mouse_settings, MouseSettings};
 
-use crate::localdb::*;
+use crate::data::{DataStore, StorageBackend};
+use crate::spawn_ticker;
+use crate::Event;
+
 use rdev::listen;
-use rusqlite::Connection;
-use std::sync::{Arc, Mutex};
-use std::thread;
-use tokio::{
-    sync::mpsc::{self, channel},
-    time::{interval, Duration},
-};
+use serde::Deserialize;
+
+use std::sync::Arc;
+
+use tokio::sync::mpsc;
+use tokio::sync::mpsc::channel;
+use tokio::sync::Mutex;
+use tokio::time::Duration;
+
 use tracing::*;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct KeyLogger {
     pub left_clicks: u64,
     pub right_clicks: u64,
     pub middle_clicks: u64,
     pub keys_pressed: u64,
+    #[serde(default)]
     pub pixels_moved: f64,
+    #[serde(default)]
     pub mouse_moved_cm: f64,
+    #[serde(default)]
     pub last_pos: Option<(f64, f64)>,
+    #[serde(default)]
     pub mouse_settings: MouseSettings,
 }
 
-#[derive(Clone, Copy, Debug)]
-enum Event {
-    DbUpdate,
+impl Default for KeyLogger {
+    fn default() -> Self {
+        Self {
+            left_clicks: 0,
+            right_clicks: 0,
+            middle_clicks: 0,
+            keys_pressed: 0,
+            pixels_moved: 0.0,
+            mouse_moved_cm: 0.0,
+            last_pos: None,
+            mouse_settings: MouseSettings::default(),
+        }
+    }
 }
 
 impl KeyLogger {
-    fn new(con: &Connection, dpi_arg: Option<u32>) -> Self {
-        let mut k = get_keyst(con).unwrap_or_else(|err| {
-            error!(
-                "Connection with the keys table was opened but could not receive data from table, quitting!\n Err: {:?}",
-                err
-            );
+    async fn new(backend: &StorageBackend, dpi_arg: Option<u32>) -> Self {
+        let mut k: Self = backend.get_keys_data().await.unwrap_or_else(|err| {
+            error!("Call to backend to get keys data failed, quitting!\nError: {err}",);
             panic!();
         });
 
-        // speed: 0, mouse_params: [6, 10, 1], enhanced_pointer_precision: false.
+        // Default: speed: 0, mouse_params: [6, 10, 1], enhanced_pointer_precision: false.
         let s: MouseSettings = match get_mouse_settings() {
             Ok(mut settings) => {
                 if let Some(dpi) = dpi_arg {
@@ -52,7 +67,7 @@ impl KeyLogger {
             }
 
             Err(e) => {
-                warn!("Error requesting mouse acceleration, using Default values! Err: {e}");
+                warn!("Error requesting mouse acceleration, using Default values!\nError: {e}");
                 MouseSettings {
                     ..Default::default()
                 }
@@ -68,8 +83,6 @@ impl KeyLogger {
         let cm = inches * 2.54;
         self.mouse_moved_cm += cm;
         self.pixels_moved = 0.0;
-
-        debug!("Mouse moved cm: {}", self.mouse_moved_cm);
     }
 
     #[cfg(target_os = "linux")]
@@ -87,7 +100,7 @@ impl KeyLogger {
             } else {
                 distance_moved
             };
-            //debug!("adjusted_distance: {adjusted_distance}");
+
             // Accumulate the adjusted distance in pixels
             self.pixels_moved += adjusted_distance;
         }
@@ -131,27 +144,7 @@ impl KeyLogger {
     }
 }
 
-fn spawn_ticker(tx: mpsc::Sender<Event>, duration: Duration, event: Event) {
-    tokio::spawn(async move {
-        let mut interval = interval(duration);
-        loop {
-            interval.tick().await;
-            if tx.send(event).await.is_err() {
-                break;
-            }
-        }
-    });
-}
-
-pub async fn init(dpi_arg: Option<u32>, interval: Option<u32>) {
-    let con = open_con().unwrap_or_else(|err| {
-        error!(
-            "Could not open a connection with local database for Keylogger, quitting!\n Err: {:?}",
-            err
-        );
-        panic!();
-    });
-
+pub async fn init(dpi_arg: Option<u32>, interval: Option<u32>, backend: StorageBackend) {
     let db_int = if let Some(interval) = interval {
         info!("Interval argument provided, changing values.");
         interval
@@ -159,71 +152,62 @@ pub async fn init(dpi_arg: Option<u32>, interval: Option<u32>) {
         300
     };
 
-    let logger = Arc::new(Mutex::new(KeyLogger::new(&con, dpi_arg)));
-
-    let (tx_ticker, mut rx_ticker) = channel(20);
+    let logger = Arc::new(Mutex::new(KeyLogger::new(&backend, dpi_arg).await));
+    let (tx_t, mut rx_t) = channel(20);
 
     spawn_ticker(
-        tx_ticker.clone(),
+        tx_t.clone(),
         Duration::from_secs(db_int.into()),
         Event::DbUpdate,
     );
 
     let logger_db = logger.clone();
-    let db_update_task = tokio::spawn(async move {
-        while let Some(event) = rx_ticker.recv().await {
-            match event {
-                Event::DbUpdate => {
-                    let mut guard = logger_db.lock().unwrap();
-                    debug!("Database event tick, sending data from Keylogger now.");
-                    guard.update_to_cm();
-                    debug!(
-                        "Current logger data from keylogger being send: {:#?}",
-                        guard
-                    );
-                    if let Err(e) = update_keyst(&con, &guard) {
-                        error!("Error sending data to input table. Error: {e:?}");
-                    }
+
+    tokio::spawn(async move {
+        while let Some(event) = rx_t.recv().await {
+            if let Event::DbUpdate = event {
+                let mut guard = logger_db.lock().await;
+                guard.update_to_cm();
+
+                if let Err(e) = backend.store_keys_data(&guard).await {
+                    error!("Call to backend to store keys data failed.\nError: {e}");
                 }
             }
         }
     });
 
-    info!(
-        "Ticker for database updates created, interval is:[{}]",
-        db_int
-    );
+    info!("Interval for database updates is: {} seconds.", db_int);
 
-    // For some reason, using tokio threads does not work, events are sent by the channel but rx
-    // receives nothing.
-    let (tx, mut rx) = mpsc::unbounded_channel();
-    let _listener = thread::spawn(move || {
-        info!("Event listener started.");
+    let (tx, mut rx) = mpsc::channel(300);
+
+    // I am not sure if is the right choice call spawn_blocking here but it seems to be because
+    // listen is not async.
+    // https://stackoverflow.com/questions/63363513/sync-async-interoperable-channels
+    // https://ryhl.io/blog/async-what-is-blocking/
+    tokio::task::spawn_blocking(move || {
         listen(move |event| {
-            //debug!("Captured event: {:?}", event);
-            if let Err(e) = tx.send(event) {
-                error!("Could not send event through channel. err: {:?}", e);
-            } else {
-                //debug!("Event sent through channel successfully");
-            }
+            tx.blocking_send(event).unwrap_or_else(|err| {
+                error!("Could not send event by bounded channel.\nError: {err}");
+            });
+            //debug!("Event sent.");
         })
         .expect("Could not listen to keys");
     });
 
     // Wait until receive a event from the task above to compute it.
     while let Some(event) = rx.recv().await {
+        //println!("Received {:?}", event);
         handle_event(event, &logger).await;
     }
-
-    // This task will not end.
-    db_update_task.await.unwrap();
 }
 
 async fn handle_event(event: rdev::Event, logger: &Arc<Mutex<KeyLogger>>) {
     //debug!("{:?}", event);
 
-    let mut logger = logger.lock().unwrap();
-    // Basically the code just increment depending on the event type.
+    // This might hurt the performance if waiting for lock but since database updates are not so
+    // often, shouldn't be a problem.
+    let mut logger = logger.lock().await;
+
     match event.event_type {
         rdev::EventType::ButtonPress(button) => match button {
             rdev::Button::Left => logger.left_clicks += 1,

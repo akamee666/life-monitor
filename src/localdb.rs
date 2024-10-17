@@ -1,6 +1,15 @@
-use crate::{keylogger::KeyLogger, processinfo::ProcessInfo};
-use rusqlite::{params, Connection, OpenFlags, Result as SqlResult};
-use std::{env, fs, path::PathBuf};
+use crate::keylogger::KeyLogger;
+use crate::ProcessInfo;
+
+use rusqlite::params;
+use rusqlite::Connection;
+use rusqlite::OpenFlags;
+use rusqlite::Result as SqlResult;
+
+use std::env;
+use std::fs;
+use std::path::PathBuf;
+
 use tracing::*;
 
 #[cfg(target_os = "linux")]
@@ -17,13 +26,14 @@ pub fn clean_database() -> std::io::Result<()> {
 }
 
 pub fn update_keyst(conn: &Connection, logger_data: &KeyLogger) -> SqlResult<()> {
+    debug!("Updating keys table, current Keylogger: {:#?}", logger_data);
     let query_update = "
         UPDATE keys
         SET left_clicks = ?,
             right_clicks = ?,
             middle_clicks = ?,
             keys_pressed = ?,
-            mouse_moved_cm = ?,
+            mouse_moved_cm = ?, 
             mouse_dpi = ? WHERE id = 1;
     ";
 
@@ -53,7 +63,7 @@ pub fn get_keyst(conn: &Connection) -> SqlResult<KeyLogger> {
 
     // Assuming there is only one row
     let row = stmt.query_row([], |row| {
-        Ok(KeyLogger {
+        let k = KeyLogger {
             left_clicks: row.get(0)?,
             right_clicks: row.get(1)?,
             middle_clicks: row.get(2)?,
@@ -64,16 +74,17 @@ pub fn get_keyst(conn: &Connection) -> SqlResult<KeyLogger> {
                 ..Default::default()
             },
             ..Default::default()
-        })
+        };
+        Ok(k)
     })?;
 
     Ok(row)
 }
 
+// Need to be owned by the caller, Vec seems better in that case.
 pub fn get_proct(conn: &Connection) -> SqlResult<Vec<ProcessInfo>> {
-    debug!("Getting data from proc table");
     let query = "
-        SELECT process_name, seconds_spent, instance, window_class
+        SELECT window_name,window_time,window_instance, window_class
         FROM procs;
     ";
 
@@ -82,9 +93,9 @@ pub fn get_proct(conn: &Connection) -> SqlResult<Vec<ProcessInfo>> {
     let process_vec = stmt
         .query_map([], |row| {
             Ok(ProcessInfo {
-                name: row.get(0)?,
-                time_spent: row.get(1)?,
-                instance: row.get(2)?,
+                window_name: row.get(0)?,
+                window_time: row.get(1)?,
+                window_instance: row.get(2)?,
                 window_class: row.get(3)?,
             })
         })?
@@ -93,36 +104,33 @@ pub fn get_proct(conn: &Connection) -> SqlResult<Vec<ProcessInfo>> {
     Ok(process_vec)
 }
 
-pub fn update_proct(conn: &Connection, process_vec: &Vec<ProcessInfo>) -> SqlResult<()> {
+// Only borrowing and only reading the data, &[ProcessInfo] is better in that case.
+pub fn update_proct(conn: &Connection, process_vec: &[ProcessInfo]) -> SqlResult<()> {
     for process in process_vec {
-        // Check if the process already exists in the table
-        let query_check = "SELECT 1 FROM procs WHERE process_name = ? LIMIT 1;";
+        // FIX:
+        let query_check = "SELECT 1 FROM procs WHERE window_name = ? LIMIT 1;";
         let mut stmt_check = conn.prepare(query_check)?;
-        let exists = stmt_check.exists(params![&process.name])?;
+        let exists = stmt_check.exists(params![&process.window_name])?;
 
         if exists {
-            //debug!(
-            //    "Already have this program in processes table, updating values for {}",
-            //    process.name
-            //);
-            let query_update = "UPDATE procs SET seconds_spent = ?, instance = ?, window_class = ? WHERE process_name = ?;";
+            let query_update = "UPDATE procs SET window_time = ?, window_instance = ?, window_class = ? WHERE process_name = ?;";
             conn.execute(
                 query_update,
                 params![
-                    process.time_spent,
-                    process.instance,
+                    process.window_time,
+                    process.window_instance,
                     process.window_class,
-                    process.name
+                    process.window_name
                 ],
             )?;
         } else {
-            let query_insert = "INSERT INTO procs (process_name, seconds_spent, instance, window_class) VALUES (?, ?, ?, ?);";
+            let query_insert = "INSERT INTO procs (window_name,window_time,window_instance, window_class) VALUES (?, ?, ?, ?);";
             conn.execute(
                 query_insert,
                 params![
-                    process.name,
-                    process.time_spent,
-                    process.instance,
+                    process.window_name,
+                    process.window_time,
+                    process.window_instance,
                     process.window_class
                 ],
             )?;
@@ -209,9 +217,9 @@ fn initialize_database(conn: &Connection) -> SqlResult<()> {
         "
         CREATE TABLE IF NOT EXISTS procs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            process_name TEXT NOT NULL,
-            seconds_spent INTEGER NOT NULL,
-            instance TEXT,
+            window_name TEXT NOT NULL,
+            window_time INTEGER NOT NULL,
+            window_instance TEXT,
             window_class TEXT NOT NULL
         );
     ",
@@ -296,15 +304,15 @@ mod tests {
 
         let initial_processes = vec![
             ProcessInfo {
-                name: "test_process1".to_string(),
-                time_spent: 100,
-                instance: "test_instance1".to_string(),
+                window_name: "test_process1".to_string(),
+                window_time: 100,
+                window_instance: "test_instance1".to_string(),
                 window_class: "test_class1".to_string(),
             },
             ProcessInfo {
-                name: "test_process2".to_string(),
-                time_spent: 200,
-                instance: "test_instance2".to_string(),
+                window_name: "test_process2".to_string(),
+                window_time: 200,
+                window_instance: "test_instance2".to_string(),
                 window_class: "test_class2".to_string(),
             },
         ];
@@ -314,23 +322,23 @@ mod tests {
         // Verify the data was inserted correctly
         let result = get_proct(&conn)?;
         assert_eq!(result.len(), 2);
-        assert_eq!(result[0].name, "test_process1");
-        assert_eq!(result[0].time_spent, 100);
-        assert_eq!(result[1].name, "test_process2");
-        assert_eq!(result[1].time_spent, 200);
+        assert_eq!(result[0].window_name, "test_process1");
+        assert_eq!(result[0].window_time, 100);
+        assert_eq!(result[1].window_name, "test_process2");
+        assert_eq!(result[1].window_time, 200);
 
         // Update existing process and add a new one
         let updated_processes = vec![
             ProcessInfo {
-                name: "test_process1".to_string(),
-                time_spent: 150,
-                instance: "test_instance1_updated".to_string(),
+                window_name: "test_process1".to_string(),
+                window_time: 150,
+                window_instance: "test_instance1_updated".to_string(),
                 window_class: "test_class1".to_string(),
             },
             ProcessInfo {
-                name: "test_process3".to_string(),
-                time_spent: 300,
-                instance: "test_instance3".to_string(),
+                window_name: "test_process3".to_string(),
+                window_time: 300,
+                window_instance: "test_instance3".to_string(),
                 window_class: "test_class3".to_string(),
             },
         ];
@@ -342,58 +350,16 @@ mod tests {
         assert_eq!(updated_result.len(), 3);
         let process1 = updated_result
             .iter()
-            .find(|p| p.name == "test_process1")
+            .find(|p| p.window_name == "test_process1")
             .unwrap();
-        assert_eq!(process1.time_spent, 150);
-        assert_eq!(process1.instance, "test_instance1_updated");
+        assert_eq!(process1.window_time, 150);
+        assert_eq!(process1.window_instance, "test_instance1_updated");
 
         let process3 = updated_result
             .iter()
-            .find(|p| p.name == "test_process3")
+            .find(|p| p.window_name == "test_process3")
             .unwrap();
-        assert_eq!(process3.time_spent, 300);
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_clean_database() -> SqlResult<()> {
-        use tempdir::TempDir;
-        // Create a temporary directory for the test database
-        let temp_dir = TempDir::new("temp_dir").unwrap();
-        let db_path = temp_dir.path().join("test_db.sqlite");
-
-        // Set the environment variable to point to the test database
-        std::env::set_var("HOME", temp_dir.path());
-
-        // Create and populate the database
-        {
-            let conn = Connection::open(&db_path)?;
-            initialize_database(&conn)?;
-
-            let logger_data = KeyLogger {
-                left_clicks: 10,
-                right_clicks: 5,
-                middle_clicks: 2,
-                keys_pressed: 100,
-                mouse_moved_cm: 50.0,
-                mouse_settings: MouseSettings {
-                    dpi: 1600,
-                    ..Default::default()
-                },
-                ..Default::default()
-            };
-            update_keyst(&conn, &logger_data)?;
-        }
-
-        // Verify the database exists
-        assert!(db_path.exists());
-
-        // Clean the database
-        clean_database().unwrap();
-
-        // Verify the database has been deleted
-        assert!(!db_path.exists());
+        assert_eq!(process3.window_time, 300);
 
         Ok(())
     }

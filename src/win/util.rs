@@ -1,3 +1,4 @@
+use serde::Deserialize;
 use std::{ffi::OsString, os::windows::ffi::OsStringExt, time::Duration};
 use sysinfo::{Pid, ProcessRefreshKind, RefreshKind};
 use tracing::*;
@@ -67,7 +68,7 @@ pub fn get_idle_time() -> Result<Duration, windows::core::Error> {
     Ok(Duration::from_millis(diff.into()))
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct MouseSettings {
     pub threshold: i32,
     pub threshold2: i32,

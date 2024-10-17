@@ -1,9 +1,10 @@
 use std::time::Duration;
+
+use serde::Deserialize;
+use x11rb::connection::Connection;
+use x11rb::protocol::screensaver;
 use x11rb::protocol::xproto::*;
 use x11rb::rust_connection::RustConnection;
-
-use x11rb::connection::Connection;
-use x11rb::protocol::xproto::ConnectionExt;
 
 // https://www.reddit.com/r/rust/comments/f7yrle/get_information_about_current_window_xorg/
 // Returns name, instance and class of the focused window in that order.
@@ -64,7 +65,7 @@ pub fn get_screen_dpi() -> Result<f64, Box<dyn std::error::Error>> {
     Ok(average_dpi)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, Deserialize)]
 pub struct MouseSettings {
     pub threshold: u16,
     pub acceleration_denominator: u16,
@@ -122,11 +123,6 @@ pub fn get_mouse_settings() -> Result<MouseSettings, Box<dyn std::error::Error>>
 }
 
 pub fn get_idle_time() -> Result<Duration, Box<dyn std::error::Error>> {
-    use std::time::Duration;
-    use x11rb::connection::Connection;
-    use x11rb::protocol::screensaver;
-    use x11rb::rust_connection::RustConnection;
-
     // Connect to the X server
     let (conn, screen_num) = RustConnection::connect(None)?;
     // Get the root window of the default screen
