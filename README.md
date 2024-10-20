@@ -27,3 +27,4 @@ If you followed the [building section](#building), that should start the life-mo
 ## TODO
 
 [ ] - Error handling using the api.
+[ ] - Organize project tree.
