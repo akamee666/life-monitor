@@ -2,6 +2,13 @@
 name = "life-monitor"
 version = "0.1.0"
 edition = "2021"
+authors = ["Davi Aguiar mooraesz123@gmail.com"]
+description = "A tool to track your daily activities"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/akamee666/life-monitor"
+keywords = ["cli", "tracker", "spyware"]
+categories = ["command-line-utilities"]
 
 [[bin]]
 name = "life-monitor"

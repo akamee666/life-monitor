@@ -2,7 +2,7 @@ use crate::data::{DataStore, StorageBackend};
 use crate::linux::util::get_focused_window;
 use crate::spawn_ticker;
 use crate::Event;
-use crate::ProcessInfo;
+use crate::ProcessTracker;
 use crate::{check_idle, update_window_time};
 
 use sysinfo::System;

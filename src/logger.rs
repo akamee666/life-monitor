@@ -11,9 +11,9 @@ use tracing_subscriber::{filter, fmt, prelude::*};
 
 pub fn init(enable_debug: bool) {
     if enable_debug {
-        // Display only error and warns to stdout by default, use RUST_LOG to change filter.
+        // Display only error, info and warns to stdout by default, use RUST_LOG to change filter.
         let env_filter_std = EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new("warn"))
+            .unwrap_or_else(|_| EnvFilter::new("info"))
             .add_directive("hyper=off".parse().unwrap())
             .add_directive("hyper_util=off".parse().unwrap())
             .add_directive("reqwest=off".parse().unwrap());
@@ -26,15 +26,15 @@ pub fn init(enable_debug: bool) {
 
         registry(env_filter_file, env_filter_std);
     } else {
-        // Display only error and warns to stdout by default, use RUST_LOG to change filter.
+        // Display only error,info and warns to stdout by default, use RUST_LOG to change filter.
         let env_filter_std = EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new("warn"))
+            .unwrap_or_else(|_| EnvFilter::new("info"))
             .add_directive("hyper=off".parse().unwrap())
             .add_directive("hyper_util=off".parse().unwrap())
             .add_directive("reqwest=off".parse().unwrap());
 
-        // Display only error and warns to file.
-        let env_filter_file = EnvFilter::new("warn")
+        // Display only error,info and warns to file.
+        let env_filter_file = EnvFilter::new("info")
             .add_directive("hyper=off".parse().unwrap())
             .add_directive("hyper_util=off".parse().unwrap())
             .add_directive("reqwest=off".parse().unwrap());
@@ -48,7 +48,7 @@ fn registry(env_filter_file: EnvFilter, env_filter_std: EnvFilter) {
 
     let file = match create_file() {
         Ok(file) => file,
-        Err(error) => panic!("Error: {:?}", error),
+        Err(error) => panic!("Error: {error}"),
     };
 
     let stdout_log = fmt::layer().with_target(false).without_time().event_format(
