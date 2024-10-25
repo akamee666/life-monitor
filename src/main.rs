@@ -1,4 +1,4 @@
-//#![windows_subsystem = "windows"]
+#![windows_subsystem = "windows"]
 // used to close the terminal and create a gui with no window.
 
 use life_monitor::api::ApiConfig;
@@ -13,6 +13,12 @@ use reqwest::Client;
 
 use tokio::task::JoinSet;
 
+use std::env;
+use std::fs;
+use std::io::Write;
+use std::path::Path;
+use std::process::Command;
+
 use tracing::*;
 
 #[tokio::main]
@@ -20,6 +26,26 @@ async fn main() {
     let mut args = Cli::parse();
     logger::init(args.debug);
     args.print_args();
+
+    if args.enable_startup || args.disable_startup {
+        match configure_startup(args.enable_startup) {
+            Ok(_) => {
+                info!(
+                    "Startup configuration {} successfully, the program will end now. Start it again without the start up flag to run normally.",
+                    if args.enable_startup {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    }
+                );
+                return;
+            }
+            Err(e) => {
+                error!("Failed to configure startup: {}", e);
+                panic!();
+            }
+        }
+    }
 
     if args.debug && args.interval.is_none() {
         info!("Debug is true but no interval value provided, using default five seconds!");
@@ -137,4 +163,120 @@ async fn run(args: Cli, backend: StorageBackend) {
             }
         }
     }
+}
+
+#[cfg(target_os = "windows")]
+pub fn configure_startup(enable: bool) -> Result<(), Box<dyn std::error::Error>> {
+    use std::path::PathBuf;
+
+    let startup_folder = if let Some(appdata) = env::var_os("APPDATA") {
+        PathBuf::from(appdata)
+            .join("Microsoft")
+            .join("Windows")
+            .join("Start Menu")
+            .join("Programs")
+            .join("Startup")
+    } else {
+        return Err("Could not find APPDATA environment variable".into());
+    };
+
+    let shortcut_path = startup_folder.join("life_monitor.lnk");
+    let current_exe = env::current_exe()?;
+
+    if enable {
+        // Using PowerShell to create shortcut since it's more reliable than direct COM automation
+        let ps_script = format!(
+            "$WScriptShell = New-Object -ComObject WScript.Shell; \
+             $Shortcut = $WScriptShell.CreateShortcut('{}'); \
+             $Shortcut.TargetPath = '{}'; \
+             $Shortcut.Save()",
+            shortcut_path.to_str().unwrap(),
+            current_exe.to_str().unwrap()
+        );
+
+        Command::new("powershell")
+            .arg("-Command")
+            .arg(&ps_script)
+            .output()?;
+
+        info!("Created startup shortcut at: {:?}", shortcut_path);
+    } else if shortcut_path.exists() {
+        fs::remove_file(&shortcut_path)?;
+        info!("Removed startup shortcut");
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+pub fn configure_startup(enable: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let service_name = "life-monitor.service";
+    let service_path = Path::new("/etc/systemd/system").join(service_name);
+    let current_exe = env::current_exe()?;
+
+    if enable {
+        // Create systemd service file
+        let service_content = format!(
+            "[Unit]\n\
+            Description=Life Monitor Service\n\
+            After=network.target\n\
+            \n\
+            [Service]\n\
+            Type=simple\n\
+            ExecStart={}\n\
+            Restart=always\n\
+            User={}\n\
+            \n\
+            [Install]\n\
+            WantedBy=multi-user.target\n",
+            current_exe.to_str().unwrap(),
+            env::var("USER").unwrap_or_else(|_| String::from("root"))
+        );
+
+        // Write service file (requires root privileges)
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&service_path)?;
+
+        file.write_all(service_content.as_bytes())?;
+
+        // Enable and start the service
+        Command::new("systemctl").arg("daemon-reload").status()?;
+
+        Command::new("systemctl")
+            .arg("enable")
+            .arg(service_name)
+            .status()?;
+
+        Command::new("systemctl")
+            .arg("start")
+            .arg(service_name)
+            .status()?;
+
+        info!("Created and enabled systemd service: {}", service_name);
+    } else {
+        // Disable and stop the service
+        Command::new("systemctl")
+            .arg("stop")
+            .arg(service_name)
+            .status()?;
+
+        Command::new("systemctl")
+            .arg("disable")
+            .arg(service_name)
+            .status()?;
+
+        // Remove service file if it exists
+        if service_path.exists() {
+            fs::remove_file(&service_path)?;
+        }
+
+        Command::new("systemctl").arg("daemon-reload").status()?;
+
+        info!("Removed systemd service: {}", service_name);
+    }
+
+    Ok(())
 }
