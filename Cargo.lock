@@ -875,6 +875,7 @@ dependencies = [
  "tracing-subscriber",
  "tray-item",
  "windows 0.52.0",
+ "winreg",
  "x11rb",
 ]
 

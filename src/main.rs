@@ -1,5 +1,5 @@
 #![windows_subsystem = "windows"]
-// used to close the terminal and create a gui with no window.
+// used to close the terminal and create a gui with no window in Windows.
 
 use life_monitor::api::ApiConfig;
 use life_monitor::args::Cli;
@@ -26,6 +26,7 @@ async fn main() {
     let mut args = Cli::parse();
     logger::init(args.debug);
     args.print_args();
+    check_startup().unwrap();
 
     if args.enable_startup || args.disable_startup {
         match configure_startup(args.enable_startup) {
@@ -209,74 +210,173 @@ pub fn configure_startup(enable: bool) -> Result<(), Box<dyn std::error::Error>>
 }
 
 #[cfg(target_os = "linux")]
+pub fn check_startup_status() -> Result<bool, Box<dyn std::error::Error>> {
+    let service_name = "life-monitor.service";
+
+    // Check if service is enabled
+    let status = Command::new("systemctl")
+        .args(["--user", "is-enabled", service_name])
+        .output()?;
+
+    // Also check if the service file exists
+    let user_service_dir = Path::new(&env::var("HOME")?).join(".config/systemd/user");
+    let service_path = user_service_dir.join(service_name);
+
+    let is_enabled = status.status.success() && service_path.exists();
+
+    info!(
+        "Startup status on Linux: {}",
+        if is_enabled { "Enabled" } else { "Disabled" }
+    );
+
+    Ok(is_enabled)
+}
+
+pub fn check_startup() -> Result<bool, Box<dyn std::error::Error>> {
+    #[cfg(target_os = "linux")]
+    {
+        check_startup_status()
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        check_startup_status()
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        error!("Startup check not implemented for this operating system");
+        Ok(false)
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub fn check_startup_status() -> Result<bool, Box<dyn std::error::Error>> {
+    use std::path::PathBuf;
+    use winreg::enums::*;
+    use winreg::RegKey;
+
+    // Check Startup folder
+    let startup_folder: PathBuf = if let Ok(appdata) = env::var("APPDATA") {
+        PathBuf::from(appdata)
+            .join("Microsoft")
+            .join("Windows")
+            .join("Start Menu")
+            .join("Programs")
+            .join("Startup")
+            .join("life-monitor.lnk")
+    } else {
+        PathBuf::new()
+    };
+
+    let startup_exists = startup_folder.exists();
+
+    // Also check Registry (as a fallback since some programs use this method)
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let startup_path = r"Software\Microsoft\Windows\CurrentVersion\Run";
+    let startup = hkcu.open_subkey(startup_path)?;
+
+    let current_exe = env::current_exe()?;
+    let exe_path = current_exe.to_string_lossy().to_string();
+
+    let registry_enabled = match startup.get_value::<String, _>("LifeMonitor") {
+        Ok(path) => path == exe_path,
+        Err(_) => false,
+    };
+
+    let is_enabled = startup_exists || registry_enabled;
+
+    info!("Startup status on Windows:");
+    info!(
+        "  Startup Folder: {}",
+        if startup_exists {
+            "Enabled"
+        } else {
+            "Disabled"
+        }
+    );
+    info!(
+        "  Registry: {}",
+        if registry_enabled {
+            "Enabled"
+        } else {
+            "Disabled"
+        }
+    );
+    info!(
+        "  Overall: {}",
+        if is_enabled { "Enabled" } else { "Disabled" }
+    );
+
+    Ok(is_enabled)
+}
+
+#[cfg(target_os = "linux")]
 pub fn configure_startup(enable: bool) -> Result<(), Box<dyn std::error::Error>> {
     let service_name = "life-monitor.service";
-    let service_path = Path::new("/etc/systemd/system").join(service_name);
+    // Change to user service directory instead of system
+    let user_service_dir = Path::new(&env::var("HOME")?).join(".config/systemd/user");
+    fs::create_dir_all(&user_service_dir)?;
+    let service_path = user_service_dir.join(service_name);
     let current_exe = env::current_exe()?;
 
     if enable {
-        // Create systemd service file
+        // Create systemd user service file
         let service_content = format!(
             "[Unit]\n\
             Description=Life Monitor Service\n\
-            After=network.target\n\
+            After=graphical-session.target\n\
+            PartOf=graphical-session.target\n\
             \n\
             [Service]\n\
             Type=simple\n\
+            Environment=DISPLAY=:0\n\
+            Environment=XAUTHORITY=/home/{}/.Xauthority\n\
             ExecStart={}\n\
             Restart=always\n\
-            User={}\n\
             \n\
             [Install]\n\
-            WantedBy=multi-user.target\n",
-            current_exe.to_str().unwrap(),
-            env::var("USER").unwrap_or_else(|_| String::from("root"))
+            WantedBy=graphical-session.target\n",
+            env::var("USER")?,
+            current_exe.to_str().unwrap()
         );
 
-        // Write service file (requires root privileges)
+        // Write service file
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
             .open(&service_path)?;
-
         file.write_all(service_content.as_bytes())?;
 
-        // Enable and start the service
-        Command::new("systemctl").arg("daemon-reload").status()?;
-
+        // Enable and start the user service
         Command::new("systemctl")
-            .arg("enable")
-            .arg(service_name)
+            .args(["--user", "daemon-reload"])
             .status()?;
-
         Command::new("systemctl")
-            .arg("start")
-            .arg(service_name)
+            .args(["--user", "enable", service_name])
             .status()?;
-
-        info!("Created and enabled systemd service: {}", service_name);
+        Command::new("systemctl")
+            .args(["--user", "start", service_name])
+            .status()?;
+        info!("Created and enabled user systemd service: {}", service_name);
     } else {
-        // Disable and stop the service
+        // Disable and stop the user service
         Command::new("systemctl")
-            .arg("stop")
-            .arg(service_name)
+            .args(["--user", "stop", service_name])
             .status()?;
-
         Command::new("systemctl")
-            .arg("disable")
-            .arg(service_name)
+            .args(["--user", "disable", service_name])
             .status()?;
 
         // Remove service file if it exists
         if service_path.exists() {
             fs::remove_file(&service_path)?;
         }
-
-        Command::new("systemctl").arg("daemon-reload").status()?;
-
-        info!("Removed systemd service: {}", service_name);
+        Command::new("systemctl")
+            .args(["--user", "daemon-reload"])
+            .status()?;
+        info!("Removed user systemd service: {}", service_name);
     }
-
     Ok(())
 }

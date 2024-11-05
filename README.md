@@ -1,32 +1,91 @@
 # Life Monitor in Rust
 
-The main goal of this project is to create a mini spyware on my own to monitor what I'm doing daily and create some graphs about it to use in a personal blog. This idea comes from this post that I found interesting on Twitter: [vin_acct Twitter post](https://x.com/vin_acct/status/1807973375014506597)
+The main goal of this project is to create a mini spyware on my own to monitor what I'm doing daily and create some graphs about it to use in a personal blog. This idea comes from this post that I found interesting on Twitter: [Vin Twitter post](https://x.com/vin_acct/status/1807973375014506597)
 
-## Building from source
+### Installing
+
+You can install life-monitor easily by using cargo install,although i am not sure how up to date it is compared to current commits :3
+
+1. Installing and running.
+
+```bash
+cargo install life-monitor
+life-monitor
+```
+
+Binary will be available at `~/.cargo/bin/life-monitor` 
+
+If you tried to run and received a error about unknown command, mostly likely you don't have Cargo variable in your path, you can add running the following command.
+
+1. Fish Shell
+
+```bash
+fish_add_path /home/your-username/.cargo/bin/
+```
+
+### Building from source
 
 - Install [rustup](https://rustup.rs/) and [cargo](https://github.com/rust-lang/cargo/)
 - Install and configure the default toolchain with `rustup install stable` and `rustup default stable`
 - Install the equivalent of the `libssl-dev` package using your package manager
 - Clone this repository and enter it
-- Run `cargo build` or `cargo run`
+- Run `cargo build --release` or `cargo run`
+
+The compiled binary will be available at `./target/release/life-monitor`
 
 <a id="compiling-windows"></a>
 Note: To cross compile, you may need to install additional packages. cross-compile with `cargo build --target x86_64-pc-windows-gnu` (assuming you've already added the `windows` toolchain via `rustup target add x86_64-pc-windows-gnu`).
 
-## About the project
+### Usage
+Usage: life-monitor [OPTIONS]
+
+| Flag | Long Form | Description |
+| --- | --- | --- |
+|`-t` | `--interval` <secs> | Set interval for data sending (secs) |
+|`-k` | `--no-keys `| Disable key/mouse tracking |
+|`-w` | `--no-window`  | Disable window-based tracking |
+|`-d` | `--debug` | Enable debug mode |
+|`-a` | `--api` <config.json> | Use API from config file |
+|`-p` | `--dpi` <dpi> | Specify mouse DPI for tracking |
+|`-c` | `--clear`  | Clear existing data, start new |
+|`-h` | `--help` | Show help information |
+
+More detailed descriptions can be found running with --help flag.
 
 ### Contribute
 
-The program is almost finished, no entirely cause i didn't test it enough. It probably  has bugs, but it's usable, I guess. I'll continue working on it and adding features, of course. Go ahead if you want to try it; the worst that can happen is incorrect data being sent to the database or the program crashes. Also, if you think you've found a bug, I would be happy if you report it to me so I can fix it as soon as possible. If you want some kind of feature, you can fork and open a PR, and I will accept it as soon as possible, or just clone and do whatever you want. One people ask me if it was okay to clone the repo to learning purpose, so I did add some comments to help. If you want some kind of feature but don't want to code it, contact me or open an issue, and I'll try to add it as soon as possible.
+The program is finish, not entirely cause i didn't test it enough. It probably has bugs :3, but it's usable, I guess. I'll continue working on it and adding features if requested, of course. Go ahead if you want to try it, the worst that can happen is incorrect data being sent to the database or the program crashing. Also, if you think you've found a bug, I would be happy if you report it to me so I can fix it as soon as possible. If you want some kind of feature, you can fork and open a PR, and I will accept it as soon as possible, or just clone and do whatever you want. One people ask me if it was okay to clone the repo to learning purpose, so I did add some comments to help. If you want some kind of feature but don't want to code it, contact me or open an issue, and I'll try to add it as soon as possible.
 
 ### What life-monitor does
 
-If you followed the [building section](#building), that should start the life-monitor and close the current CMD. Life-monitor will start tracking your activities and send them to a db file at %LOCALAPPDATA%\akame_monitor\forgotthename.db. After that, it's all up to you to use the data collected by the life-monitor however you want. You can stop its process by using the system tray item that should be spawned in the taskbar when you start life-monitor. Life-monitor does not start with your system; you need to run it from CMD every time you boot (I'll add an option to activate this soon). If you have the feeling that the data isn't accurate (which I am almost sure it wouldn't be for mouse distance, I'll try to fix that as well), has weird names, or whatever kind of weird behavior, please open an issue or contact me somewhere, and I'll try to fix it as soon as possible. AVs can flag life-monitor as malware (which is reasonable) due to its functionalities, but life-monitor will NOT steal or send your data to other places. You can read the code and confirm it yourself or debug it (which I do not recommend, see this issue). If you are struggling to understand, contact me somewhere, and I will do my best to explain it to you.
+Life-monitor will start listening for inputs and active windows, it will save how many keys and buttons you press in your keyboard and mouse, it also tries to measure how much you are moving your mouse on your table and convert it to centimeters.For the active window, it saves its `name` and `class` using `X11` or `WINAPI` and keep increasing a timer while the window is active. If you did not use the `--api` flag, life-monitor will save all data it has collected to different paths depending if you are on Windows or Linux using `SQLITE`. A log file will also be found at these paths with the name `spy.log`.
 
+For Windows it will be saved at: `%LOCALAPPDATA%\akame_monitor\data.db`
 
-## TODO
+For Linux it will be saved at: `/home/user/.local/share/akame_monitor/`
+
+You can visualize the collected data using [SQLite Browser](https://sqlitebrowser.org/).
+
+After that, it's all up to you to use the data collected however you want. You can stop its process by using the system tray if you are on Windows or using kill command if you are on Linux. If you have the feeling that the data isn't accurate, which it probably will be for mouse distance, please open an issue or contact me somewhere, and I'll try to fix it as soon as possible. Your AV will most likely flag it as a spyware(which is reasonable) due to its functionalities, but will NOT steal or send your data to somewhere else. You can read the code and confirm it yourself or debug it, but I do not recommend trying to debug it though, you can check this [issue](https://github.com/Narsil/rdev/issues/128) from the library that it's used to listen to inputs, most likely the "problem" is with the `SetWindowsHookEx` as you can see [here](https://developercommunity.visualstudio.com/t/debugging-with-keyboard-very-slow/42018).
+
+If you are struggling to understand the code, contact me somewhere, and I will do my best to explain it to you.
+
+### Todo
 
 [x] - Autostart argument.
-[ ] - Error handling using the api.
+
+[ ] - Check CPU load when updating procs table. Now that i am creating different rows if the name does not match it's getting quite big.
+
+[ ] - Space one or two seconds the interval for updates in one of the two tasks.
+
+[x] - Log if start up is enabled or not
+
+[ ] - Error when starting service on linux because i am dumb!!!!
+
+[ ] - Error handling when using API.
+
+[ ] - Maybe implement a feature that calcs percentages of most used apps and so on i guess it would be cool.
+
 [ ] - Organize project tree.
+
 [ ] - Create Github actions for releases.

@@ -151,7 +151,7 @@ fn find_path() -> Result<PathBuf, std::io::Error> {
         })?;
         let mut path = PathBuf::from(local_app_data);
         path.push("akame_monitor");
-        path.push("tracked_data.db");
+        path.push("data.db");
 
         path
     } else if cfg!(target_os = "linux") {
@@ -162,7 +162,7 @@ fn find_path() -> Result<PathBuf, std::io::Error> {
         path.push(".local");
         path.push("share");
         path.push("akame_monitor");
-        path.push("tracked_data.db");
+        path.push("data.db");
 
         path
     } else {
