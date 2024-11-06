@@ -41,16 +41,38 @@ Usage: life-monitor [OPTIONS]
 
 | Flag | Long Form | Description |
 | --- | --- | --- |
-|`-t` | `--interval` <secs> | Set interval for data sending (secs) |
-|`-k` | `--no-keys `| Disable key/mouse tracking |
-|`-w` | `--no-window`  | Disable window-based tracking |
-|`-d` | `--debug` | Enable debug mode |
-|`-a` | `--api` <config.json> | Use API from config file |
-|`-p` | `--dpi` <dpi> | Specify mouse DPI for tracking |
-|`-c` | `--clear`  | Clear existing data, start new |
-|`-h` | `--help` | Show help information |
+| `-t` | `--interval` < secs > | Set interval for data sending (secs) |
+| `-k` | `--no-keys `| Disable key/mouse tracking |
+| `-w` | `--no-window`  | Disable window-based tracking |
+| `-d` | `--debug` | Enable debug mode |
+| `-a` | `--api` <config.json> | Use API from config file |
+| `-p` | `--dpi` < dpi > | Specify mouse DPI for tracking |
+| `-c` | `--clear`  | Clear existing data, start new |
+| `-g` | `--gran-level` <0-6>| Divide the entries for keys based on hour. |
+| `-h` | `--help` | Show help information |
 
 More detailed descriptions can be found running with --help flag.
+
+For the API and the `-g` flag check the section below.
+
+`--gran-level`:
+
+This flag helps decide how detailed the data tracking will be for your activity, like keyboard and mouse use, across different times of the day. You can think of it as setting how “zoomed in” you want the time tracking to be:
+
+    Level 0: A single summary of your activity, with no breakdown by time.
+    Level 1: Breaks down your activity into 15-minute intervals.
+    Level 2: Shows activity in 30-minute intervals.
+    Level 3: Tracks in 1-hour intervals.
+    Level 4: Groups activity into 2-hour intervals.
+    Level 5: Summarizes in 4-hour intervals.
+    Level 6: Groups into three broad 8-hour sections across the day.
+
+This way, you can choose how detailed or summarized you want the information to be!
+
+`--api`:
+
+This flag will receive a Json file as argument, you can see the [example](./example.json) in the repository for reference.
+(Need to finish this)
 
 ### Contribute
 
@@ -74,18 +96,24 @@ If you are struggling to understand the code, contact me somewhere, and I will d
 
 [x] - Autostart argument.
 
-[ ] - Check CPU load when updating procs table. Now that i am creating different rows if the name does not match it's getting quite big.
+[x] - Log if start up is enabled or not
+
+[ ] - Create option to save input based on time.
+  [x] - Create flag and descriptions.
+  [ ] - Change how database is structured based on the level.
+
+[ ] - Fix errors when service starts on Linux. >> https://unix.stackexchange.com/questions/397853/how-to-set-a-systemd-unit-to-start-after-loading-the-desktop
+
+[ ] - Check CPU load when updating proc table. Now that i am creating different rows if the name does not match it's getting quite big.
 
 [ ] - Space one or two seconds the interval for updates in one of the two tasks.
 
-[x] - Log if start up is enabled or not
+[x] - Error handling when using API.
 
-[ ] - Error when starting service on linux because i am dumb!!!!
-
-[ ] - Error handling when using API.
-
-[ ] - Maybe implement a feature that calcs percentages of most used apps and so on i guess it would be cool.
+[ ] - Maybe implement a feature that will calculate percentages of most used apps and so on i guess it would be cool.
 
 [ ] - Organize project tree.
 
 [ ] - Create Github actions for releases.
+
+
