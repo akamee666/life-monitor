@@ -37,7 +37,7 @@ impl DataStore for LocalDbStore {
         let k: KeyLogger = keylogger.clone();
         let con = self.con.clone();
 
-        let result = tokio::task::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || {
             let con = con.lock().unwrap();
             update_keyst(&con, &k).map_err(DataStoreError::DbError)
         })
@@ -45,16 +45,14 @@ impl DataStore for LocalDbStore {
         .map_err(|e| {
             error!("Error storing key logger data: {}", e);
             DataStoreError::TaskError(e)
-        })?;
-
-        result
+        })?
     }
 
     async fn store_proc_data(&self, proc_info: &[ProcessInfo]) -> Result<(), DataStoreError> {
         let con = self.con.clone();
         let procs = proc_info.to_vec();
 
-        let result = tokio::task::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || {
             let con = con.lock().unwrap();
             update_proct(&con, &procs).map_err(DataStoreError::DbError)
         })
@@ -62,15 +60,13 @@ impl DataStore for LocalDbStore {
         .map_err(|e| {
             error!("Error storing process data: {}", e);
             DataStoreError::TaskError(e)
-        })?;
-
-        result
+        })?
     }
 
     async fn get_keys_data(&self) -> Result<KeyLogger, DataStoreError> {
         let con = self.con.clone();
 
-        let result = tokio::task::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || {
             let con = con.lock().unwrap();
             get_keyst(&con).map_err(DataStoreError::DbError)
         })
@@ -78,15 +74,13 @@ impl DataStore for LocalDbStore {
         .map_err(|e| {
             error!("Error retrieving key logger data: {}", e);
             DataStoreError::TaskError(e)
-        })?;
-
-        result
+        })?
     }
 
     async fn get_proc_data(&self) -> Result<Vec<ProcessInfo>, DataStoreError> {
         let con = self.con.clone();
 
-        let result = tokio::task::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || {
             let con = con.lock().unwrap();
             get_proct(&con).map_err(DataStoreError::DbError)
         })
@@ -94,9 +88,7 @@ impl DataStore for LocalDbStore {
         .map_err(|e| {
             error!("Error retrieving process data: {}", e);
             DataStoreError::TaskError(e)
-        })?;
-
-        result
+        })?
     }
 }
 

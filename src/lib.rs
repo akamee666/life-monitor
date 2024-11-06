@@ -20,7 +20,6 @@ pub mod data;
 pub mod keylogger;
 pub mod localdb;
 pub mod logger;
-pub mod processinfo;
 
 #[cfg(target_os = "linux")]
 pub mod linux;
@@ -38,7 +37,9 @@ pub enum Event {
 #[derive(Debug)]
 pub struct ProcessTracker {
     time: u64,
-    last_window_class: String,
+    last_wname: String,
+    last_wclass: String,
+    last_winstance: String,
     idle_period: u64,
     procs: Vec<ProcessInfo>,
 }
@@ -52,7 +53,9 @@ impl ProcessTracker {
 
         ProcessTracker {
             time: 0,
-            last_window_class: String::new(),
+            last_wname: String::new(),
+            last_wclass: String::new(),
+            last_winstance: String::new(),
             idle_period: 20,
             procs: d,
         }
@@ -92,30 +95,18 @@ pub fn check_idle(idle_period: &u64) -> bool {
     }
 }
 
-// FIX:
-// Something is fucked up here.
-fn new_window(
-    tracking_data: &mut [ProcessInfo],
-    window_name: &str,
-    window_class: &str,
-    window_instance: &str,
-    time: u64,
-) -> bool {
-    debug!("Checking new window in Vec");
+fn new_window(tracking_data: &mut [ProcessInfo], window_name: &str, time: u64) -> bool {
+    // Tries to find if we already have the same window_name in the vector.
     if let Some(info) = tracking_data
         .iter_mut()
-        .find(|p| p.window_instance == window_instance && p.window_class == window_class)
+        .find(|p| p.window_name == window_name)
     {
+        debug!("Updating time rather than adding new entry.");
         info.window_time += time;
-        if info.window_name != window_name {
-            debug!(
-                "Different name when updating window, info.name: {}. window_name: {}",
-                info.window_name, window_name
-            );
-            info.window_name = window_name.to_string();
-        }
+        debug!("{:#?}\n", tracking_data);
         false
     } else {
+        debug!("Adding new entry rather than updating time.");
         true
     }
 }
@@ -127,20 +118,13 @@ pub fn update_window_time(
     window_instance: String,
     time_diff: u64,
 ) {
-    if new_window(
-        tracking_data,
-        &window_name,
-        &window_class,
-        &window_instance,
-        time_diff,
-    ) {
-        debug!("Adding new entry in Vector");
-        // If it's new, add a new entry.
+    if new_window(tracking_data, &window_name, time_diff) {
         tracking_data.push(ProcessInfo {
             window_name,
             window_time: time_diff,
             window_instance,
             window_class,
         });
+        debug!("After push: {:#?}", tracking_data);
     }
 }
