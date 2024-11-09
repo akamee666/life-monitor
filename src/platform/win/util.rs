@@ -15,6 +15,109 @@ use windows::Win32::{
     },
 };
 
+#[cfg(target_os = "windows")]
+pub fn check_startup_status() -> Result<bool, Box<dyn std::error::Error>> {
+    use std::path::PathBuf;
+    use winreg::enums::*;
+    use winreg::RegKey;
+
+    // Check Startup folder
+    let startup_folder: PathBuf = if let Ok(appdata) = env::var("APPDATA") {
+        PathBuf::from(appdata)
+            .join("Microsoft")
+            .join("Windows")
+            .join("Start Menu")
+            .join("Programs")
+            .join("Startup")
+            .join("life-monitor.lnk")
+    } else {
+        PathBuf::new()
+    };
+
+    let startup_exists = startup_folder.exists();
+
+    // Also check Registry (as a fallback since some programs use this method)
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let startup_path = r"Software\Microsoft\Windows\CurrentVersion\Run";
+    let startup = hkcu.open_subkey(startup_path)?;
+
+    let current_exe = env::current_exe()?;
+    let exe_path = current_exe.to_string_lossy().to_string();
+
+    let registry_enabled = match startup.get_value::<String, _>("LifeMonitor") {
+        Ok(path) => path == exe_path,
+        Err(_) => false,
+    };
+
+    let is_enabled = startup_exists || registry_enabled;
+
+    info!("Startup status on Windows:");
+    info!(
+        "  Startup Folder: {}",
+        if startup_exists {
+            "Enabled"
+        } else {
+            "Disabled"
+        }
+    );
+    info!(
+        "  Registry: {}",
+        if registry_enabled {
+            "Enabled"
+        } else {
+            "Disabled"
+        }
+    );
+    info!(
+        "  Overall: {}",
+        if is_enabled { "Enabled" } else { "Disabled" }
+    );
+
+    Ok(is_enabled)
+}
+
+pub fn configure_startup(enable: bool) -> Result<(), Box<dyn std::error::Error>> {
+    use std::path::PathBuf;
+
+    let startup_folder = if let Some(appdata) = env::var_os("APPDATA") {
+        PathBuf::from(appdata)
+            .join("Microsoft")
+            .join("Windows")
+            .join("Start Menu")
+            .join("Programs")
+            .join("Startup")
+    } else {
+        return Err("Could not find APPDATA environment variable".into());
+    };
+
+    let shortcut_path = startup_folder.join("life_monitor.lnk");
+    let current_exe = env::current_exe()?;
+
+    if enable {
+        // Using PowerShell to create shortcut since it's more reliable than direct COM automation
+        let ps_script = format!(
+            "$WScriptShell = New-Object -ComObject WScript.Shell; \
+             $Shortcut = $WScriptShell.CreateShortcut('{}'); \
+             $Shortcut.TargetPath = '{}'; \
+             $Shortcut.Save()",
+            shortcut_path.to_str().unwrap(),
+            current_exe.to_str().unwrap()
+        );
+
+        Command::new("powershell")
+            .arg("-Command")
+            .arg(&ps_script)
+            .output()?;
+
+        info!("Created startup shortcut at: {:?}", shortcut_path);
+    } else if shortcut_path.exists() {
+        fs::remove_file(&shortcut_path)?;
+        info!("Removed startup shortcut");
+    }
+
+    Ok(())
+}
+
 // Returns window title and class in that order.
 pub fn get_focused_window() -> Result<(String, String), windows::core::Error> {
     unsafe {
@@ -30,7 +133,7 @@ pub fn get_focused_window() -> Result<(String, String), windows::core::Error> {
         }
 
         // Convert the title from UTF-16 to String
-        let window_title = OsString::from_wide(&title[..title_len as usize])
+        let w_title = OsString::from_wide(&title[..title_len as usize])
             .to_string_lossy()
             .into_owned();
 
@@ -40,8 +143,8 @@ pub fn get_focused_window() -> Result<(String, String), windows::core::Error> {
             RefreshKind::new().with_processes(ProcessRefreshKind::new()),
         );
         let proc = sys.processes().get(&Pid::from_u32(process_pid)).unwrap();
-        let window_class = proc.name().to_string_lossy().to_string();
-        Ok((window_title, window_class))
+        let w_class = proc.name().to_string_lossy().to_string();
+        Ok((w_title, w_class))
     }
 }
 

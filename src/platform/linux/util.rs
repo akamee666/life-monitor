@@ -1,3 +1,10 @@
+use std::env;
+use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::io::{self, BufRead};
+use std::path::Path;
+use std::process::Command;
 use std::time::Duration;
 
 use serde::Deserialize;
@@ -6,7 +13,9 @@ use x11rb::protocol::screensaver;
 use x11rb::protocol::xproto::*;
 use x11rb::rust_connection::RustConnection;
 
-// https://www.reddit.com/r/rust/comments/f7yrle/get_information_about_current_window_xorg/
+use tracing::*;
+
+// https://www.reddit.com/r/rust/comments/f7yrle/get_information_about_current_w_xorg/
 // Returns name, instance and class of the focused window in that order.
 pub fn get_focused_window() -> Result<(String, String, String), Box<dyn std::error::Error>> {
     // Set up our state
@@ -122,6 +131,181 @@ pub fn get_mouse_settings() -> Result<MouseSettings, Box<dyn std::error::Error>>
     Ok(s)
 }
 
+pub fn configure_startup_using_profile(
+    should_enable: bool,
+    is_enable: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let home_dir = env::var("HOME")?;
+    let xprofile_path = Path::new(&home_dir).join(".xprofile");
+    let current_exe = env::current_exe()?;
+    let exe_path = current_exe.to_str().unwrap();
+
+    // The entry to add to .xprofile with a comment above it like:
+    // # Life monitor Autostart
+    // /path/to/life-monitor &
+    let startup_entry = format!("\n# Life Monitor Autostart\n\"{}\" &\n", exe_path);
+
+    if should_enable {
+        if is_enable {
+            info!("Startup is already enabled!");
+            return Ok(());
+        }
+
+        info!("Configuring startup using ~/.xprofile");
+
+        // Create or append to ~/.xprofile
+        // This maybe can be improved by just trying to write to it and if it fails we check the
+        // error.
+        if xprofile_path.exists() {
+            // Check if the entry already exists
+            let file = fs::File::open(&xprofile_path)?;
+            let reader = io::BufReader::new(file);
+
+            for line in reader.lines() {
+                if let Ok(existing_line) = line {
+                    if existing_line.contains(exe_path) {
+                        info!("Entry already exists in ~/.xprofile");
+                        return Ok(());
+                    }
+                }
+            }
+        }
+
+        // Append the entry to ~/.xprofile
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .append(true)
+            .open(&xprofile_path)?;
+
+        file.write_all(startup_entry.as_bytes())?;
+        info!("Added entry to ~/.xprofile for life-monitor");
+    } else {
+        info!("Disabling startup entry from ~/.xprofile");
+
+        if xprofile_path.exists() {
+            // Read the current lines from .xprofile
+            let lines: Vec<String> = io::BufReader::new(fs::File::open(&xprofile_path)?)
+                .lines()
+                .filter_map(Result::ok)
+                .collect();
+
+            // Rewrite the file, excluding the life-monitor entry
+            let mut file = OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .open(&xprofile_path)?;
+
+            for line in lines {
+                if !line.contains(exe_path) {
+                    writeln!(file, "{}", line)?;
+                }
+            }
+            info!("Removed entry from ~/.xprofile");
+        }
+    }
+    Ok(())
+}
+
+pub fn configure_startup(
+    should_enable: bool,
+    is_enable: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let service_name = "life-monitor.service";
+    let user_service_dir = Path::new(&env::var("HOME")?).join(".config/systemd/user");
+    fs::create_dir_all(&user_service_dir)?;
+    let service_path = user_service_dir.join(service_name);
+    let current_exe = env::current_exe()?;
+
+    if should_enable {
+        if is_enable {
+            info!("Startup is already enabled!");
+            return Ok(());
+        }
+        info!("Creating service for life-monitor");
+
+        let service_content = format!(
+            "[Unit]\n\
+            Description=Life Monitor Service\n\
+            After=display-manager.service\n\
+            Wants=graphical-session.target multi-user.target\n\
+            \n\
+            [Service]\n\
+            Type=simple\n\
+            Environment=DISPLAY=:0\n\
+            Environment=XAUTHORITY=/home/{}/.Xauthority\n\
+            ExecStart={}\n\
+            Restart=always\n\
+            ExecStartPre=/bin/sh -c 'until [ -n \"$DISPLAY\" ] && xset q; do sleep 1; done'
+            \n\
+            [Install]\n\
+            WantedBy=graphical-session.target multi-user.target\n",
+            env::var("USER")?,
+            current_exe.to_str().unwrap()
+        );
+
+        // Write service file
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&service_path)?;
+        file.write_all(service_content.as_bytes())?;
+
+        // Enable and start the user service
+        Command::new("systemctl")
+            .args(["--user", "daemon-reload"])
+            .status()?;
+        Command::new("systemctl")
+            .args(["--user", "enable", service_name])
+            .status()?;
+        Command::new("systemctl")
+            .args(["--user", "start", service_name])
+            .status()?;
+        info!("Created and enabled user systemd service: {}", service_name);
+    } else {
+        // Disable and stop the user service
+        Command::new("systemctl")
+            .args(["--user", "stop", service_name])
+            .status()?;
+        Command::new("systemctl")
+            .args(["--user", "disable", service_name])
+            .status()?;
+
+        // Remove service file if it exists
+        if service_path.exists() {
+            fs::remove_file(&service_path)?;
+        }
+        Command::new("systemctl")
+            .args(["--user", "daemon-reload"])
+            .status()?;
+        info!("Removed user systemd service: {}", service_name);
+    }
+    Ok(())
+}
+
+pub fn check_startup_status() -> Result<bool, Box<dyn std::error::Error>> {
+    let service_name = "life-monitor.service";
+
+    // Check if service is enabled
+    let status = Command::new("systemctl")
+        .args(["--user", "is-enabled", service_name])
+        .output()?;
+
+    // Also check if the service file exists
+    let user_service_dir = Path::new(&env::var("HOME")?).join(".config/systemd/user");
+    let service_path = user_service_dir.join(service_name);
+
+    let is_enabled = status.status.success() && service_path.exists();
+
+    info!(
+        "Startup status on Linux is {}.",
+        if is_enabled { "Enabled" } else { "Disabled" }
+    );
+
+    Ok(is_enabled)
+}
+
 pub fn get_idle_time() -> Result<Duration, Box<dyn std::error::Error>> {
     // Connect to the X server
     let (conn, screen_num) = RustConnection::connect(None)?;
@@ -137,6 +321,7 @@ pub fn get_idle_time() -> Result<Duration, Box<dyn std::error::Error>> {
     // Convert to `Duration`
     Ok(Duration::from_millis(idle_time_ms as u64))
 }
+
 fn get_or_intern_atom(conn: &RustConnection, name: &[u8]) -> Atom {
     let result = conn
         .intern_atom(false, name)

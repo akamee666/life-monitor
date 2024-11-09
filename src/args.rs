@@ -1,4 +1,5 @@
 use clap::{value_parser, Parser};
+
 use tracing::info;
 
 #[derive(Parser, Debug)]
@@ -9,26 +10,23 @@ use tracing::info;
 )]
 pub struct Cli {
     #[arg(
-        short = 't',
+        short = 'i',
         long,
-        help = "Set the interval (in seconds) for sending stored data to the database.",
-        long_help = "This option allows you to specify how often the program should send the collected data to the database. The default is every 300 seconds (5 minutes). Shorter intervals will update the database more frequently but may increase system load, while longer intervals will reduce database updates but may delay data availability. Choose an interval that balances your need for up-to-date information with system performance considerations. This option overwrite the interval used by the debug flag, if you want debug information and does not want to change interval, use both."
+        help = "Set the interval (in seconds) for sending stored data to the database. [default: 300]",
+        long_help = "This option allows you to specify how often the program should send the collected data to the database. The default is every 300 seconds (5 minutes). Shorter intervals will update the database more frequently but may increase system load, while longer intervals will reduce database updates but may delay data availability. Choose an interval that balances your need for up-to-date information with system performance considerations. This option overwrite the interval used by the debug flag, if you want debug information and does not want to change interval, use both.",
+        // I guess it's not needed to conflict
+        conflicts_with = "gran"
     )]
     pub interval: Option<u32>,
 
     #[arg(
+        short = 'g',
         long,
-        help = "Enable the program to start automatically at system boot. Might require run as root.",
-        long_help = "This option will configure the system to automatically start the program when the computer or server boots up. On Windows, it will create a shortcut in the user's Startup folder. On Linux, it will create a systemd service that starts the program during the boot process. Enabling this option ensures the program is running and monitoring the system from the moment the system is powered on, without requiring manual intervention. This can be useful for mission-critical applications or services that need to be available at all times."
+        help = "Divide the entries when logging keys, making it possible to see which part of the day you are most active. [default: 0]",
+        value_parser = value_parser!(u32).range(0..6),
+        long_help = "Default value is 0, meaning the database will only store the raw total of all your activity. Use higher levels to split the data into specific intervals."
     )]
-    pub enable_startup: bool,
-
-    #[arg(
-        long,
-        help = "Disable the program from starting automatically at system boot.",
-        long_help = "This option will remove any existing configuration that automatically starts the program when the system boots up. On Windows, it will delete the shortcut from the user's Startup folder. On Linux, it will stop and disable the systemd service. Disabling the automatic startup can be useful if you only want to run the program manually or as needed, or if you need to troubleshoot issues with the automatic startup process. This option can be used in conjunction with the `enable_startup` flag to toggle the program's startup behavior."
-    )]
-    pub disable_startup: bool,
+    pub gran: Option<u32>,
 
     #[arg(
         short = 'k',
@@ -67,7 +65,7 @@ pub struct Cli {
         long,
         default_value_t = false,
         help = "If true, enables debug mode with more frequent updates and additional logging. [default: false]",
-        long_help = "Enabling debug mode does two things: First, it increases the frequency of database updates, allowing for more real-time data analysis. Second, it enables debug output to both a log file and stdout. Note that stdout output only works if the RUST_LOG environment variable is set to 'debug'. This mode is useful for troubleshooting issues or for developers working on extending the program's functionality. Interval option WILL overwrite the interval defined by this option."
+        long_help = "Enabling debug mode does two things: First, it increases the frequency of database updates, allowing for more real-time data analysis. Second, it enables debug output to both a log file and stdout.  This mode is useful for troubleshooting issues or for developers working on extending the program's functionality. Interval option WILL overwrite the interval defined by this option."
     )]
     pub debug: bool,
 
@@ -98,6 +96,20 @@ pub struct Cli {
         long_help = "This option, when enabled, will delete all data collected in previous sessions of the program and start with a clean state. This can be useful if you want to reset your tracking, perhaps after a significant change in your work habits or if you suspect there are issues with the existing data. Be very careful when using this option, as it will permanently delete all existing data. It's recommended to backup your data before using this option."
     )]
     pub clear: bool,
+
+    #[arg(
+        long,
+        help = "Enable the program to start automatically at system boot. Might require run as root. [default: false]",
+        long_help = "This option will configure the system to automatically start the program when the computer or server boots up. On Windows, it will create a shortcut in the user's Startup folder. On Linux, it will create a systemd service that starts the program during the boot process. Enabling this option ensures the program is running and monitoring the system from the moment the system is powered on, without requiring manual intervention. This can be useful for mission-critical applications or services that need to be available at all times."
+    )]
+    pub enable_startup: bool,
+
+    #[arg(
+        long,
+        help = "Disable the program from starting automatically at system boot.",
+        long_help = "This option will remove any existing configuration that automatically starts the program when the system boots up. On Windows, it will delete the shortcut from the user's Startup folder. On Linux, it will stop and disable the systemd service. Disabling the automatic startup can be useful if you only want to run the program manually or as needed, or if you need to troubleshoot issues with the automatic startup process. This option can be used in conjunction with the `enable_startup` flag to toggle the program's startup behavior."
+    )]
+    pub disable_startup: bool,
 }
 
 impl Cli {
@@ -114,6 +126,8 @@ impl Cli {
             self.api.as_deref().unwrap_or("Not used")
         );
         info!("Mouse DPI: {:?}", self.dpi.unwrap_or(800));
+        info!("Granularity Level: {:?}", self.gran);
         info!("Clear database: {:?}", self.clear);
+        println!();
     }
 }

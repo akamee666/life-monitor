@@ -45,38 +45,31 @@ Usage: life-monitor [OPTIONS]
 | `-k` | `--no-keys `| Disable key/mouse tracking |
 | `-w` | `--no-window`  | Disable window-based tracking |
 | `-d` | `--debug` | Enable debug mode |
-| `-a` | `--api` <config.json> | Use API from config file |
 | `-p` | `--dpi` < dpi > | Specify mouse DPI for tracking |
 | `-c` | `--clear`  | Clear existing data, start new |
-| `-g` | `--gran-level` <0-6>| Divide the entries for keys based on hour. |
+| `-g` | `--gran` <0-6>| Divide the entries for keys based on hour. |
 | `-h` | `--help` | Show help information |
 
 More detailed descriptions can be found running with --help flag.
 
 For the API and the `-g` flag check the section below.
 
-`--gran-level`:
+`--gran`:
 
 This flag helps decide how detailed the data tracking will be for your activity, like keyboard and mouse use, across different times of the day. You can think of it as setting how “zoomed in” you want the time tracking to be:
 
-    Level 0: A single summary of your activity, with no breakdown by time.
-    Level 1: Breaks down your activity into 15-minute intervals.
-    Level 2: Shows activity in 30-minute intervals.
+    Level 5: Breaks down your activity into 15-minute intervals.
+    Level 4: Shows activity in 30-minute intervals.
     Level 3: Tracks in 1-hour intervals.
-    Level 4: Groups activity into 2-hour intervals.
-    Level 5: Summarizes in 4-hour intervals.
-    Level 6: Groups into three broad 8-hour sections across the day.
+    Level 2: Groups activity into 2-hour intervals.
+    Level 1: Summarizes in 4-hour intervals.
+    Level 0: A single summary of your activity, with no breakdown by time.
 
 This way, you can choose how detailed or summarized you want the information to be!
 
-`--api`:
-
-This flag will receive a Json file as argument, you can see the [example](./example.json) in the repository for reference.
-(Need to finish this)
-
 ### Contribute
 
-The program is finish, not entirely cause i didn't test it enough. It probably has bugs :3, but it's usable, I guess. I'll continue working on it and adding features if requested, of course. Go ahead if you want to try it, the worst that can happen is incorrect data being sent to the database or the program crashing. Also, if you think you've found a bug, I would be happy if you report it to me so I can fix it as soon as possible. If you want some kind of feature, you can fork and open a PR, and I will accept it as soon as possible, or just clone and do whatever you want. One people ask me if it was okay to clone the repo to learning purpose, so I did add some comments to help. If you want some kind of feature but don't want to code it, contact me or open an issue, and I'll try to add it as soon as possible.
+The main functionalities of this program is finish, not entirely because i keep finding new things to add to it though. It probably has bugs :), but it's usable, I guess. I'll continue working on it and adding features if requested, of course. Go ahead if you want to try it, the worst that can happen is incorrect data being sent to the database or the program crashing. Also, if you think you've found a bug, I would be happy if you report it to me so I can fix it as soon as possible. If you want some kind of feature, you can fork and open a PR, and I will accept it as soon as possible, or just clone and do whatever you want. One people ask me if it was okay to clone the repo to learning purpose, so I did add some comments to help. If you want some kind of feature but don't want to code it, contact me or open an issue, and I'll try to add it as soon as possible.
 
 ### What life-monitor does
 
@@ -92,28 +85,23 @@ After that, it's all up to you to use the data collected however you want. You c
 
 If you are struggling to understand the code, contact me somewhere, and I will do my best to explain it to you.
 
-### Todo
+### To do
 
-[x] - Autostart argument.
+- [x]  Auto start argument.
+- [x]  Check and print to Stdout if startup is enabled.
+- [x]  Create option to save input based on time.
+  - [x]  Create flag and descriptions.
+  - [x]  Change how database is structured based on the level.
+- [x] Space one or two seconds the interval for updates in one of the two tasks.
+- [ ] Change API flag to remote instead, bc make more sense.
+- [x]  Error handling when using remote instead of just panic.
+- [ ] I am dumb, startup on Linux is failing and i need to fix.
+- [ ]  Check CPU load with the new features. Now that i have more data in both table to go through it may impact the performance a little bit. 
+- [x] Organize project tree.
 
-[x] - Log if start up is enabled or not
+- [ ] Wayland support? I saw somewhere that Wayland has some kinda of support on X11 APIs so maybe it is not necessary.
 
-[ ] - Create option to save input based on time.
-  [x] - Create flag and descriptions.
-  [ ] - Change how database is structured based on the level.
+- [ ] Create Github actions for releases.
 
-[ ] - Fix errors when service starts on Linux. >> https://unix.stackexchange.com/questions/397853/how-to-set-a-systemd-unit-to-start-after-loading-the-desktop
-
-[ ] - Check CPU load when updating proc table. Now that i am creating different rows if the name does not match it's getting quite big.
-
-[ ] - Space one or two seconds the interval for updates in one of the two tasks.
-
-[x] - Error handling when using API.
-
-[ ] - Maybe implement a feature that will calculate percentages of most used apps and so on i guess it would be cool.
-
-[ ] - Organize project tree.
-
-[ ] - Create Github actions for releases.
-
-
+- [ ] Maybe create a cool tui to display the collected data in a cool way to the user i guess.
+  - [ ] Percentages of the most used apps would be cool.

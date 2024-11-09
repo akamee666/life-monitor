@@ -2,7 +2,7 @@
 name = "life-monitor"
 version = "0.1.0"
 edition = "2021"
-authors = ["Davi Aguiar mooraesz123@gmail.com"]
+authors = ["Davi Aguiar moraes@akmee.xyz"]
 description = "A tool to track your daily activities"
 license = "MIT"
 readme = "README.md"
@@ -30,6 +30,7 @@ clap = { version = "4.5.18", features = ["derive"] }
 # that should not be here if api is not used, i think?
 reqwest = { version = "0.12.7", features = ["json"] }
 serde = { version = "1.0.210", features = ["serde_derive"] }
+chrono = "0.4.38"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "^0.52", features = [

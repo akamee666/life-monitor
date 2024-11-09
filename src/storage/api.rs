@@ -29,6 +29,7 @@ impl Default for ApiConfig {
 }
 
 impl ApiConfig {
+    #[allow(dead_code)]
     pub fn from_env() -> Self {
         let base_url =
             env::var("API_BASE_URL").unwrap_or_else(|_| "https://api.example.com".to_string());
@@ -79,12 +80,12 @@ impl ApiSendable for KeyLogger {
 
     fn to_json(&self) -> serde_json::Value {
         json!({
-            "left_clicks": self.left_clicks,
-            "right_clicks": self.right_clicks,
-            "middle_clicks": self.middle_clicks,
-            "keys_pressed": self.keys_pressed,
-            "mouse_moved_cm": self.mouse_moved_cm,
-            "mouse_dpi": self.mouse_settings.dpi,
+            "t_lc": self.t_lc,
+            "t_rc": self.t_rc,
+            "t_mc": self.t_mc,
+            "t_kp": self.t_kp,
+            "t_mm": self.t_mm,
+            "dpi": self.mouse_settings.dpi,
         })
     }
     fn from_json(json: serde_json::Value) -> Self {
@@ -105,10 +106,10 @@ impl ApiSendable for Vec<ProcessInfo> {
             .iter()
             .map(|info| {
                 json!({
-                    "window_name": info.window_name,
-                    "window_time": info.window_time,
-                    "window_instance": info.window_instance,
-                    "window_class": info.window_class,
+                    "w_name": info.w_name,
+                    "w_time": info.w_time,
+                    "w_instance": info.w_instance,
+                    "w_class": info.w_class,
                 })
             })
             .collect::<Vec<_>>())

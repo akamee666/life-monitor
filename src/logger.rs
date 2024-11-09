@@ -1,3 +1,6 @@
+//! This file is responsible to create a file and define layer for a better log which can be
+//! changed by the flag or using env variable RUST_LOG to help debug bugs or whatever.
+
 use std::env;
 use std::fs;
 use std::fs::File;
@@ -9,11 +12,11 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::{filter, fmt, prelude::*};
 
+// This function will define the level that logs will be displayed and also will create a file
+// called spy.log in different paths depending on the platform.
 pub fn init(enable_debug: bool) {
     if enable_debug {
-        // Display only error, info and warns to stdout by default, use RUST_LOG to change filter.
-        let env_filter_std = EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new("info"))
+        let env_filter_std = EnvFilter::new("debug")
             .add_directive("hyper=off".parse().unwrap())
             .add_directive("hyper_util=off".parse().unwrap())
             .add_directive("reqwest=off".parse().unwrap());
@@ -27,6 +30,7 @@ pub fn init(enable_debug: bool) {
         registry(env_filter_file, env_filter_std);
     } else {
         // Display only error,info and warns to stdout by default, use RUST_LOG to change filter.
+        // WARN: RUST_LOG="debug" is the only that doesn't work
         let env_filter_std = EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| EnvFilter::new("info"))
             .add_directive("hyper=off".parse().unwrap())
@@ -45,7 +49,6 @@ pub fn init(enable_debug: bool) {
 
 fn registry(env_filter_file: EnvFilter, env_filter_std: EnvFilter) {
     // A layer that logs events to a file.
-
     let file = match create_file() {
         Ok(file) => file,
         Err(error) => panic!("Error: {error}"),

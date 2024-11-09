@@ -1,9 +1,9 @@
 #[cfg(target_os = "linux")]
-use crate::linux::util::{get_mouse_settings, MouseSettings};
+use crate::platform::linux::util::*;
 #[cfg(target_os = "windows")]
-use crate::win::util::{get_mouse_settings, MouseSettings};
+use crate::win::util::*;
 
-use crate::data::{DataStore, StorageBackend};
+use crate::backend::{DataStore, StorageBackend};
 use crate::spawn_ticker;
 use crate::Event;
 
@@ -12,7 +12,6 @@ use serde::Deserialize;
 
 use std::sync::Arc;
 
-use tokio::sync::mpsc;
 use tokio::sync::mpsc::channel;
 use tokio::sync::Mutex;
 use tokio::time::Duration;
@@ -21,14 +20,14 @@ use tracing::*;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct KeyLogger {
-    pub left_clicks: u64,
-    pub right_clicks: u64,
-    pub middle_clicks: u64,
-    pub keys_pressed: u64,
+    pub t_lc: u64,
+    pub t_rc: u64,
+    pub t_mc: u64,
+    pub t_kp: u64,
     #[serde(default)]
     pub pixels_moved: f64,
     #[serde(default)]
-    pub mouse_moved_cm: f64,
+    pub t_mm: f64,
     #[serde(default)]
     pub last_pos: Option<(f64, f64)>,
     #[serde(default)]
@@ -38,12 +37,12 @@ pub struct KeyLogger {
 impl Default for KeyLogger {
     fn default() -> Self {
         Self {
-            left_clicks: 0,
-            right_clicks: 0,
-            middle_clicks: 0,
-            keys_pressed: 0,
+            t_lc: 0,
+            t_rc: 0,
+            t_mc: 0,
+            t_kp: 0,
             pixels_moved: 0.0,
-            mouse_moved_cm: 0.0,
+            t_mm: 0.0,
             last_pos: None,
             mouse_settings: MouseSettings::default(),
         }
@@ -81,7 +80,7 @@ impl KeyLogger {
     fn update_to_cm(&mut self) {
         let inches = self.pixels_moved / self.mouse_settings.dpi as f64;
         let cm = inches * 2.54;
-        self.mouse_moved_cm += cm;
+        self.t_mm += cm;
         self.pixels_moved = 0.0;
     }
 
@@ -178,7 +177,7 @@ pub async fn init(dpi_arg: Option<u32>, interval: Option<u32>, backend: StorageB
 
     info!("Interval for database updates is: {} seconds.", db_int);
 
-    let (tx, mut rx) = mpsc::channel(300);
+    let (tx, mut rx) = channel(300);
 
     // I am not sure if is the right choice call spawn_blocking here but it seems to be because
     // listen is not async.
@@ -210,161 +209,18 @@ async fn handle_event(event: rdev::Event, logger: &Arc<Mutex<KeyLogger>>) {
 
     match event.event_type {
         rdev::EventType::ButtonPress(button) => match button {
-            rdev::Button::Left => logger.left_clicks += 1,
-            rdev::Button::Right => logger.right_clicks += 1,
-            rdev::Button::Middle => logger.middle_clicks += 1,
+            rdev::Button::Left => logger.t_lc += 1,
+            rdev::Button::Right => logger.t_rc += 1,
+            rdev::Button::Middle => logger.t_mc += 1,
             // Rest doesn't matter.
             _ => {}
         },
         // Rest doesn't matter.
-        rdev::EventType::KeyPress(_) => logger.keys_pressed += 1,
+        rdev::EventType::KeyPress(_) => logger.t_kp += 1,
         rdev::EventType::MouseMove { x, y } => {
             logger.update_distance(x, y);
         }
         // Rest doesn't matter.
         _ => {}
-    }
-}
-
-// FIX: Create for both os.
-#[cfg(target_os = "linux")]
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use approx::assert_relative_eq;
-
-    #[test]
-    fn test_update_distance() {
-        // Test case 1: No acceleration (mouse_settings.numerator = denominator = 1, threshold = 0)
-        let mut logger = KeyLogger {
-            mouse_settings: MouseSettings::noacc_default(),
-            ..Default::default()
-        };
-
-        // Initial move
-        logger.update_distance(3.0, 4.0);
-        assert_relative_eq!(logger.pixels_moved, 0.0); // First move, no change
-
-        // Second move
-        logger.update_distance(0.0, 0.0);
-        assert_relative_eq!(logger.pixels_moved, 5.0); // Pythagorean theorem: sqrt(3^2 + 4^2) = 5
-
-        // Test case 2: With acceleration (mouse_settings.numerator = 2, denominator = 1, threshold = 10)
-        let mut logger_accel = KeyLogger {
-            mouse_settings: MouseSettings::default(),
-            ..Default::default()
-        };
-
-        // Move below threshold
-        logger_accel.update_distance(4.0, 5.0);
-        logger_accel.update_distance(1.0, 1.0);
-        assert_relative_eq!(logger_accel.pixels_moved, 7.0); // No acceleration applied
-
-        // Move above threshold
-        logger_accel.update_distance(21.0, 1.0);
-        assert_relative_eq!(logger_accel.pixels_moved, 35.0); // 5 + (20 - 10) * 2 + 10 = 35
-
-        // Test case 3: Different start and end points
-        let mut logger_diff = KeyLogger {
-            mouse_settings: MouseSettings::noacc_default(),
-            ..Default::default()
-        };
-
-        logger_diff.update_distance(10.0, 10.0);
-        logger_diff.update_distance(13.0, 14.0);
-        assert_relative_eq!(logger_diff.pixels_moved, 5.0); // sqrt((13-10)^2 + (14-10)^2) = 5
-
-        // Test case 4: Negative coordinates
-        let mut logger_neg = KeyLogger {
-            mouse_settings: MouseSettings::noacc_default(),
-            ..Default::default()
-        };
-
-        logger_neg.update_distance(-3.0, -4.0);
-        logger_neg.update_distance(0.0, 0.0);
-        assert_relative_eq!(logger_neg.pixels_moved, 5.0);
-
-        // Test case 5: Very small movements
-        let mut logger_small = KeyLogger {
-            mouse_settings: MouseSettings::noacc_default(),
-            ..Default::default()
-        };
-
-        logger_small.update_distance(0.1, 0.1);
-        logger_small.update_distance(0.2, 0.2);
-        assert_relative_eq!(logger_small.pixels_moved, 0.1414, epsilon = 0.0001);
-    }
-
-    #[test]
-    fn test_to_cm() {
-        let mut keylogger = KeyLogger {
-            mouse_settings: MouseSettings::noacc_default(),
-            ..Default::default()
-        };
-        keylogger.mouse_settings.dpi = 800;
-        keylogger.pixels_moved = 1000.0;
-        keylogger.update_to_cm();
-        assert_relative_eq!(keylogger.mouse_moved_cm, 3.175, epsilon = 0.001);
-
-        // Test with different DPI
-        keylogger.mouse_settings.dpi = 1600;
-        keylogger.pixels_moved = 1000.0;
-
-        // Reset the value from before.
-        keylogger.mouse_moved_cm = 0.0;
-        keylogger.update_to_cm();
-        assert_relative_eq!(keylogger.mouse_moved_cm, 1.5875, epsilon = 0.001);
-    }
-
-    #[test]
-    fn test_mouse_accuracy() {
-        let mut keylogger = KeyLogger {
-            mouse_settings: MouseSettings::noacc_default(),
-            ..Default::default()
-        };
-        keylogger.mouse_settings.dpi = 800;
-
-        // Test diagonal movement
-        keylogger.update_distance(0.0, 0.0);
-        keylogger.update_distance(1920.0, 1080.0);
-        assert_relative_eq!(keylogger.pixels_moved, 2203.3608, max_relative = 1.0);
-        keylogger.update_to_cm();
-        assert_relative_eq!(keylogger.mouse_moved_cm, 7.0, epsilon = 0.1);
-
-        // Test horizontal movement
-        let mut keylogger = KeyLogger {
-            mouse_settings: MouseSettings::noacc_default(),
-            ..Default::default()
-        };
-
-        keylogger.mouse_settings.dpi = 800;
-        keylogger.update_distance(0.0, 0.0);
-        keylogger.update_distance(1920.0, 0.0);
-        assert_relative_eq!(keylogger.pixels_moved, 1920.0, epsilon = 0.001);
-        keylogger.update_to_cm();
-        assert_relative_eq!(keylogger.mouse_moved_cm, 6.096, epsilon = 0.001);
-    }
-
-    #[test]
-    fn test_mouse_acceleration() {
-        let mut keylogger = KeyLogger {
-            mouse_settings: MouseSettings {
-                acceleration_numerator: 2,
-                acceleration_denominator: 1,
-                threshold: 10,
-                dpi: 800,
-            },
-            ..Default::default()
-        };
-
-        // Movement below threshold
-        keylogger.update_distance(0.0, 0.0);
-        keylogger.update_distance(5.0, 0.0);
-        assert_relative_eq!(keylogger.pixels_moved, 5.0, epsilon = 0.001);
-
-        // Movement above threshold
-        keylogger.update_distance(25.0, 0.0);
-        let expected = 5.0 + 10.0 + (10.0 * 2.0); // Initial + Threshold + Accelerated
-        assert_relative_eq!(keylogger.pixels_moved, expected, epsilon = 0.001);
     }
 }

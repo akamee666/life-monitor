@@ -1,9 +1,9 @@
-use crate::data::{DataStore, StorageBackend};
-use crate::linux::util::get_focused_window;
+use crate::backend::{DataStore, StorageBackend};
+use crate::platform::linux::util::get_focused_window;
 use crate::spawn_ticker;
 use crate::Event;
 use crate::ProcessTracker;
-use crate::{check_idle, update_window_time};
+use crate::{is_idle, update_window_time};
 
 use sysinfo::System;
 
@@ -47,7 +47,7 @@ pub async fn init(interval: Option<u32>, backend: StorageBackend) {
             }
             Event::IdleCheck => {
                 let tracker = logger.lock().await;
-                idle = check_idle(&tracker.idle_period);
+                idle = is_idle(&tracker.idle_period);
             }
             Event::DbUpdate => {
                 let tracker = logger.lock().await;
@@ -61,31 +61,31 @@ pub async fn init(interval: Option<u32>, backend: StorageBackend) {
 
 // This function upload the time for the entry in the vector only if we change window to reduce the
 // overload by not going through the vector every second.
-// TODO: This functions is almost the same for both platform, maybe have just one function and
+// WARN: This functions is almost the same for both platform, maybe have just one function and
 // change the tree of the project to allow the function find the right one depending on the
 // platform.
 async fn handle_active_window(tracker: &mut ProcessTracker) {
     if let Ok((w_name, w_instance, w_class)) = get_focused_window() {
-        println!("");
-        debug!("Window name: {}.", w_name);
-        debug!("Window class: {}.", w_class);
-        debug!("Window instance: {}.", w_instance);
-        println!("");
-
+        //println!();
+        //debug!("Window name: {}.", w_name);
+        //debug!("Window class: {}.", w_class);
+        //debug!("Window instance: {}.", w_instance);
+        //println!();
+        //
         let uptime = System::uptime();
 
         if tracker.last_wname != w_name {
             if !tracker.last_wname.is_empty() {
                 debug!(
-                    "We are not in the same window than before. Going to update time for last window, currently Vec is: {:#?}",
-                    tracker.procs
+                    "We are not in the same window than before. Going to update time for last window {}.",
+                    tracker.last_wclass
                 );
 
                 let time_diff = uptime - tracker.time;
 
                 debug!(
-                    "Uptime for new window is not zero, window was active for: [{}] seconds.",
-                    time_diff
+                    "Uptime for new window is not zero, window: {} was active for: [{}] seconds.",
+                    tracker.last_wclass, time_diff
                 );
 
                 // The window that will be updated will be last but we need to reset the timer here
@@ -112,7 +112,7 @@ async fn handle_active_window(tracker: &mut ProcessTracker) {
             }
         } else {
             debug!("We are in the same window than before, doing nothing.");
-            debug!("Time difference: [{}]", uptime - tracker.time);
+            debug!("Timer: {}s", uptime - tracker.time);
         }
 
         // Timer will be zero if the program just started or windows have changed and we just
