@@ -48,6 +48,7 @@ Usage: life-monitor [OPTIONS]
 | `-p` | `--dpi` < dpi > | Specify mouse DPI for tracking |
 | `-c` | `--clear`  | Clear existing data, start new |
 | `-g` | `--gran` <0-6>| Divide the entries for keys based on hour. |
+| `-r` | `--remote` < file > | Send collected data through remote defined by json file. |
 | `-h` | `--help` | Show help information |
 
 More detailed descriptions can be found running with --help flag.
