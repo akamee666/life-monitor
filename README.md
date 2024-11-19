@@ -4,7 +4,7 @@ The main goal of this project is to create a mini spyware on my own to monitor w
 
 ### Installing
 
-You can install life-monitor easily by using cargo install,although i am not sure how up to date it is compared to current commits :3
+You can install life-monitor easily by using cargo install or using github releases,although i am not sure how up to date it is compared to current commits so i recommend you to build from source :3
 
 1. Installing and running.
 
