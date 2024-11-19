@@ -93,6 +93,7 @@ If you are struggling to understand the code, contact me somewhere, and I will d
   - [x]  Create flag and descriptions.
   - [x]  Change how database is structured based on the level.
 - [x] Space one or two seconds the interval for updates in one of the two tasks.
+- [x] I have publish a broken version to both cargo install and github, need to fix that. Omg i am just so dumb, keys table does not have the row when created using default i guess.
 - [ ] Change API flag to remote instead, bc make more sense.
 - [x]  Error handling when using remote instead of just panic.
 - [ ] I am dumb, startup on Linux is failing and i need to fix.

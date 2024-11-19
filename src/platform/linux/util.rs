@@ -1,8 +1,6 @@
 use std::env;
 use std::fs;
-use std::fs::OpenOptions;
 use std::io::Write;
-use std::io::{self, BufRead};
 use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
@@ -131,82 +129,8 @@ pub fn get_mouse_settings() -> Result<MouseSettings, Box<dyn std::error::Error>>
     Ok(s)
 }
 
-pub fn configure_startup_using_profile(
-    should_enable: bool,
-    is_enable: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let home_dir = env::var("HOME")?;
-    let xprofile_path = Path::new(&home_dir).join(".xprofile");
-    let current_exe = env::current_exe()?;
-    let exe_path = current_exe.to_str().unwrap();
-
-    // The entry to add to .xprofile with a comment above it like:
-    // # Life monitor Autostart
-    // /path/to/life-monitor &
-    let startup_entry = format!("\n# Life Monitor Autostart\n\"{}\" &\n", exe_path);
-
-    if should_enable {
-        if is_enable {
-            info!("Startup is already enabled!");
-            return Ok(());
-        }
-
-        info!("Configuring startup using ~/.xprofile");
-
-        // Create or append to ~/.xprofile
-        // This maybe can be improved by just trying to write to it and if it fails we check the
-        // error.
-        if xprofile_path.exists() {
-            // Check if the entry already exists
-            let file = fs::File::open(&xprofile_path)?;
-            let reader = io::BufReader::new(file);
-
-            for line in reader.lines() {
-                if let Ok(existing_line) = line {
-                    if existing_line.contains(exe_path) {
-                        info!("Entry already exists in ~/.xprofile");
-                        return Ok(());
-                    }
-                }
-            }
-        }
-
-        // Append the entry to ~/.xprofile
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .append(true)
-            .open(&xprofile_path)?;
-
-        file.write_all(startup_entry.as_bytes())?;
-        info!("Added entry to ~/.xprofile for life-monitor");
-    } else {
-        info!("Disabling startup entry from ~/.xprofile");
-
-        if xprofile_path.exists() {
-            // Read the current lines from .xprofile
-            let lines: Vec<String> = io::BufReader::new(fs::File::open(&xprofile_path)?)
-                .lines()
-                .filter_map(Result::ok)
-                .collect();
-
-            // Rewrite the file, excluding the life-monitor entry
-            let mut file = OpenOptions::new()
-                .write(true)
-                .truncate(true)
-                .open(&xprofile_path)?;
-
-            for line in lines {
-                if !line.contains(exe_path) {
-                    writeln!(file, "{}", line)?;
-                }
-            }
-            info!("Removed entry from ~/.xprofile");
-        }
-    }
-    Ok(())
-}
-
+// TODO:
+// Add flags from somewhere i dont know where yet
 pub fn configure_startup(
     should_enable: bool,
     is_enable: bool,

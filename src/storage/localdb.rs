@@ -141,6 +141,7 @@ fn create_keys_table(c: &Connection, g_level: u32) -> SqlResult<()> {
         1 => (6, 240),  // 4-hour intervals (6 rows per day)
         _ => {
             c.execute(kq, [])?;
+            insert_rows(c, 1, 0)?;
             info!("Tables created with default configuration!");
             return Ok(());
         }
@@ -433,13 +434,13 @@ pub fn update_keyst(conn: &Connection, logger_data: &KeyLogger) -> SqlResult<()>
     let current_time = Local::now();
     let current_hour = format!("{:02}:{:02}", current_time.hour(), current_time.minute());
 
-    info!(
+    debug!(
         "Updating keys table for the nearest interval to current time: {}",
         current_hour
     );
 
     if let Some(timestamp) = find_nearest_time(conn, &current_hour)? {
-        info!("Found nearest timestamp: {}", timestamp);
+        debug!("Found nearest timestamp: {}", timestamp);
 
         // Prepare the update query to update the row with the found timestamp
         let query_update = "
@@ -469,7 +470,7 @@ pub fn update_keyst(conn: &Connection, logger_data: &KeyLogger) -> SqlResult<()>
         )?;
 
         if affected_rows > 0 {
-            info!(
+            debug!(
                 "Successfully updated row for timestamp '{}'. Changes: LC = {}, RC = {}, MC = {}, KP = {}, MM = {}, DPI = {}",
                 timestamp,
                 logger_data.t_lc,
@@ -484,7 +485,7 @@ pub fn update_keyst(conn: &Connection, logger_data: &KeyLogger) -> SqlResult<()>
         }
     } else {
         warn!(
-            "No suitable timestamp found for current time: {}. Ensure the keys table is correctly initialized.",
+            "No suitable timestamp found for current time: {}. Ensure the keys table is correctly initialize, if you did nothing and receive this message please create an issue in github.",
             current_hour
         );
     }
