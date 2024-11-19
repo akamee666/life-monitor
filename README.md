@@ -94,15 +94,14 @@ If you are struggling to understand the code, contact me somewhere, and I will d
   - [x]  Change how database is structured based on the level.
 - [x] Space one or two seconds the interval for updates in one of the two tasks.
 - [x] I have publish a broken version to both cargo install and github, need to fix that. Omg i am just so dumb, keys table does not have the row when created using default i guess.
-- [ ] Change API flag to remote instead, bc make more sense.
+- [x] Change API flag to remote instead, bc make more sense.
 - [x]  Error handling when using remote instead of just panic.
-- [ ] I am dumb, startup on Linux is failing and i need to fix.
-- [ ]  Check CPU load with the new features. Now that i have more data in both table to go through it may impact the performance a little bit. 
+- [x] I am dumb, startup on Linux is failing and i need to fix.
 - [x] Organize project tree.
+- [ ] Doc to remote flag
+- [ ]  Check CPU load with the new features. Now that i have more data in both table to go through it may impact the performance a little bit. 
 
 - [ ] Wayland support? I saw somewhere that Wayland has some kinda of support on X11 APIs so maybe it is not necessary.
-
-- [ ] Create Github actions for releases.
 
 - [ ] Maybe create a cool tui to display the collected data in a cool way to the user i guess.
   - [ ] Percentages of the most used apps would be cool.

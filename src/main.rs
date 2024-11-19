@@ -55,7 +55,7 @@ async fn main() {
 
     // If args.api,which is a Option<String> that should be the path to API config file, is Some,
     // API should be used as backend.
-    let storage_backend: StorageBackend = if let Some(ref config_path) = args.api {
+    let storage_backend: StorageBackend = if let Some(ref config_path) = args.remote {
         match ApiStore::new(config_path) {
             Ok(api) => StorageBackend::Api(api),
             Err(e) => {

@@ -65,24 +65,24 @@ pub struct Cli {
         long,
         default_value_t = false,
         help = "If true, enables debug mode with more frequent updates and additional logging. [default: false]",
-        long_help = "Enabling debug mode does two things: First, it increases the frequency of database updates, allowing for more real-time data analysis. Second, it enables debug output to both a log file and stdout.  This mode is useful for troubleshooting issues or for developers working on extending the program's functionality. Interval option WILL overwrite the interval defined by this option."
+        long_help = "Enabling debug mode does two things: First, it increases the frequency of database updates, allowing for more real-time data analysis. Second, it enables debug output to both a log file and stdout. This mode is useful for troubleshooting issues or for developers working on extending the program's functionality. Interval option WILL overwrite the interval defined by this option."
     )]
     pub debug: bool,
 
     #[arg(
-        short = 'a',
+        short = 'r',
         long,
         value_name = "config.json",
-        help = "If true, enables updates to database through an API determined by a json config file. [default: config.json]",
-        long_help = "this feature enables the program to update a remote database through an API instead of or in addition to the local database, see [link] to how use it. This can be useful for centralized data collection or for accessing your data from multiple devices. However, as this is a beta feature, it may not be as stable or secure as the local database option. It's usable but only for a specific case see the explanation in github page if you still want to use it anyway"
+        help = "If true, enables updates to database through an remote database using routes determined by a json config file passed to this flag. [default: config.json]",
+        long_help = "this feature enables the program to update a remote database instead of or  the local database, see in README.md to how use it. This can be useful for centralized data collection or for accessing your data from multiple devices. However, as this is a beta feature, it may not be as stable or secure as the local database option. It's usable but only for a specific case see the explanation in github page if you still want to use it anyway"
     )]
-    pub api: Option<String>,
+    pub remote: Option<String>,
 
     #[arg(
         short = 'p',
         long,
         help = "Specify the DPI setting of your mouse for accurate movement tracking. [default: 800]",
-        long_help = "This option allows you to specify the DPI (dots per inch) setting of your mouse. Providing the correct DPI value helps the program accurately measure how much you're moving your mouse. A higher DPI means the mouse is more sensitive and moves the cursor further for the same physical movement. The default value is 800 DPI, which is common for many mice. Check your mouse settings or manufacturer specifications to find the correct DPI value. This option conflicts with --no-keys, as mouse tracking is part of the key and mouse input tracking feature.",
+        long_help = "This option allows you to specify the DPI (dots per inch) setting of your mouse. Providing the correct DPI value helps the program accurately measure how much you're moving your mouse. The default value is 800 DPI, which is common for many mice. Check your mouse settings or manufacturer specifications to find the correct DPI value. This option conflicts with --no-keys, as mouse tracking is part of the key and mouse input tracking feature.",
         conflicts_with = "no_keys",
         value_parser = value_parser!(u32).range(1..),
     )]
@@ -92,14 +92,14 @@ pub struct Cli {
         short = 'c',
         long,
         help = "If true, deletes all previously collected data and starts a new database. [default: false]",
-        conflicts_with = "api",
+        conflicts_with = "remote",
         long_help = "This option, when enabled, will delete all data collected in previous sessions of the program and start with a clean state. This can be useful if you want to reset your tracking, perhaps after a significant change in your work habits or if you suspect there are issues with the existing data. Be very careful when using this option, as it will permanently delete all existing data. It's recommended to backup your data before using this option."
     )]
     pub clear: bool,
 
     #[arg(
         long,
-        help = "Enable the program to start automatically at system boot. Might require run as root. [default: false]",
+        help = "Enable the program to start automatically at system boot. Might require to run as root. [default: false]",
         long_help = "This option will configure the system to automatically start the program when the computer or server boots up. On Windows, it will create a shortcut in the user's Startup folder. On Linux, it will create a systemd service that starts the program during the boot process. Enabling this option ensures the program is running and monitoring the system from the moment the system is powered on, without requiring manual intervention. This can be useful for mission-critical applications or services that need to be available at all times."
     )]
     pub enable_startup: bool,
@@ -123,7 +123,7 @@ impl Cli {
         info!("Debug mode: {:?}", self.debug);
         info!(
             "API config: {:?}",
-            self.api.as_deref().unwrap_or("Not used")
+            self.remote.as_deref().unwrap_or("Not used")
         );
         info!("Mouse DPI: {:?}", self.dpi.unwrap_or(800));
         info!("Granularity Level: {:?}", self.gran);
