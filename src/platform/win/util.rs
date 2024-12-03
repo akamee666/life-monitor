@@ -1,8 +1,14 @@
 use serde::Deserialize;
-use std::{ffi::OsString, os::windows::ffi::OsStringExt, time::Duration};
+use std::{ffi::OsString, os::windows::ffi::OsStringExt};
 use sysinfo::{Pid, ProcessRefreshKind, RefreshKind};
 use tracing::*;
 use windows::core::Error;
+
+use std::env;
+use std::fs;
+use std::path::PathBuf;
+use std::process::Command;
+use std::time::Duration;
 
 use windows::Win32::{
     System::SystemInformation::GetTickCount,
@@ -15,7 +21,6 @@ use windows::Win32::{
     },
 };
 
-#[cfg(target_os = "windows")]
 pub fn check_startup_status() -> Result<bool, Box<dyn std::error::Error>> {
     use std::path::PathBuf;
     use winreg::enums::*;
@@ -76,9 +81,10 @@ pub fn check_startup_status() -> Result<bool, Box<dyn std::error::Error>> {
     Ok(is_enabled)
 }
 
-pub fn configure_startup(enable: bool) -> Result<(), Box<dyn std::error::Error>> {
-    use std::path::PathBuf;
-
+pub fn configure_startup(
+    should_enable: bool,
+    is_enabled: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let startup_folder = if let Some(appdata) = env::var_os("APPDATA") {
         PathBuf::from(appdata)
             .join("Microsoft")
@@ -93,7 +99,11 @@ pub fn configure_startup(enable: bool) -> Result<(), Box<dyn std::error::Error>>
     let shortcut_path = startup_folder.join("life_monitor.lnk");
     let current_exe = env::current_exe()?;
 
-    if enable {
+    if should_enable {
+        if is_enabled {
+            info!("Startup is already enabled!");
+            return Ok(());
+        }
         // Using PowerShell to create shortcut since it's more reliable than direct COM automation
         let ps_script = format!(
             "$WScriptShell = New-Object -ComObject WScript.Shell; \

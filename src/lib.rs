@@ -125,7 +125,7 @@ pub fn is_startup_enable() -> Result<bool, String> {
 
     #[cfg(target_os = "windows")]
     {
-        match platform::windows::util::check_startup_status() {
+        match platform::win::util::check_startup_status() {
             Ok(status) => Ok(status), // Return the status if the call is successful
             Err(e) => {
                 error!("Failed to check startup status on Windows due: {}", e); // Log the error

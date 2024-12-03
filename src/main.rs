@@ -2,7 +2,7 @@
 // used to close the terminal and create a gui with no window in Windows.
 
 #[cfg(target_os = "windows")]
-use life_monitor::platform::windows::util::configure_startup;
+use life_monitor::platform::win::util::configure_startup;
 
 #[cfg(target_os = "linux")]
 use life_monitor::platform::linux::util::configure_startup;
@@ -114,8 +114,8 @@ async fn run(args: Cli, backend: StorageBackend) {
 #[cfg(target_os = "windows")]
 async fn run(args: Cli, backend: StorageBackend) {
     use life_monitor::keylogger;
-    use life_monitor::win::process;
-    use life_monitor::win::systray;
+    use life_monitor::platform::win::process;
+    use life_monitor::platform::win::systray;
 
     let backend2 = backend.clone();
 

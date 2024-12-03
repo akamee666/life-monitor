@@ -99,7 +99,8 @@ If you are struggling to understand the code, contact me somewhere, and I will d
 - [x]  Error handling when using remote instead of just panic.
 - [x] I am dumb, startup on Linux is failing and i need to fix.
 - [x] Organize project tree.
-- [ ] Doc to remote flag
+- [ ] Check weird shit on startup and i totally forgot about windows lol.
+- [ ] Doc to remote flag.
 - [ ]  Check CPU load with the new features. Now that i have more data in both table to go through it may impact the performance a little bit. 
 
 - [ ] Wayland support? I saw somewhere that Wayland has some kinda of support on X11 APIs so maybe it is not necessary.

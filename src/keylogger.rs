@@ -1,7 +1,7 @@
 #[cfg(target_os = "linux")]
 use crate::platform::linux::util::*;
 #[cfg(target_os = "windows")]
-use crate::win::util::*;
+use crate::platform::win::util::*;
 
 use crate::backend::{DataStore, StorageBackend};
 use crate::spawn_ticker;

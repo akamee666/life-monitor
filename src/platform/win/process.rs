@@ -1,10 +1,9 @@
-use crate::data::DataStore;
+use crate::backend::{DataStore, StorageBackend};
+use crate::platform::win::util::get_focused_window;
 use crate::spawn_ticker;
-use crate::win::util::get_focused_window;
 use crate::Event;
 use crate::ProcessTracker;
-use crate::StorageBackend;
-use crate::{check_idle, update_w_time};
+use crate::{is_idle, update_window_time};
 
 use std::sync::Arc;
 use tokio::sync::mpsc::channel;
@@ -45,7 +44,7 @@ pub async fn init(interval: Option<u32>, backend: StorageBackend) {
             }
             Event::IdleCheck => {
                 let tracker = logger.lock().await;
-                idle = check_idle(&tracker.idle_period);
+                idle = is_idle(&tracker.idle_period);
             }
             Event::DbUpdate => {
                 let tracker = logger.lock().await;
@@ -64,7 +63,7 @@ async fn handle_active_window(tracker: &mut ProcessTracker) {
         println!();
         debug!("Window name: {}.", w_name);
         debug!("Window class: {}.", w_class);
-        debug!("Window instance: {}.", w_instance);
+        //debug!("Window instance: {}.", w_instance);
         println!();
 
         let uptime = System::uptime();
@@ -87,7 +86,7 @@ async fn handle_active_window(tracker: &mut ProcessTracker) {
                 // for the new window.
                 tracker.time = 0;
 
-                update_w_time(
+                update_window_time(
                     &mut tracker.procs,
                     tracker.last_wname.clone(),
                     tracker.last_wclass.clone(),
@@ -97,11 +96,11 @@ async fn handle_active_window(tracker: &mut ProcessTracker) {
             } else {
                 debug!("Last window is empty, we just start the program.");
                 debug!("Going to add the currently window as first entry.");
-                update_w_time(
+                update_window_time(
                     &mut tracker.procs,
                     w_name.clone(),
                     w_class.clone(),
-                    w_instance.clone(),
+                    String::new(),
                     0,
                 );
             }
@@ -116,7 +115,8 @@ async fn handle_active_window(tracker: &mut ProcessTracker) {
             debug!("Timer is zero, recording uptime now to have the difference later.");
             tracker.time = uptime;
             tracker.last_wname = w_name;
-            tracker.last_winstance = w_instance;
+            // Windoes does not have instace names on its windows
+            tracker.last_winstance = String::new();
             tracker.last_wclass = w_class;
         }
     };
