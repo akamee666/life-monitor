@@ -2,6 +2,8 @@
 
 The main goal of this project is to create a mini spyware on my own to monitor what I'm doing daily and create some graphs about it to use in a personal blog. This idea comes from this post that I found interesting on Twitter: [Vin Twitter post](https://x.com/vin_acct/status/1807973375014506597)
 
+[Here](https://x.com/vin_acct/status/1876088761664385346) is a new thread from her explaining a little more about her tool.
+
 ### Installing
 
 You can install life-monitor easily by using cargo install or using github releases,although i am not sure how up to date it is compared to current commits so i recommend you to build from source :3
@@ -99,11 +101,10 @@ If you are struggling to understand the code, contact me somewhere, and I will d
 - [x]  Error handling when using remote instead of just panic.
 - [x] I am dumb, startup on Linux is failing and i need to fix.
 - [x] Organize project tree.
-- [ ] Check weird shit on startup and i totally forgot about windows lol.
+- [x] Check weird shit on startup and i totally forgot about windows lol(I do not know what i needed to do but it seems to be done so.).
+- [ ] Should not start again if life-monitor is already running.
 - [ ] Doc to remote flag.
-- [ ]  Check CPU load with the new features. Now that i have more data in both table to go through it may impact the performance a little bit. 
-
+- [ ] Check CPU load with the new features. Now that i have more data in both table to go through it may impact the performance a little bit. 
 - [ ] Wayland support? I saw somewhere that Wayland has some kinda of support on X11 APIs so maybe it is not necessary.
-
-- [ ] Maybe create a cool tui to display the collected data in a cool way to the user i guess.
+- [ ] Maybe create a cool tui to display the collected data in a cool way to the user i guess, how would i do it on windows though?.
   - [ ] Percentages of the most used apps would be cool.

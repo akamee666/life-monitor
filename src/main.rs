@@ -1,4 +1,4 @@
-#![windows_subsystem = "windows"]
+//#![windows_subsystem = "windows"]
 // used to close the terminal and create a gui with no window in Windows.
 
 #[cfg(target_os = "windows")]
