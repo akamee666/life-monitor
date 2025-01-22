@@ -1,5 +1,5 @@
 //! This file is responsible to deal with import of modules and define functions, enums or
-//! structs that can be used for both platform. Maybe i should not do this that way because
+//! structs that can be used for all platforms supported. Maybe i should not do this that way because
 //! sometimes i need to define everything as public and it might be bad? I dont know if i care though,
 //! dont seem to have any downsides.
 
@@ -8,9 +8,13 @@ use tokio::sync::mpsc;
 use tokio::time::interval;
 use tokio::time::Duration;
 
+use sysinfo::System;
+
 use crate::backend::*;
 
 use tracing::*;
+
+use std::process;
 
 #[cfg(target_os = "linux")]
 use platform::linux::util::get_idle_time;
@@ -133,14 +137,35 @@ pub fn is_startup_enable() -> Result<bool, String> {
             }
         }
     }
-
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-    {
-        error!("Startup check not implemented for this operating system");
-        process::exit(1); // Exit the program with error code 1
-    }
 }
 
+pub fn ensure_single_instance() {
+    let current_exe = std::env::current_exe().expect("Failed to get current executable path");
+    let p_name = current_exe
+        .file_name()
+        .expect("Failed to get executable name");
+
+    debug!("Searching for another instance of the binary before we start.");
+    debug!("Current exe path: {:?}", current_exe);
+
+    let system = System::new_all();
+
+    let mut instance_count = 0;
+
+    for proc in system.processes().values() {
+        if proc.name() == p_name {
+            instance_count += 1;
+            if instance_count > 1 {
+                warn!(
+                    "Another instance of the process \"{:?}\" is already running. Exiting.",
+                    p_name
+                );
+                process::exit(1);
+            }
+        }
+    }
+    info!("Another instance was not found.");
+}
 pub fn update_window_time(
     tracking_data: &mut Vec<ProcessInfo>,
     w_name: String,

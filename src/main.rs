@@ -9,6 +9,7 @@ use life_monitor::platform::linux::util::configure_startup;
 
 use life_monitor::args::Cli;
 use life_monitor::backend::*;
+use life_monitor::ensure_single_instance;
 use life_monitor::is_startup_enable;
 use life_monitor::logger;
 
@@ -20,14 +21,13 @@ use tracing::*;
 #[tokio::main]
 async fn main() {
     let mut args = Cli::parse();
-
     logger::init(args.debug);
+    ensure_single_instance();
     args.print_args();
-
-    let r = is_startup_enable().unwrap();
 
     // if we receive one of these two flags we call the function and it will enable or disable the
     // startup depending on the enable value.
+    let r = is_startup_enable().unwrap();
     if args.enable_startup || args.disable_startup {
         match configure_startup(args.enable_startup, r) {
             Ok(_) => {

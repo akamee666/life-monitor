@@ -102,9 +102,9 @@ If you are struggling to understand the code, contact me somewhere, and I will d
 - [x] I am dumb, startup on Linux is failing and i need to fix.
 - [x] Organize project tree.
 - [x] Check weird shit on startup and i totally forgot about windows lol(I do not know what i needed to do but it seems to be done so.).
-- [ ] Should not start again if life-monitor is already running.
+- [x] Should not start again if life-monitor is already running.
+- [ ] Wayland support.
 - [ ] Doc to remote flag.
 - [ ] Check CPU load with the new features. Now that i have more data in both table to go through it may impact the performance a little bit. 
-- [ ] Wayland support? I saw somewhere that Wayland has some kinda of support on X11 APIs so maybe it is not necessary.
 - [ ] Maybe create a cool tui to display the collected data in a cool way to the user i guess, how would i do it on windows though?.
   - [ ] Percentages of the most used apps would be cool.
