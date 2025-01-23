@@ -1,6 +1,8 @@
 //#![windows_subsystem = "windows"]
 // used to close the terminal and create a gui with no window in Windows.
 
+use std::io;
+
 #[cfg(target_os = "windows")]
 use life_monitor::platform::win::util::configure_startup;
 
@@ -22,7 +24,15 @@ use tracing::*;
 async fn main() {
     let mut args = Cli::parse();
     logger::init(args.debug);
-    ensure_single_instance();
+    ensure_single_instance().unwrap_or_else(|e| {
+        if e.kind() == io::ErrorKind::AlreadyExists {
+            error!("One instance of life-monitor is already running. Exiting!");
+            std::process::exit(1);
+        } else {
+            error!("Error [{e}] when trying to read the lock file.");
+            std::process::exit(1);
+        }
+    });
     args.print_args();
 
     // if we receive one of these two flags we call the function and it will enable or disable the

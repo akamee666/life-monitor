@@ -8,12 +8,14 @@ use tokio::sync::mpsc;
 use tokio::time::interval;
 use tokio::time::Duration;
 
-use sysinfo::System;
-
 use crate::backend::*;
 
 use tracing::*;
 
+use std::env;
+use std::fs::{self, File};
+use std::io::{self, Write};
+use std::path::PathBuf;
 use std::process;
 
 #[cfg(target_os = "linux")]
@@ -139,33 +141,66 @@ pub fn is_startup_enable() -> Result<bool, String> {
     }
 }
 
-pub fn ensure_single_instance() {
-    let current_exe = std::env::current_exe().expect("Failed to get current executable path");
-    let p_name = current_exe
-        .file_name()
-        .expect("Failed to get executable name");
+pub fn find_path() -> Result<PathBuf, std::io::Error> {
+    // Find a proper path to store the database in both os, create if already not exist
+    let path = if cfg!(target_os = "windows") {
+        let local_app_data = env::var("LOCALAPPDATA").map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "LOCALAPPDATA environment variable not set",
+            )
+        })?;
+        let mut path = PathBuf::from(local_app_data);
+        path.push("akame_monitor");
 
-    debug!("Searching for another instance of the binary before we start.");
-    debug!("Current exe path: {:?}", current_exe);
+        path
+    } else if cfg!(target_os = "linux") {
+        let home_dir = env::var("HOME").map_err(|_| {
+            io::Error::new(io::ErrorKind::NotFound, "HOME environment variable not set")
+        })?;
+        let mut path = PathBuf::from(home_dir);
+        path.push(".local");
+        path.push("share");
+        path.push("akame_monitor");
 
-    let system = System::new_all();
+        path
+    } else {
+        // Handle other OSes if needed
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Unsupported operating system",
+        ));
+    };
 
-    let mut instance_count = 0;
-
-    for proc in system.processes().values() {
-        if proc.name() == p_name {
-            instance_count += 1;
-            if instance_count > 1 {
-                warn!(
-                    "Another instance of the process \"{:?}\" is already running. Exiting.",
-                    p_name
-                );
-                process::exit(1);
-            }
-        }
-    }
-    info!("Another instance was not found.");
+    Ok(path)
 }
+
+pub fn ensure_single_instance() -> io::Result<()> {
+    let path = find_path()?;
+    fs::create_dir_all(&path)?;
+    let lock_file = path.join("akame_monitor.lock");
+
+    // Try to create the lock file exclusively
+    match File::options()
+        .write(true)
+        .create_new(true)
+        .open(&lock_file)
+    {
+        Ok(mut file) => {
+            // Write current PID to lock file
+            writeln!(file, "{}", process::id())?;
+
+            // Setup cleanup on process exit
+            std::panic::set_hook(Box::new(move |_| {
+                let _ = fs::remove_file(&lock_file);
+            }));
+
+            Ok(())
+        }
+        Err(e) => Err(e),
+    }
+}
+
 pub fn update_window_time(
     tracking_data: &mut Vec<ProcessInfo>,
     w_name: String,

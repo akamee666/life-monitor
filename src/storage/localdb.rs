@@ -1,3 +1,4 @@
+use crate::find_path;
 use crate::keylogger::KeyLogger;
 use crate::ProcessInfo;
 
@@ -10,11 +11,9 @@ use rusqlite::Connection;
 use rusqlite::OpenFlags;
 use rusqlite::Result as SqlResult;
 
-use std::env;
 use std::fs;
 use std::io;
 use std::io::Write;
-use std::path::PathBuf;
 
 use tracing::*;
 
@@ -366,7 +365,8 @@ fn parse_to_lower_gran(conn: &Connection, new_gran: u32, rows_to_merge: i32) -> 
 }
 
 pub fn clean_database() -> std::io::Result<()> {
-    let path = find_path()?;
+    let mut path = find_path()?;
+    path.push("data.db");
     fs::remove_file(path.clone())?;
     info!("Database deleted at {} with success!", path.display());
     Ok(())
@@ -585,45 +585,9 @@ pub fn update_proct(conn: &Connection, process_vec: &[ProcessInfo]) -> SqlResult
     Ok(())
 }
 
-fn find_path() -> Result<PathBuf, std::io::Error> {
-    // Find a proper path to store the database in both os, create if already not exist
-    let path = if cfg!(target_os = "windows") {
-        let local_app_data = env::var("LOCALAPPDATA").map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                "LOCALAPPDATA environment variable not set",
-            )
-        })?;
-        let mut path = PathBuf::from(local_app_data);
-        path.push("akame_monitor");
-        path.push("data.db");
-
-        path
-    } else if cfg!(target_os = "linux") {
-        let home_dir = env::var("HOME").map_err(|_| {
-            io::Error::new(io::ErrorKind::NotFound, "HOME environment variable not set")
-        })?;
-        let mut path = PathBuf::from(home_dir);
-        path.push(".local");
-        path.push("share");
-        path.push("akame_monitor");
-        path.push("data.db");
-
-        path
-    } else {
-        // Handle other OSes if needed
-        return Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "Unsupported operating system",
-        ));
-    };
-
-    Ok(path)
-}
-
 pub fn open_con() -> SqlResult<Connection> {
     let path = match find_path() {
-        Ok(path) => path,
+        Ok(path) => path.join("data.db"),
         Err(e) => {
             error!("Could not find path for database file.\n Error: {e}");
             panic!();
@@ -640,15 +604,6 @@ pub fn open_con() -> SqlResult<Connection> {
 mod tests {
     use super::*;
     use rusqlite::Result as SqlResult;
-
-    // Helper function to create an in-memory database for testing
-    // Also it should be a test as well.
-    // WARN:
-    fn create_test_db(gran: Option<u32>) -> SqlResult<Connection> {
-        let conn = Connection::open_in_memory()?;
-        initialize_database(&conn, gran)?;
-        Ok(conn)
-    }
 
     fn setup_database(data: &[&str]) -> SqlResult<Connection> {
         let conn = Connection::open_in_memory()?;
