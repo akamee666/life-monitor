@@ -17,7 +17,7 @@ life-monitor
 
 Binary will be available at `~/.cargo/bin/life-monitor` 
 
-If you tried to run and received a error about unknown command, mostly likely you don't have Cargo variable in your path, you can add running the following command.
+If you tried to run and received `unknow command`, mostly likely you don't have Cargo variable in your path, you can add it running the following command.
 
 1. Fish Shell
 
