@@ -23,8 +23,6 @@ use windows::Win32::{
 
 pub fn check_startup_status() -> Result<bool, Box<dyn std::error::Error>> {
     use std::path::PathBuf;
-    use winreg::enums::*;
-    use winreg::RegKey;
 
     // Check Startup folder
     let startup_folder: PathBuf = if let Ok(appdata) = env::var("APPDATA") {
@@ -41,21 +39,6 @@ pub fn check_startup_status() -> Result<bool, Box<dyn std::error::Error>> {
 
     let startup_exists = startup_folder.exists();
 
-    // Also check Registry (as a fallback since some programs use this method)
-    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let startup_path = r"Software\Microsoft\Windows\CurrentVersion\Run";
-    let startup = hkcu.open_subkey(startup_path)?;
-
-    let current_exe = env::current_exe()?;
-    let exe_path = current_exe.to_string_lossy().to_string();
-
-    let registry_enabled = match startup.get_value::<String, _>("LifeMonitor") {
-        Ok(path) => path == exe_path,
-        Err(_) => false,
-    };
-
-    let is_enabled = startup_exists || registry_enabled;
-
     info!("Startup status on Windows:");
     info!(
         "  Startup Folder: {}",
@@ -65,20 +48,8 @@ pub fn check_startup_status() -> Result<bool, Box<dyn std::error::Error>> {
             "Disabled"
         }
     );
-    info!(
-        "  Registry: {}",
-        if registry_enabled {
-            "Enabled"
-        } else {
-            "Disabled"
-        }
-    );
-    info!(
-        "  Overall: {}",
-        if is_enabled { "Enabled" } else { "Disabled" }
-    );
 
-    Ok(is_enabled)
+    Ok(startup_exists)
 }
 
 pub fn configure_startup(

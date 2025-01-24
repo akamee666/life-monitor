@@ -101,7 +101,7 @@ fn registry(env_filter_file: EnvFilter, env_filter_std: EnvFilter) {
         )
         .init();
 
-    info!("spy.log file created!");
+    info!("Log file created!");
 }
 
 fn create_file() -> Result<File, std::io::Error> {
@@ -122,7 +122,7 @@ fn create_file() -> Result<File, std::io::Error> {
         }
 
         fs::File::create(path).unwrap()
-    } else if cfg!(target_os = "linux") {
+    } else {
         let home_dir = env::var("HOME").map_err(|_| {
             io::Error::new(io::ErrorKind::NotFound, "HOME environment variable not set")
         })?;
@@ -137,12 +137,6 @@ fn create_file() -> Result<File, std::io::Error> {
         }
 
         fs::File::create(path).unwrap()
-    } else {
-        // Handle other OSes if needed
-        return Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "Unsupported operating system",
-        ));
     };
 
     Ok(file)

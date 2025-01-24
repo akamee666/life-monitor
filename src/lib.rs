@@ -13,10 +13,8 @@ use crate::backend::*;
 use tracing::*;
 
 use std::env;
-use std::fs::{self, File};
-use std::io::{self, Write};
+use std::io::{self};
 use std::path::PathBuf;
-use std::process;
 
 #[cfg(target_os = "linux")]
 use platform::linux::util::get_idle_time;
@@ -26,6 +24,7 @@ use platform::win::util::get_idle_time;
 
 pub mod args;
 pub mod keylogger;
+pub mod lock;
 pub mod logger;
 pub mod platform;
 
@@ -141,6 +140,7 @@ pub fn is_startup_enable() -> Result<bool, String> {
     }
 }
 
+// Is this function really necessary?.
 pub fn find_path() -> Result<PathBuf, std::io::Error> {
     // Find a proper path to store the database in both os, create if already not exist
     let path = if cfg!(target_os = "windows") {
@@ -173,32 +173,6 @@ pub fn find_path() -> Result<PathBuf, std::io::Error> {
     };
 
     Ok(path)
-}
-
-pub fn ensure_single_instance() -> io::Result<()> {
-    let path = find_path()?;
-    fs::create_dir_all(&path)?;
-    let lock_file = path.join("akame_monitor.lock");
-
-    // Try to create the lock file exclusively
-    match File::options()
-        .write(true)
-        .create_new(true)
-        .open(&lock_file)
-    {
-        Ok(mut file) => {
-            // Write current PID to lock file
-            writeln!(file, "{}", process::id())?;
-
-            // Setup cleanup on process exit
-            std::panic::set_hook(Box::new(move |_| {
-                let _ = fs::remove_file(&lock_file);
-            }));
-
-            Ok(())
-        }
-        Err(e) => Err(e),
-    }
 }
 
 pub fn update_window_time(
