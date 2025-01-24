@@ -1,8 +1,6 @@
 //#![windows_subsystem = "windows"]
 // used to close the terminal and create a gui with no window in Windows.
 
-use std::io;
-
 #[cfg(target_os = "windows")]
 use life_monitor::platform::win::util::configure_startup;
 
@@ -11,8 +9,8 @@ use life_monitor::platform::linux::util::configure_startup;
 
 use life_monitor::args::Cli;
 use life_monitor::backend::*;
-use life_monitor::ensure_single_instance;
 use life_monitor::is_startup_enable;
+use life_monitor::lock::ensure_single_instance;
 use life_monitor::logger;
 
 use clap::Parser;
@@ -24,16 +22,16 @@ use tracing::*;
 async fn main() {
     let mut args = Cli::parse();
     logger::init(args.debug);
-    ensure_single_instance().unwrap_or_else(|e| {
-        if e.kind() == io::ErrorKind::AlreadyExists {
-            error!("One instance of life-monitor is already running. Exiting!");
-            std::process::exit(1);
-        } else {
-            error!("Error [{e}] when trying to read the lock file.");
-            std::process::exit(1);
-        }
+
+    let _lock = ensure_single_instance().unwrap_or_else(|e| {
+        error!("Failed to acquire lock: {}", e);
+        std::process::exit(1);
     });
-    args.print_args();
+
+    debug!(
+        "Lock acquired. Running application with PID {}",
+        std::process::id()
+    );
 
     // if we receive one of these two flags we call the function and it will enable or disable the
     // startup depending on the enable value.
