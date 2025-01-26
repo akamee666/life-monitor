@@ -1,6 +1,3 @@
-//! This file is responsible to create a file and define layer for a better log which can be
-//! changed by the flag or using env variable RUST_LOG to help debug bugs or whatever.
-
 use std::env;
 use std::fs;
 use std::fs::File;
@@ -21,15 +18,15 @@ pub fn init(enable_debug: bool) {
             .add_directive("hyper_util=off".parse().unwrap())
             .add_directive("reqwest=off".parse().unwrap());
 
-        // Display info, warn, error and debug prints to the file by default.
+        // Display info, warn, error, and debug prints to the file by default.
         let env_filter_file = EnvFilter::new("debug")
             .add_directive("hyper=off".parse().unwrap())
             .add_directive("hyper_util=off".parse().unwrap())
             .add_directive("reqwest=off".parse().unwrap());
 
-        registry(env_filter_file, env_filter_std);
+        registry(env_filter_file, env_filter_std, enable_debug);
     } else {
-        // Display only error,info and warns to stdout by default, use RUST_LOG to change filter.
+        // Display only error, info, and warns to stdout by default, use RUST_LOG to change filter.
         // WARN: RUST_LOG="debug" is the only that doesn't work
         let env_filter_std = EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| EnvFilter::new("info"))
@@ -37,31 +34,33 @@ pub fn init(enable_debug: bool) {
             .add_directive("hyper_util=off".parse().unwrap())
             .add_directive("reqwest=off".parse().unwrap());
 
-        // Display only error,info and warns to file.
+        // Display only error, info, and warns to file.
         let env_filter_file = EnvFilter::new("info")
             .add_directive("hyper=off".parse().unwrap())
             .add_directive("hyper_util=off".parse().unwrap())
             .add_directive("reqwest=off".parse().unwrap());
 
-        registry(env_filter_file, env_filter_std);
+        registry(env_filter_file, env_filter_std, enable_debug);
     }
 }
 
-fn registry(env_filter_file: EnvFilter, env_filter_std: EnvFilter) {
+fn registry(env_filter_file: EnvFilter, env_filter_std: EnvFilter, enable_debug: bool) {
     // A layer that logs events to a file.
     let file = match create_file() {
         Ok(file) => file,
         Err(error) => panic!("Error: {error}"),
     };
 
+    // Configure the stdout log format based on the `enable_debug` flag.
     let stdout_log = fmt::layer().with_target(false).without_time().event_format(
         fmt::format()
-            .with_file(true)
-            .with_line_number(true)
+            .with_file(enable_debug) // Include file name only if debug is enabled
+            .with_line_number(enable_debug) // Include line number only if debug is enabled
             .without_time()
             .with_target(false),
     );
 
+    // Configure the debug log format based on the `enable_debug` flag.
     let debug_log = fmt::layer()
         .with_writer(Arc::new(file))
         .with_ansi(false)
@@ -69,8 +68,8 @@ fn registry(env_filter_file: EnvFilter, env_filter_std: EnvFilter) {
         .without_time()
         .event_format(
             fmt::format()
-                .with_file(true)
-                .with_line_number(true)
+                .with_file(enable_debug) // Include file name only if debug is enabled
+                .with_line_number(enable_debug) // Include line number only if debug is enabled
                 .without_time()
                 .with_target(false),
         );
