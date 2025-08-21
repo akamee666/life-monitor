@@ -32,6 +32,7 @@ reqwest = { version = "0.12.7", features = ["json"] }
 serde = { version = "1.0.210", features = ["serde_derive"] }
 chrono = "0.4.38"
 libc = "0.2.169"
+wayland-client = "0.31.11"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "^0.52", features = [

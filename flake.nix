@@ -16,17 +16,23 @@
         inherit system;
         overlays = [ fenix.overlays.default ];
       };
+
+      all_deps = with pkgs; [
+        sqlite
+        gcc
+        openssl 
+        pkg-config
+        xorg.libX11
+        xorg.libXi
+        xorg.libXtst
+      ];
     in
     {
       packages.${system}.default = fenix.packages.${system}.minimal.toolchain;
       devShells.${system}.default = pkgs.mkShell {
+        nativeBuildInputs = all_deps; 
         buildInputs = [
-          # Build requirements
-          pkgs.pkg-config
-          pkgs.openssl
-          pkgs.xorg.libX11
-          pkgs.xorg.libXi
-          pkgs.xorg.libXtst
+
           # Add the required components from fenix
           (fenix.packages.${system}.complete.withComponents [
             "cargo"
@@ -37,6 +43,9 @@
           ])
           pkgs.rust-analyzer-nightly
         ];
+         shellHook = ''
+                export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${pkgs.lib.makeLibraryPath all_deps}";
+         '';
       };
     };
 }

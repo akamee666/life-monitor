@@ -18,6 +18,26 @@ use clap::Parser;
 use tokio::task::JoinSet;
 use tracing::*;
 
+use wayland_client::{protocol::wl_registry, Connection, Dispatch, QueueHandle};
+
+struct AppData;
+
+impl Dispatch<wl_registry::WlRegistry, ()> for AppData {
+    fn event(
+        _state: &mut Self,
+        _: &wl_registry::WlRegistry,
+        event: wl_registry::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<AppData>,
+    ) {
+        if let wl_registry::Event::Global { name, interface, version } = event {
+            println!("[{}], {}, (v{})", name, interface, version);
+        }
+    }
+}
+
+
 #[tokio::main]
 async fn main() {
     let mut args = Cli::parse();
