@@ -21,6 +21,12 @@
       packages.${system}.default = fenix.packages.${system}.minimal.toolchain;
       devShells.${system}.default = pkgs.mkShell {
         buildInputs = [
+          # Build requirements
+          pkgs.pkg-config
+          pkgs.openssl
+          pkgs.xorg.libX11
+          pkgs.xorg.libXi
+          pkgs.xorg.libXtst
           # Add the required components from fenix
           (fenix.packages.${system}.complete.withComponents [
             "cargo"
