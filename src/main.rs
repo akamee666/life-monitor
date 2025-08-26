@@ -20,19 +20,115 @@ use tracing::*;
 
 use wayland_client::{protocol::wl_registry, Connection, Dispatch, QueueHandle};
 
-struct AppData;
+use wayland_protocols_wlr::foreign_toplevel::v1::client::{ *, zwlr_foreign_toplevel_handle_v1::*, zwlr_foreign_toplevel_manager_v1::*};
+
+#[derive(Debug)]
+struct TopLevel {
+    handle: ZwlrForeignToplevelHandleV1,
+    title: Option<String>,
+    app_id: Option<String>,
+    is_active: bool,
+}
+
+struct AppData {
+    manager: Option<ZwlrForeignToplevelManagerV1>,
+    toplevels: Vec<TopLevel>,
+}
 
 impl Dispatch<wl_registry::WlRegistry, ()> for AppData {
     fn event(
-        _state: &mut Self,
-        _: &wl_registry::WlRegistry,
+        state: &mut Self,
+        registry: &wl_registry::WlRegistry,
         event: wl_registry::Event,
+        _: &(),
+        _: &Connection,
+        qh: &QueueHandle<AppData>,
+    ) {
+        if let wl_registry::Event::Global { name, interface, version } = event {
+            println!("[{}] {}, (v{})", name, interface, version);
+            match &interface[..] {
+                "zwlr_foreign_toplevel_manager_v1" => {
+                    let toplevel_manager = registry.bind::<ZwlrForeignToplevelManagerV1,_,_>(name,3,qh,());
+                    state.manager = Some(toplevel_manager);
+                },
+                _ => {},
+            }
+
+        }
+    }
+}
+
+
+use std::sync::Arc;
+use wayland_client::backend::ObjectData;
+
+impl Dispatch<ZwlrForeignToplevelManagerV1, ()> for AppData {
+    fn event(
+        state: &mut Self,
+        _mgr: &ZwlrForeignToplevelManagerV1,
+        event: zwlr_foreign_toplevel_manager_v1::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<AppData>,
     ) {
-        if let wl_registry::Event::Global { name, interface, version } = event {
-            println!("[{}], {}, (v{})", name, interface, version);
+        use zwlr_foreign_toplevel_manager_v1::Event;
+
+        match event {
+            Event::Toplevel { toplevel } => {
+                println!("New toplevel handle: {:?}", toplevel);
+                state.toplevels.push(TopLevel {
+                    handle: toplevel,
+                    title: None,
+                    app_id: None,
+                    is_active: false,
+                });
+            }
+            Event::Finished => {
+                println!("Manager: initial toplevels sent");
+            }
+            _ => {}
+        }
+    }
+
+
+    fn event_created_child(
+        opcode: u16,
+        qhandle: &QueueHandle<Self>,
+    ) -> Arc<dyn ObjectData> {
+        match opcode {
+            0 => qhandle.make_data::<ZwlrForeignToplevelHandleV1, _>(()),  
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for AppData {
+    fn event(
+        state: &mut Self,
+        handle: &ZwlrForeignToplevelHandleV1,
+        event: zwlr_foreign_toplevel_handle_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<AppData>,
+    ) {
+        use zwlr_foreign_toplevel_handle_v1::Event;
+        match event {
+            Event::Title { title } => {
+                println!("Window title: {}", title);
+                if let Some(w) = state.toplevels.iter_mut().find(|t| t.handle == *handle) {
+                    w.title = Some(title);
+                }
+            }
+            Event::AppId { app_id } => {
+                println!("App ID: {}", app_id);
+            }
+            Event::State { state: states } => {
+                println!("State bits: {:?}", states);
+            }
+            Event::Closed => {
+                println!("Window closed");
+            }
+            _ => {}
         }
     }
 }
@@ -42,6 +138,30 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppData {
 async fn main() {
     let mut args = Cli::parse();
     logger::init(args.debug);
+
+    let conn = Connection::connect_to_env().unwrap();
+    let wl_display = conn.display();
+    let mut event_q = conn.new_event_queue();
+    let qh = event_q.handle();
+
+    let _registry =  wl_display.get_registry(&qh,());
+
+    info!("Advertised globals:");
+
+    let mut state = AppData {
+        manager: None,
+        toplevels: Vec::new(),
+    };
+
+    // 1: discover globals
+    event_q.roundtrip(&mut state).unwrap();
+
+    // 2: receive initial toplevels 
+    event_q.roundtrip(&mut state).unwrap();
+
+    loop {
+        event_q.blocking_dispatch(&mut state).unwrap();
+    }
 
     let _lock = ensure_single_instance().unwrap_or_else(|e| {
         error!("Failed to acquire lock: {}", e);
