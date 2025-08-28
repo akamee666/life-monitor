@@ -20,63 +20,67 @@ use tracing::*;
 
 use wayland_client::{protocol::wl_registry, Connection, Dispatch, QueueHandle};
 
-use wayland_protocols_wlr::foreign_toplevel::v1::client::{ *, zwlr_foreign_toplevel_handle_v1::*, zwlr_foreign_toplevel_manager_v1::*};
+use wayland_protocols_wlr::foreign_toplevel::v1::client::{
+    zwlr_foreign_toplevel_handle_v1::*, zwlr_foreign_toplevel_manager_v1::*, *,
+};
 
 #[derive(Debug)]
-struct TopLevel {
+struct Window {
     handle: ZwlrForeignToplevelHandleV1,
     title: Option<String>,
     app_id: Option<String>,
     is_active: bool,
 }
 
-struct AppData {
+struct WindowMonitorData {
     manager: Option<ZwlrForeignToplevelManagerV1>,
-    toplevels: Vec<TopLevel>,
+    toplevels: Vec<Window>,
 }
 
-impl Dispatch<wl_registry::WlRegistry, ()> for AppData {
+impl Dispatch<wl_registry::WlRegistry, ()> for WindowMonitorData {
     fn event(
         state: &mut Self,
         registry: &wl_registry::WlRegistry,
         event: wl_registry::Event,
         _: &(),
         _: &Connection,
-        qh: &QueueHandle<AppData>,
+        qh: &QueueHandle<WindowMonitorData>,
     ) {
-        if let wl_registry::Event::Global { name, interface, version } = event {
+        if let wl_registry::Event::Global {
+            name,
+            interface,
+            version,
+        } = event
+        {
             println!("[{}] {}, (v{})", name, interface, version);
-            match &interface[..] {
-                "zwlr_foreign_toplevel_manager_v1" => {
-                    let toplevel_manager = registry.bind::<ZwlrForeignToplevelManagerV1,_,_>(name,3,qh,());
-                    state.manager = Some(toplevel_manager);
-                },
-                _ => {},
-            }
 
+            if &interface[..] == "zwlr_foreign_toplevel_manager_v1" {
+                let toplevel_manager =
+                    registry.bind::<ZwlrForeignToplevelManagerV1, _, _>(name, 3, qh, ());
+                state.manager = Some(toplevel_manager);
+            }
         }
     }
 }
 
-
 use std::sync::Arc;
 use wayland_client::backend::ObjectData;
 
-impl Dispatch<ZwlrForeignToplevelManagerV1, ()> for AppData {
+impl Dispatch<ZwlrForeignToplevelManagerV1, ()> for WindowMonitorData {
     fn event(
         state: &mut Self,
         _mgr: &ZwlrForeignToplevelManagerV1,
         event: zwlr_foreign_toplevel_manager_v1::Event,
         _: &(),
         _: &Connection,
-        _: &QueueHandle<AppData>,
+        _: &QueueHandle<WindowMonitorData>,
     ) {
         use zwlr_foreign_toplevel_manager_v1::Event;
 
         match event {
             Event::Toplevel { toplevel } => {
-                println!("New toplevel handle: {:?}", toplevel);
-                state.toplevels.push(TopLevel {
+                debug!("Adding window to toplevel");
+                state.toplevels.push(Window {
                     handle: toplevel,
                     title: None,
                     app_id: None,
@@ -90,49 +94,88 @@ impl Dispatch<ZwlrForeignToplevelManagerV1, ()> for AppData {
         }
     }
 
-
-    fn event_created_child(
-        opcode: u16,
-        qhandle: &QueueHandle<Self>,
-    ) -> Arc<dyn ObjectData> {
+    fn event_created_child(opcode: u16, qhandle: &QueueHandle<Self>) -> Arc<dyn ObjectData> {
         match opcode {
-            0 => qhandle.make_data::<ZwlrForeignToplevelHandleV1, _>(()),  
+            0 => qhandle.make_data::<ZwlrForeignToplevelHandleV1, _>(()),
             _ => unreachable!(),
         }
     }
 }
 
-impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for AppData {
+impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for WindowMonitorData {
     fn event(
         state: &mut Self,
         handle: &ZwlrForeignToplevelHandleV1,
         event: zwlr_foreign_toplevel_handle_v1::Event,
         _: &(),
         _: &Connection,
-        _: &QueueHandle<AppData>,
+        _: &QueueHandle<WindowMonitorData>,
     ) {
         use zwlr_foreign_toplevel_handle_v1::Event;
         match event {
             Event::Title { title } => {
-                println!("Window title: {}", title);
+                // Each window/toplevel has a different handle.
+                debug!("To handle [ ], adding the window: [{title}]");
                 if let Some(w) = state.toplevels.iter_mut().find(|t| t.handle == *handle) {
                     w.title = Some(title);
                 }
             }
             Event::AppId { app_id } => {
-                println!("App ID: {}", app_id);
+                debug!("App ID: {}", app_id);
             }
-            Event::State { state: states } => {
-                println!("State bits: {:?}", states);
+            Event::State { state: w_state } => {
+                let states: Vec<u32> = w_state
+                    .chunks(4)
+                    .map(|chunk| u32::from_le_bytes(chunk.try_into().unwrap()))
+                    .collect();
+
+                if states.contains(&2) {
+                    if let Some(focused_window) =
+                        state.toplevels.iter().find(|t| t.handle == *handle)
+                    {
+                        debug!(
+                            "Window focused: title='{}', app_id='{}'",
+                            focused_window.title.as_deref().unwrap_or("N/A"),
+                            focused_window.app_id.as_deref().unwrap_or("N/A")
+                        );
+                    }
+                } else {
+                    // You can also handle when a window loses focus.
+                    if let Some(unfocused_window) =
+                        state.toplevels.iter().find(|t| t.handle == *handle)
+                    {
+                        // Check if this window was previously marked as focused in your state.
+                        // This part depends on how you track the focused state.
+                        debug!(
+                            "Window lost focus: title='{}'",
+                            unfocused_window.title.as_deref().unwrap_or("N/A")
+                        );
+                    }
+                }
+                // debug!("State bits for handle {:?}: {:?}", *handle.id(), states);
             }
+
             Event::Closed => {
-                println!("Window closed");
+                debug!("Window closed");
             }
-            _ => {}
+
+            Event::OutputEnter { output } => {
+                debug!("Output enter: {output:?}");
+            }
+
+            Event::OutputLeave { output } => {
+                debug!("Output leave: {output:?}");
+            }
+
+            Event::Parent { parent } => {
+                debug!("Parent: {parent:?}");
+            }
+
+            _ => {} // Event::Done => {
+                    // },
         }
     }
 }
-
 
 #[tokio::main]
 async fn main() {
@@ -144,11 +187,11 @@ async fn main() {
     let mut event_q = conn.new_event_queue();
     let qh = event_q.handle();
 
-    let _registry =  wl_display.get_registry(&qh,());
+    let _registry = wl_display.get_registry(&qh, ());
 
     info!("Advertised globals:");
 
-    let mut state = AppData {
+    let mut state = WindowMonitorData {
         manager: None,
         toplevels: Vec::new(),
     };
@@ -156,7 +199,7 @@ async fn main() {
     // 1: discover globals
     event_q.roundtrip(&mut state).unwrap();
 
-    // 2: receive initial toplevels 
+    // 2: receive initial toplevels
     event_q.roundtrip(&mut state).unwrap();
 
     loop {

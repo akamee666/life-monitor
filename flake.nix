@@ -41,7 +41,6 @@
             "rustc"
             "rustfmt"
           ])
-          pkgs.rust-analyzer-nightly
         ];
          shellHook = ''
                 export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${pkgs.lib.makeLibraryPath all_deps}";
