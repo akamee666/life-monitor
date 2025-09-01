@@ -32,8 +32,6 @@ reqwest = { version = "0.12.7", features = ["json"] }
 serde = { version = "1.0.210", features = ["serde_derive"] }
 chrono = "0.4.38"
 libc = "0.2.169"
-wayland-client = "0.31.11"
-wayland-protocols-wlr = { version = "0.3.9", features = ["client"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "^0.52", features = [
@@ -50,6 +48,8 @@ rusqlite = { version="0.32.1", features = ["bundled"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 x11rb = { version="0.13.1", features = ["all-extensions"] }
 rusqlite = "0.32.1"
+wayland-client = "0.31.11"
+wayland-protocols-wlr = { version = "0.3.9", features = ["client"] }
 
 [dev-dependencies]
 approx = "0.5.1"

@@ -1,6 +1,5 @@
-use crate::find_path;
+use crate::common::*;
 use crate::keylogger::KeyLogger;
-use crate::ProcessInfo;
 
 use chrono::NaiveTime;
 use chrono::{Duration, NaiveDate};
@@ -18,10 +17,10 @@ use std::io::Write;
 use tracing::*;
 
 #[cfg(target_os = "linux")]
-use crate::platform::linux::util::MouseSettings;
+use crate::platform::linux::common::MouseSettings;
 
 #[cfg(target_os = "windows")]
-use crate::platform::win::util::MouseSettings;
+use crate::platform::windows::common::MouseSettings;
 
 pub fn initialize_database(conn: &Connection, k_gran: Option<u32>) -> SqlResult<()> {
     let pq = "CREATE TABLE IF NOT EXISTS procs (

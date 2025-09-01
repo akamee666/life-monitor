@@ -1,11 +1,13 @@
 #[cfg(target_os = "linux")]
-use crate::platform::linux::util::*;
+use crate::platform::linux::common::*;
+#[cfg(target_os = "linux")]
+use crate::platform::linux::x11::*;
 #[cfg(target_os = "windows")]
-use crate::platform::win::util::*;
+use crate::platform::windows::common::*;
 
-use crate::backend::{DataStore, StorageBackend};
-use crate::spawn_ticker;
-use crate::Event;
+use crate::common::Event;
+use crate::common::*;
+use crate::storage::backend::{DataStore, StorageBackend};
 
 use rdev::listen;
 use serde::Deserialize;
