@@ -28,7 +28,6 @@ pub fn initialize_database(conn: &Connection, k_gran: Option<u32>) -> SqlResult<
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         w_name TEXT NOT NULL,
         w_time INTEGER NOT NULL,
-        w_instance TEXT,
         w_class TEXT NOT NULL
     );";
 
@@ -527,7 +526,7 @@ pub fn get_keyst(conn: &Connection) -> SqlResult<KeyLogger> {
 // Need to be owned by the caller, Vec seems better in that case.
 pub fn get_proct(conn: &Connection) -> SqlResult<Vec<ProcessInfo>> {
     let query = "
-        SELECT w_name,w_time,w_instance, w_class
+        SELECT w_name,w_time, w_class
         FROM procs;
     ";
 
@@ -538,7 +537,6 @@ pub fn get_proct(conn: &Connection) -> SqlResult<Vec<ProcessInfo>> {
             Ok(ProcessInfo {
                 w_name: row.get(0)?,
                 w_time: row.get(1)?,
-                w_instance: row.get(2)?,
                 w_class: row.get(3)?,
             })
         })?
@@ -556,29 +554,17 @@ pub fn update_proct(conn: &Connection, process_vec: &[ProcessInfo]) -> SqlResult
 
         if exists {
             //debug!("w_name: {} exists!", &process.w_name);
-            let query_update =
-                "UPDATE procs SET w_time = ?, w_instance = ?, w_class = ? WHERE w_name = ?;";
+            let query_update = "UPDATE procs SET w_time = ?, w_class = ? WHERE w_name = ?;";
             conn.execute(
                 query_update,
-                params![
-                    process.w_time,
-                    process.w_instance,
-                    process.w_class,
-                    process.w_name
-                ],
+                params![process.w_time, process.w_class, process.w_name],
             )?;
         } else {
             //debug!("w_name: {} does not exists!", &process.w_name);
-            let query_insert =
-                "INSERT INTO procs (w_name,w_time,w_instance, w_class) VALUES (?, ?, ?, ?);";
+            let query_insert = "INSERT INTO procs (w_name,w_time, w_class) VALUES (?, ?, ?, ?);";
             conn.execute(
                 query_insert,
-                params![
-                    process.w_name,
-                    process.w_time,
-                    process.w_instance,
-                    process.w_class
-                ],
+                params![process.w_name, process.w_time, process.w_class],
             )?;
         }
     }

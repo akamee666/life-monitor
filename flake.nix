@@ -7,7 +7,12 @@
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
   };
 
-  outputs = { self, fenix, nixpkgs }:
+  outputs =
+    {
+      self,
+      fenix,
+      nixpkgs,
+    }:
     let
       # Define the system you're building for once
       system = "x86_64-linux";
@@ -20,7 +25,7 @@
       all_deps = with pkgs; [
         sqlite
         gcc
-        openssl 
+        openssl
         pkg-config
         xorg.libX11
         xorg.libXi
@@ -30,7 +35,7 @@
     {
       packages.${system}.default = fenix.packages.${system}.minimal.toolchain;
       devShells.${system}.default = pkgs.mkShell {
-        nativeBuildInputs = all_deps; 
+        nativeBuildInputs = all_deps;
         buildInputs = [
 
           # Add the required components from fenix
@@ -41,10 +46,12 @@
             "rustc"
             "rustfmt"
           ])
+          pkgs.rust-analyzer-nightly
+          pkgs.lazygit
         ];
-         shellHook = ''
-                export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${pkgs.lib.makeLibraryPath all_deps}";
-         '';
+        shellHook = ''
+          export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${pkgs.lib.makeLibraryPath all_deps}";
+        '';
       };
     };
 }

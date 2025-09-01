@@ -14,9 +14,11 @@ use x11rb::rust_connection::RustConnection;
 use tracing::*;
 
 // https://www.reddit.com/r/rust/comments/f7yrle/get_information_about_current_w_xorg/
-// Returns name, instance and class of the focused window in that order.
-pub fn get_focused_window() -> Result<(String, String, String), Box<dyn std::error::Error>> {
+// Returns name and class of the focused window in that order.
+pub fn get_focused_window() -> Result<(String, String), Box<dyn std::error::Error>> {
     // Set up our state
+    // TODO: This will fucking panic for no reason
+    // TODO: THIS WILL ALSO OPEN A FUCKING CONNECTION EVERY SECOND, i don't think this is cheap
     let (conn, screen) = x11rb::connect(None).expect("Failed to connect");
     let root = conn.setup().roots[screen].root;
     let net_active_window = get_or_intern_atom(&conn, b"_NET_ACTIVE_WINDOW");
@@ -34,17 +36,17 @@ pub fn get_focused_window() -> Result<(String, String, String), Box<dyn std::err
     let (net_wm_name, utf8_string) = (net_wm_name, utf8_string);
     let (wm_class, string): (Atom, Atom) = (AtomEnum::WM_CLASS.into(), AtomEnum::STRING.into());
 
-    // Get the property from the window that we need
+    // Get the property from the window we need
     let name = conn.get_property(false, focus, net_wm_name, utf8_string, 0, u32::MAX)?;
     let class = conn.get_property(false, focus, wm_class, string, 0, u32::MAX)?;
     let (name, class) = (name.reply()?, class.reply()?);
 
     let (instance, class) = parse_wm_class(&class);
     let name = parse_string_property(&name).to_string();
-    let instance = instance.to_string();
+    let _ = instance.to_string(); // We are not using it bc it's kinda useless and it would complicate some code so i'm avoiding it
     let class = class.to_string();
 
-    Ok((name, instance, class))
+    Ok((name, class))
 }
 
 pub fn get_screen_dpi() -> Result<f64, Box<dyn std::error::Error>> {

@@ -1,11 +1,9 @@
 use crate::backend::{DataStore, StorageBackend};
-use crate::platform::linux::util::get_focused_window;
+use crate::is_idle;
+use crate::platform::handle_active_window;
 use crate::spawn_ticker;
 use crate::Event;
 use crate::ProcessTracker;
-use crate::{is_idle, update_window_time};
-
-use sysinfo::System;
 
 use std::sync::Arc;
 
@@ -28,8 +26,11 @@ pub async fn init(interval: Option<u32>, backend: StorageBackend) {
     let logger = Arc::new(Mutex::new(ProcessTracker::new(&backend).await));
     let (tx, mut rx) = channel(20);
 
+    // Each one second we gonna report the current window
     spawn_ticker(tx.clone(), Duration::from_secs(1), Event::Tick);
+    // Each twenty seconds we gonna check if user is idle
     spawn_ticker(tx.clone(), Duration::from_secs(20), Event::IdleCheck);
+    // Each [interval here] seconds we gonna send updates to the database
     spawn_ticker(
         tx.clone(),
         Duration::from_secs(db_int.into()),
@@ -57,72 +58,4 @@ pub async fn init(interval: Option<u32>, backend: StorageBackend) {
             }
         }
     }
-}
-
-// This function upload the time for the entry in the vector only if we change window to reduce the
-// overload by not going through the vector every second.
-// WARN: This functions is almost the same for both platform, maybe have just one function and
-// change the tree of the project to allow the function find the right one depending on the
-// platform.
-async fn handle_active_window(tracker: &mut ProcessTracker) {
-    if let Ok((w_name, w_instance, w_class)) = get_focused_window() {
-        //println!();
-        //debug!("Window name: {}.", w_name);
-        //debug!("Window class: {}.", w_class);
-        //debug!("Window instance: {}.", w_instance);
-        //println!();
-        //
-        let uptime = System::uptime();
-
-        if tracker.last_wname != w_name {
-            if !tracker.last_wname.is_empty() {
-                debug!(
-                    "We are not in the same window than before. Going to update time for last window {}.",
-                    tracker.last_wclass
-                );
-
-                let time_diff = uptime - tracker.time;
-
-                debug!(
-                    "Uptime for new window is not zero, window: {} was active for: [{}] seconds.",
-                    tracker.last_wclass, time_diff
-                );
-
-                // The window that will be updated will be last but we need to reset the timer here
-                // for the new window.
-                tracker.time = 0;
-
-                update_window_time(
-                    &mut tracker.procs,
-                    tracker.last_wname.clone(),
-                    tracker.last_wclass.clone(),
-                    tracker.last_winstance.clone(),
-                    time_diff,
-                );
-            } else {
-                debug!("Last window is empty, we just start the program.");
-                debug!("Going to add the currently window as first entry.");
-                update_window_time(
-                    &mut tracker.procs,
-                    w_name.clone(),
-                    w_class.clone(),
-                    w_instance.clone(),
-                    0,
-                );
-            }
-        } else {
-            debug!("We are in the same window than before, doing nothing.");
-            debug!("Timer: {}s", uptime - tracker.time);
-        }
-
-        // Timer will be zero if the program just started or windows have changed and we just
-        // finished updating the vector.
-        if tracker.time == 0 {
-            debug!("Timer is zero, recording uptime now to have the difference later.");
-            tracker.time = uptime;
-            tracker.last_wname = w_name;
-            tracker.last_winstance = w_instance;
-            tracker.last_wclass = w_class;
-        }
-    };
 }

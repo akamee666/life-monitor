@@ -43,7 +43,6 @@ pub struct ProcessTracker {
     time: u64,
     last_wname: String,
     last_wclass: String,
-    last_winstance: String,
     idle_period: u64,
     procs: Vec<ProcessInfo>,
 }
@@ -59,7 +58,6 @@ impl ProcessTracker {
             time: 0,
             last_wname: String::new(),
             last_wclass: String::new(),
-            last_winstance: String::new(),
             idle_period: 20,
             procs: d,
         }
@@ -70,7 +68,6 @@ impl ProcessTracker {
 pub struct ProcessInfo {
     pub w_name: String,
     pub w_time: u64,
-    pub w_instance: String,
     pub w_class: String,
 }
 
@@ -179,14 +176,12 @@ pub fn update_window_time(
     tracking_data: &mut Vec<ProcessInfo>,
     w_name: String,
     w_class: String,
-    w_instance: String,
     time_diff: u64,
 ) {
     if is_window_new(tracking_data, &w_name, time_diff) {
         tracking_data.push(ProcessInfo {
             w_name,
             w_time: time_diff,
-            w_instance,
             w_class,
         });
         //debug!("After push: {:#?}", tracking_data);

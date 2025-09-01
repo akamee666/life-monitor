@@ -29,7 +29,6 @@ struct Window {
     handle: ZwlrForeignToplevelHandleV1,
     title: Option<String>,
     app_id: Option<String>,
-    is_active: bool,
 }
 
 struct WindowMonitorData {
@@ -57,7 +56,11 @@ impl Dispatch<wl_registry::WlRegistry, ()> for WindowMonitorData {
             if &interface[..] == "zwlr_foreign_toplevel_manager_v1" {
                 let toplevel_manager =
                     registry.bind::<ZwlrForeignToplevelManagerV1, _, _>(name, 3, qh, ());
-                state.manager = Some(toplevel_manager);
+                state.manager = Some(toplevel_manager.clone());
+                debug!("Interface found and binded successfully!");
+            } else {
+                error!("The interface we need was not found.");
+                panic!();
             }
         }
     }
@@ -79,7 +82,6 @@ impl Dispatch<ZwlrForeignToplevelManagerV1, ()> for WindowMonitorData {
 
         match event {
             Event::Toplevel { toplevel } => {
-                debug!("Adding window to toplevel");
                 state.toplevels.push(Window {
                     handle: toplevel,
                     title: None,
@@ -88,7 +90,7 @@ impl Dispatch<ZwlrForeignToplevelManagerV1, ()> for WindowMonitorData {
                 });
             }
             Event::Finished => {
-                println!("Manager: initial toplevels sent");
+                println!("Manager: we are finished");
             }
             _ => {}
         }
@@ -112,51 +114,52 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for WindowMonitorData {
         _: &QueueHandle<WindowMonitorData>,
     ) {
         use zwlr_foreign_toplevel_handle_v1::Event;
+
         match event {
             Event::Title { title } => {
                 // Each window/toplevel has a different handle.
-                debug!("To handle [ ], adding the window: [{title}]");
+
                 if let Some(w) = state.toplevels.iter_mut().find(|t| t.handle == *handle) {
                     w.title = Some(title);
                 }
             }
             Event::AppId { app_id } => {
-                debug!("App ID: {}", app_id);
+                let windows_n = state.toplevels.len();
+
+                if let Some(window) = state.toplevels.iter_mut().find(|t| t.handle == *handle) {
+                    debug!("Adding window [{app_id}], number of windows is: {windows_n}");
+                    window.app_id = Some(app_id);
+                }
             }
             Event::State { state: w_state } => {
                 let states: Vec<u32> = w_state
                     .chunks(4)
                     .map(|chunk| u32::from_le_bytes(chunk.try_into().unwrap()))
                     .collect();
-
                 if states.contains(&2) {
                     if let Some(focused_window) =
                         state.toplevels.iter().find(|t| t.handle == *handle)
                     {
                         debug!(
-                            "Window focused: title='{}', app_id='{}'",
-                            focused_window.title.as_deref().unwrap_or("N/A"),
+                            "The window [{}] is currently in focus",
                             focused_window.app_id.as_deref().unwrap_or("N/A")
                         );
                     }
                 } else {
                     // You can also handle when a window loses focus.
-                    if let Some(unfocused_window) =
+                    if let Some(_unfocused_window) =
                         state.toplevels.iter().find(|t| t.handle == *handle)
-                    {
-                        // Check if this window was previously marked as focused in your state.
-                        // This part depends on how you track the focused state.
-                        debug!(
-                            "Window lost focus: title='{}'",
-                            unfocused_window.title.as_deref().unwrap_or("N/A")
-                        );
-                    }
+                    {}
                 }
-                // debug!("State bits for handle {:?}: {:?}", *handle.id(), states);
             }
 
             Event::Closed => {
-                debug!("Window closed");
+                if let Some(closed_window) = state.toplevels.iter().find(|t| t.handle == *handle) {
+                    debug!(
+                        "Window [{}] was closed",
+                        closed_window.app_id.as_deref().unwrap_or("N/A")
+                    );
+                }
             }
 
             Event::OutputEnter { output } => {

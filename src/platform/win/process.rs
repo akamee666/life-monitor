@@ -90,7 +90,6 @@ async fn handle_active_window(tracker: &mut ProcessTracker) {
                     &mut tracker.procs,
                     tracker.last_wname.clone(),
                     tracker.last_wclass.clone(),
-                    tracker.last_winstance.clone(),
                     time_diff,
                 );
             } else {
@@ -116,7 +115,6 @@ async fn handle_active_window(tracker: &mut ProcessTracker) {
             tracker.time = uptime;
             tracker.last_wname = w_name;
             // Windoes does not have instace names on its windows
-            tracker.last_winstance = String::new();
             tracker.last_wclass = w_class;
         }
     };
