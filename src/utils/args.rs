@@ -113,7 +113,7 @@ pub struct Cli {
 }
 
 impl Cli {
-    pub fn print_args(&self) {
+    pub fn _print_args(&self) {
         info!("Arguments provided:");
         info!("Interval: {:?}", self.interval.unwrap_or(300));
         info!("No Keys Tracking: {:?}", self.no_keys);

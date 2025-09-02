@@ -1,8 +1,8 @@
 //! This file is responsible to make it easier change between using an API or a SQLite as database
 //! storage.
 
+use crate::common::*;
 use crate::keylogger::KeyLogger;
-use crate::ProcessInfo;
 use tracing::*;
 
 use reqwest::Client;

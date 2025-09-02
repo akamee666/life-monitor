@@ -2,30 +2,35 @@
 // used to close the terminal and create a gui with no window in Windows.
 
 #[cfg(target_os = "windows")]
-use life_monitor::platform::win::util::configure_startup;
+use crate::platform::windows::common::*;
 
 #[cfg(target_os = "linux")]
-use life_monitor::platform::linux::util::configure_startup;
+use crate::platform::linux::common::*;
 
-use life_monitor::args::Cli;
-use life_monitor::backend::*;
-use life_monitor::is_startup_enable;
-use life_monitor::lock::ensure_single_instance;
-use life_monitor::logger;
+use crate::storage::backend::*;
+use crate::utils::args::Cli;
+use crate::utils::lock::*;
+use crate::utils::logger;
 
 use clap::Parser;
 
 use tokio::task::JoinSet;
 use tracing::*;
 
+mod common;
+mod keylogger;
+mod platform;
+mod storage;
+mod utils;
+
 #[tokio::main]
 async fn main() {
     let mut args = Cli::parse();
     logger::init(args.debug);
 
-    let _lock = ensure_single_instance().unwrap_or_else(|e| {
-        error!("Failed to acquire lock: {}", e);
-        std::process::exit(1);
+    ensure_single_instance().unwrap_or_else(|err| {
+        error!("Failed to ensure single instance when starting application");
+        panic!("{err}");
     });
 
     debug!(
@@ -35,9 +40,8 @@ async fn main() {
 
     // if we receive one of these two flags we call the function and it will enable or disable the
     // startup depending on the enable value.
-    let r = is_startup_enable().unwrap();
     if args.enable_startup || args.disable_startup {
-        match configure_startup(args.enable_startup, r) {
+        match configure_startup(args.enable_startup) {
             Ok(_) => {
                 info!(
                     "Startup configuration {} successfully, the program will end now. Start it again without the start up flag to run normally.",
@@ -87,8 +91,8 @@ async fn main() {
 
 #[cfg(target_os = "linux")]
 async fn run(args: Cli, backend: StorageBackend) {
-    use life_monitor::keylogger;
-    use life_monitor::platform::linux::process;
+    use crate::keylogger;
+    use crate::platform::linux::process;
 
     let backend2 = backend.clone();
 
@@ -121,9 +125,9 @@ async fn run(args: Cli, backend: StorageBackend) {
 
 #[cfg(target_os = "windows")]
 async fn run(args: Cli, backend: StorageBackend) {
-    use life_monitor::keylogger;
-    use life_monitor::platform::win::process;
-    use life_monitor::platform::win::systray;
+    use crate::keylogger;
+    use crate::platform::windows::process;
+    use crate::platform::windows::systray;
 
     let backend2 = backend.clone();
 

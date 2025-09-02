@@ -153,6 +153,7 @@ pub fn get_idle_time() -> Result<Duration, windows::core::Error> {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct MouseSettings {
     pub threshold: i32,
     pub threshold2: i32,
@@ -180,6 +181,7 @@ impl Default for MouseSettings {
 /// MouseSettings { threshold: 0, threshold2: 0, acceleration: 0, speed: 10, enhanced_pointer_precision: false }
 impl MouseSettings {
     // WARN: These zero values can possibly fuck the calcs.
+    #[allow(dead_code)]
     pub fn noacc_default() -> Self {
         MouseSettings {
             threshold: 0,
@@ -200,23 +202,18 @@ pub fn get_mouse_settings() -> Result<MouseSettings, windows::core::Error> {
     // https://stackoverflow.com/questions/60268940/sendinput-mouse-movement-calculation
     // Threshold values are only set if enhanced_pointer_precision is true.
     unsafe {
-        // Get mouse parameters
         SystemParametersInfoA(
             SPI_GETMOUSE,
             0,
             Some(mouse_params.as_mut_ptr() as _),
             SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
         )?;
-
-        // Get mouse speed
         SystemParametersInfoA(
             SPI_GETMOUSESPEED,
             0,
             Some(&mut speed as *mut i32 as _),
             SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
         )?;
-
-        // Get enhanced pointer precision setting
         SystemParametersInfoA(
             SPI_GETMOUSE,
             0,

