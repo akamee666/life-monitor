@@ -28,9 +28,9 @@ async fn main() {
     let mut args = Cli::parse();
     logger::init(args.debug);
 
-    let _lock = ensure_single_instance().unwrap_or_else(|e| {
-        error!("Failed to acquire lock: {}", e);
-        panic!();
+    ensure_single_instance().unwrap_or_else(|err| {
+        error!("Failed to ensure single instance when starting application");
+        panic!("{err}");
     });
 
     debug!(
@@ -40,12 +40,8 @@ async fn main() {
 
     // if we receive one of these two flags we call the function and it will enable or disable the
     // startup depending on the enable value.
-    let r = check_startup_status().unwrap_or_else(|err| {
-        error!("Failed to check startup status.");
-        panic!("{err}");
-    });
     if args.enable_startup || args.disable_startup {
-        match configure_startup(args.enable_startup, r) {
+        match configure_startup(args.enable_startup) {
             Ok(_) => {
                 info!(
                     "Startup configuration {} successfully, the program will end now. Start it again without the start up flag to run normally.",

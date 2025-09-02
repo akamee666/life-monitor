@@ -1,7 +1,9 @@
 //! This file is responsible to store functions, enums or
 //! structs that can be used for all platforms supported.
-use crate::common::*;
 use tracing::*;
+
+use crate::common::*;
+use std::fs;
 
 #[cfg(target_os = "linux")]
 use crate::platform::linux::x11::get_idle_time;

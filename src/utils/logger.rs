@@ -5,7 +5,6 @@ use std::io;
 use std::path::*;
 use std::sync::Arc;
 
-use tracing::info;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::{filter, fmt, prelude::*};
 
@@ -13,12 +12,13 @@ use tracing_subscriber::{filter, fmt, prelude::*};
 // called spy.log in different paths depending on the platform.
 pub fn init(enable_debug: bool) {
     if enable_debug {
+        // We disable logs from other crates that also use tracing so we don't polute the log file/stdout
         let env_filter_std = EnvFilter::new("debug")
             .add_directive("hyper=off".parse().unwrap())
             .add_directive("hyper_util=off".parse().unwrap())
             .add_directive("reqwest=off".parse().unwrap());
 
-        // Display info, warn, error, and debug prints to the file by default.
+        // if debug is enable we should log everything. info, warn, error, debug.
         let env_filter_file = EnvFilter::new("debug")
             .add_directive("hyper=off".parse().unwrap())
             .add_directive("hyper_util=off".parse().unwrap())
@@ -26,8 +26,8 @@ pub fn init(enable_debug: bool) {
 
         registry(env_filter_file, env_filter_std, enable_debug);
     } else {
-        // Display only error, info, and warns to stdout by default, use RUST_LOG to change filter.
-        // WARN: RUST_LOG="debug" is the only that doesn't work
+        // Display only error, info, and warns to stdout by default.
+        // TODO: RUST_LOG="debug" doesn't work?
         let env_filter_std = EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| EnvFilter::new("info"))
             .add_directive("hyper=off".parse().unwrap())
@@ -45,10 +45,10 @@ pub fn init(enable_debug: bool) {
 }
 
 fn registry(env_filter_file: EnvFilter, env_filter_std: EnvFilter, enable_debug: bool) {
-    // A layer that logs events to a file.
-    let file = match create_file() {
-        Ok(file) => file,
-        Err(error) => panic!("Error: {error}"),
+    // TODO: Shouldn't panic here.
+    let log_file = match create_file() {
+        Ok(f) => f,
+        Err(err) => panic!("Failed to create log file: {err}"),
     };
 
     // Configure the stdout log format based on the `enable_debug` flag.
@@ -62,7 +62,7 @@ fn registry(env_filter_file: EnvFilter, env_filter_std: EnvFilter, enable_debug:
 
     // Configure the debug log format based on the `enable_debug` flag.
     let debug_log = fmt::layer()
-        .with_writer(Arc::new(file))
+        .with_writer(Arc::new(log_file))
         .with_ansi(false)
         .with_target(false)
         .without_time()
@@ -75,7 +75,7 @@ fn registry(env_filter_file: EnvFilter, env_filter_std: EnvFilter, enable_debug:
         );
 
     // A layer that collects metrics using specific events.
-    let metrics_layer = /* ... */ filter::LevelFilter::INFO;
+    let metrics_layer = filter::LevelFilter::INFO;
     tracing_subscriber::registry()
         .with(
             stdout_log
@@ -99,8 +99,6 @@ fn registry(env_filter_file: EnvFilter, env_filter_std: EnvFilter, enable_debug:
             })),
         )
         .init();
-
-    info!("Log file created!");
 }
 
 fn create_file() -> Result<File, std::io::Error> {
@@ -113,14 +111,17 @@ fn create_file() -> Result<File, std::io::Error> {
             )
         })?;
         let mut path = PathBuf::from(local_app_data);
-        path.push("akame_monitor");
+        path.push("life-monitor");
         path.push("spy.log");
 
         if let Some(parent_dir) = path.parent() {
             fs::create_dir_all(parent_dir)?;
         }
-
-        fs::File::create(path).unwrap()
+        // Logging is important!
+        let f = fs::File::create(path.clone())?;
+        println!("Registering logger");
+        println!("Log file created at: {}", path.display());
+        f
     } else {
         let home_dir = env::var("HOME").map_err(|_| {
             io::Error::new(io::ErrorKind::NotFound, "HOME environment variable not set")
@@ -128,14 +129,16 @@ fn create_file() -> Result<File, std::io::Error> {
         let mut path = PathBuf::from(home_dir);
         path.push(".local");
         path.push("share");
-        path.push("akame_monitor");
+        path.push("life-monitor");
         path.push("spy.log");
 
         if let Some(parent_dir) = path.parent() {
             fs::create_dir_all(parent_dir)?;
         }
-
-        fs::File::create(path).unwrap()
+        let f = fs::File::create(path.clone())?;
+        println!("Registering logger");
+        println!("Log file created at: {}", path.display());
+        f
     };
 
     Ok(file)

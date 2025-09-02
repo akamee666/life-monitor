@@ -30,7 +30,8 @@ impl Default for MouseSettings {
 }
 
 impl MouseSettings {
-    pub fn _noacc_default() -> Self {
+    #[allow(dead_code)]
+    pub fn noacc_default() -> Self {
         MouseSettings {
             acceleration_numerator: 1,
             acceleration_denominator: 1,
@@ -40,11 +41,27 @@ impl MouseSettings {
     }
 }
 
-// TODO:
-pub fn configure_startup(
-    should_enable: bool,
-    is_enable: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+// According to system/user arch wiki, user units are located at:
+//
+// /usr/lib/systemd/user/ where units provided by installed packages belong.
+// ~/.local/share/systemd/user/ where units of packages that have been installed in the home directory belong.
+// /etc/systemd/user/ where system-wide user units are placed by the system administrator.
+// ~/.config/systemd/user/ where the user puts their own units.
+//
+// If you want to start units on first login, execute systemctl --user enable unit for any unit you want to be autostarted.
+//
+// TODO: This need fix bc it can fail in a numerous of ways
+pub fn configure_startup(should_enable: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let is_enable = check_startup_status()?;
+
+    // let unit_dirs = Vec<Path> = ["/usr/lib/systemd/user/", "~/.local/share/systemd/user/", "~/.config/systemd/user/"];
+    // For our binary:
+    // We may launch directly: life-monitor
+    // We may search in: $CARGO_HOME
+    // We may get the path in the first run with: std::env::current_exe()
+    // Making a service is just a question of writing a short configuration file that describes how to call your executable.
+
+    // TODO: is there a better way to do it?
     let service_name = "life-monitor.service";
     let user_service_dir = Path::new(&env::var("HOME")?).join(".config/systemd/user");
     fs::create_dir_all(&user_service_dir)?;

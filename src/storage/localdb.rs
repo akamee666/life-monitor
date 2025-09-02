@@ -14,10 +14,9 @@ use std::fs;
 use std::io;
 use std::io::Write;
 
-use tracing::*;
-
 #[cfg(target_os = "linux")]
 use crate::platform::linux::common::MouseSettings;
+use tracing::*;
 
 #[cfg(target_os = "windows")]
 use crate::platform::windows::common::MouseSettings;
@@ -30,7 +29,6 @@ pub fn initialize_database(conn: &Connection, k_gran: Option<u32>) -> SqlResult<
         w_class TEXT NOT NULL
     );";
 
-    // Create the 'procs' table.
     conn.execute(pq, [])?;
 
     let mut stmt = conn.prepare(
@@ -387,7 +385,6 @@ fn find_nearest_time(conn: &Connection, current_hour: &str) -> SqlResult<Option<
         LIMIT 1;
     ";
 
-    // Prepare and execute the queries
     let mut stmt_prev = conn.prepare(query_find_prev)?;
     let mut stmt_next = conn.prepare(query_find_next)?;
 
@@ -395,10 +392,8 @@ fn find_nearest_time(conn: &Connection, current_hour: &str) -> SqlResult<Option<
 
     let next_timestamp: Option<String> = stmt_next.query_row([current_hour], |row| row.get(0)).ok();
 
-    // Convert current time to NaiveTime
     let current_time = NaiveTime::parse_from_str(current_hour, "%H:%M").unwrap();
 
-    // Parse the timestamps to NaiveTime and find the closest one
     let prev_diff = prev_timestamp.as_ref().map(|ts| {
         let prev_time = NaiveTime::parse_from_str(ts, "%H:%M").unwrap();
         (current_time - prev_time).num_seconds().abs()

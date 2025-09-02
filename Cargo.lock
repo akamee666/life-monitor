@@ -103,15 +103,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "approx"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cab112f0a86d568ea0e627cc1d6be74a1e9cd55214684db5561995f6dad897c6"
-dependencies = [
- "num-traits",
-]
-
-[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -855,7 +846,6 @@ dependencies = [
 name = "life-monitor"
 version = "0.1.5"
 dependencies = [
- "approx",
  "chrono",
  "clap",
  "embed-resource",
