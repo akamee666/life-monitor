@@ -74,11 +74,12 @@ fn expand_home(path: &str) -> PathBuf {
 
 // According to system/user arch wiki, user units are located at:
 //
-// /usr/lib/systemd/user/ where units provided by installed packages belong.
-// ~/.local/share/systemd/user/ where units of packages that have been installed in the home directory belong.
-// /etc/systemd/user/ where system-wide user units are placed by the system administrator. !!! I don't think this shouldn't be used.
-// ~/.config/systemd/user/ where the user puts their own units.
-//
+// `/usr/lib/systemd/user/` where units provided by installed packages belong.
+// `~/.local/share/systemd/user/` where units of packages that have been installed in the home directory belong.
+// `/etc/systemd/user/` where system-wide user units are placed by the system administrator. !!! I don't think this shouldn't be used.
+// `~/.config/systemd/user/` where the user puts their own units.
+
+/// This function is used to enable or disabling the startup of the program using `systemctl`
 pub fn configure_startup(args: &Cli) -> Result<(), std::io::Error> {
     // Paths
     let unit_dirs = [

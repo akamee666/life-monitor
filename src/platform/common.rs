@@ -3,13 +3,15 @@
 use tracing::*;
 
 use crate::common::*;
-use std::fs;
 
 #[cfg(target_os = "linux")]
 use crate::platform::linux::x11::get_idle_time;
 
 #[cfg(target_os = "windows")]
 use crate::platform::windows::common::*;
+
+#[cfg(target_os = "linux")]
+use std::fs;
 
 #[cfg(target_os = "windows")]
 use windows::Win32::System::SystemInformation::GetTickCount64;

@@ -38,7 +38,8 @@ pub async fn init() {
                     .arg("")
                     .arg("http://www.github.com/akamee666/life-monitor")
                     .spawn()
-                    .expect("failed to launch browser");
+                    .expect("failed to launch browser")
+                    .wait();
                 thread::sleep(tokio::time::Duration::new(10, 0)); // Windows needs time!
             }
             _ => {}
