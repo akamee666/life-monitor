@@ -28,23 +28,13 @@ async fn main() {
     let mut args = Cli::parse();
     logger::init(args.debug);
 
-    ensure_single_instance().unwrap_or_else(|err| {
-        error!("Failed to ensure single instance when starting application");
-        panic!("{err}");
-    });
-
-    debug!(
-        "Lock acquired. Running application with PID {}",
-        std::process::id()
-    );
-
     // if we receive one of these two flags we call the function and it will enable or disable the
     // startup depending on the enable value.
     if args.enable_startup || args.disable_startup {
-        match configure_startup(args.enable_startup) {
+        match configure_startup(&args) {
             Ok(_) => {
                 info!(
-                    "Startup configuration {} successfully, the program will end now. Start it again without the start up flag to run normally.",
+                    "Startup {} successfully, the program will end now. Start it again without the start up flag to run normally.",
                     if args.enable_startup {
                         "enabled"
                     } else {
@@ -60,8 +50,18 @@ async fn main() {
         }
     }
 
+    ensure_single_instance().unwrap_or_else(|err| {
+        error!("Failed to ensure single instance when starting application");
+        panic!("{err}");
+    });
+
+    debug!(
+        "Lock acquired. Running application with PID {}",
+        std::process::id()
+    );
+
     if args.debug && args.interval.is_none() {
-        info!("Debug is true but no interval value provided, using default five seconds!");
+        info!("Debug is true but no interval value provided, using default value of 5 seconds!");
         args.interval = 5.into();
     }
 

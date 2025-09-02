@@ -5,6 +5,7 @@ use std::io;
 use std::path::*;
 use std::sync::Arc;
 
+use tracing::*;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::{filter, fmt, prelude::*};
 
@@ -46,8 +47,8 @@ pub fn init(enable_debug: bool) {
 
 fn registry(env_filter_file: EnvFilter, env_filter_std: EnvFilter, enable_debug: bool) {
     // TODO: Shouldn't panic here.
-    let log_file = match create_file() {
-        Ok(f) => f,
+    let (log_file, path) = match create_file() {
+        Ok((f, p)) => (f, p),
         Err(err) => panic!("Failed to create log file: {err}"),
     };
 
@@ -99,9 +100,11 @@ fn registry(env_filter_file: EnvFilter, env_filter_std: EnvFilter, enable_debug:
             })),
         )
         .init();
+
+    info!("Log file created at: {}", path.display());
 }
 
-fn create_file() -> Result<File, std::io::Error> {
+fn create_file() -> Result<(File, PathBuf), std::io::Error> {
     // Find a proper file to store the database in both os, create if already not exist
     let file = if cfg!(target_os = "windows") {
         let local_app_data = env::var("LOCALAPPDATA").map_err(|_| {
@@ -117,11 +120,8 @@ fn create_file() -> Result<File, std::io::Error> {
         if let Some(parent_dir) = path.parent() {
             fs::create_dir_all(parent_dir)?;
         }
-        // Logging is important!
         let f = fs::File::create(path.clone())?;
-        println!("Registering logger");
-        println!("Log file created at: {}", path.display());
-        f
+        (f, path)
     } else {
         let home_dir = env::var("HOME").map_err(|_| {
             io::Error::new(io::ErrorKind::NotFound, "HOME environment variable not set")
@@ -136,9 +136,7 @@ fn create_file() -> Result<File, std::io::Error> {
             fs::create_dir_all(parent_dir)?;
         }
         let f = fs::File::create(path.clone())?;
-        println!("Registering logger");
-        println!("Log file created at: {}", path.display());
-        f
+        (f, path)
     };
 
     Ok(file)

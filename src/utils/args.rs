@@ -100,20 +100,23 @@ pub struct Cli {
     #[arg(
         long,
         help = "Enable the program to start automatically at system boot. Might require to run as root. [default: false]",
-        long_help = "This option will configure the system to automatically start the program when the computer or server boots up. On Windows, it will create a shortcut in the user's Startup folder. On Linux, it will create a systemd service that starts the program during the boot process. Enabling this option ensures the program is running and monitoring the system from the moment the system is powered on, without requiring manual intervention. This can be useful for mission-critical applications or services that need to be available at all times."
+        long_help = "This option will configure the system to automatically start the program when the computer or server boots up. On Windows, it will create a shortcut in the user's Startup folder. On Linux, it will create a systemd service that starts the program during the boot process. Enabling this option ensures the program is running and monitoring the system from the moment the system is powered on, without requiring manual intervention. This can be useful for mission-critical applications or services that need to be available at all times.",
+        conflicts_with = "disable_startup"
     )]
     pub enable_startup: bool,
 
     #[arg(
         long,
         help = "Disable the program from starting automatically at system boot.",
-        long_help = "This option will remove any existing configuration that automatically starts the program when the system boots up. On Windows, it will delete the shortcut from the user's Startup folder. On Linux, it will stop and disable the systemd service. Disabling the automatic startup can be useful if you only want to run the program manually or as needed, or if you need to troubleshoot issues with the automatic startup process. This option can be used in conjunction with the `enable_startup` flag to toggle the program's startup behavior."
+        long_help = "This option will remove any existing configuration that automatically starts the program when the system boots up. On Windows, it will delete the shortcut from the user's Startup folder. On Linux, it will stop and disable the systemd service. Disabling the automatic startup can be useful if you only want to run the program manually or as needed, or if you need to troubleshoot issues with the automatic startup process. This option can be used in conjunction with the `enable_startup` flag to toggle the program's startup behavior.",
+        conflicts_with = "enable_startup"
     )]
     pub disable_startup: bool,
 }
 
 impl Cli {
-    pub fn _print_args(&self) {
+    #[allow(dead_code)]
+    pub fn print_args(&self) {
         info!("Arguments provided:");
         info!("Interval: {:?}", self.interval.unwrap_or(300));
         info!("No Keys Tracking: {:?}", self.no_keys);
