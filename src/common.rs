@@ -68,7 +68,7 @@ pub fn spawn_ticker(tx: mpsc::Sender<Event>, duration: Duration, event: Event) {
 
 // Is this function really necessary?.
 pub fn find_path() -> Result<PathBuf, std::io::Error> {
-    let path = if cfg!(target_os = "windows") {
+    let mut path = if cfg!(target_os = "windows") {
         let local_app_data = env::var("LOCALAPPDATA").map_err(|_| {
             io::Error::new(
                 io::ErrorKind::NotFound,
@@ -95,6 +95,8 @@ pub fn find_path() -> Result<PathBuf, std::io::Error> {
             "Unsupported operating system",
         ));
     };
+
+    path.push("data.db");
 
     Ok(path)
 }

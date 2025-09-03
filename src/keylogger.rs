@@ -22,6 +22,7 @@ use tracing::*;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct KeyLogger {
+    pub gran_level: u32,
     pub t_lc: u64,
     pub t_rc: u64,
     pub t_mc: u64,

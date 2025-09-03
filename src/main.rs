@@ -14,6 +14,9 @@ use crate::utils::logger;
 
 use clap::Parser;
 
+use chrono::Local;
+use chrono::NaiveDate;
+
 use tokio::task::JoinSet;
 use tracing::*;
 
@@ -50,6 +53,11 @@ async fn main() {
         }
     }
 
+    let today = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+    println!("today from_ymd_opt: {today}");
+    let today = Local::now().date_naive();
+    println!("today date_naive: {today}");
+
     ensure_single_instance().unwrap_or_else(|err| {
         error!("Failed to ensure single instance when starting application");
         panic!("{err}");
@@ -65,14 +73,13 @@ async fn main() {
         args.interval = 5.into();
     }
 
-    // If args.api, which is a Option<String> that should be the path to API config file, is Some
-    // then we use it as backend.
+    // We choose the API backend if user provide a path of the config with remote flag
     let storage_backend: StorageBackend = if let Some(ref config_path) = args.remote {
         match ApiStore::new(config_path) {
             Ok(api) => StorageBackend::Api(api),
             Err(e) => {
                 error!("Failed to initialize API backend due to {e}.");
-                return;
+                panic!();
             }
         }
     } else {
@@ -80,7 +87,7 @@ async fn main() {
             Ok(db) => db,
             Err(e) => {
                 error!("Failed to initialize SQLite backend due to {e}.");
-                return;
+                panic!();
             }
         };
         StorageBackend::Local(db)
