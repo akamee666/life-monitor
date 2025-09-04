@@ -13,6 +13,9 @@ use crate::platform::linux::common::*;
 #[cfg(target_os = "linux")]
 use crate::platform::linux::process;
 
+#[cfg(target_os = "linux")]
+use crate::test::*;
+
 use crate::storage::backend::*;
 use crate::utils::args::Cli;
 use crate::utils::lock::*;
@@ -29,10 +32,16 @@ mod platform;
 mod storage;
 mod utils;
 
+mod input_event_codes;
+mod test;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = Cli::parse();
     logger::init(args.debug);
+
+    log_events().await;
+
+    panic!();
 
     // if we receive one of these two flags we call the function and it will enable or disable the
     // startup depending on the enable value.

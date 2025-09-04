@@ -41,7 +41,8 @@ pub fn ensure_single_instance() -> Result<()> {
 
 #[cfg(target_os = "linux")]
 fn acquire_lock(file: &std::fs::File) -> Result<()> {
-    let ret = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    let ret =
+        unsafe { nix::libc::flock(file.as_raw_fd(), nix::libc::LOCK_EX | nix::libc::LOCK_NB) };
     if ret != 0 {
         let err = std::io::Error::last_os_error();
         if err.kind() == ErrorKind::WouldBlock {
