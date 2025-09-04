@@ -22,7 +22,6 @@ use tracing::*;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct KeyLogger {
-    pub gran_level: u32,
     pub t_lc: u64,
     pub t_rc: u64,
     pub t_mc: u64,
@@ -186,28 +185,28 @@ pub async fn init(dpi_arg: Option<u32>, interval: Option<u32>, backend: StorageB
     // listen is not async.
     // https://stackoverflow.com/questions/63363513/sync-async-interoperable-channels
     // https://ryhl.io/blog/async-what-is-blocking/
+    // TODO: We need to support wayland
+    // https://docs.rs/rdev/latest/rdev/#linux
     tokio::task::spawn_blocking(move || {
         listen(move |event| {
             tx.blocking_send(event).unwrap_or_else(|err| {
                 error!("Could not send event by bounded channel.\nError: {err}");
             });
-            //debug!("Event sent.");
         })
-        .expect("Could not listen to keys");
+        .expect("Failed to listen to events");
     });
+
+    info!("Started events listener");
 
     // Wait until receive a event from the task above to compute it.
     while let Some(event) = rx.recv().await {
-        //println!("Received {:?}", event);
+        info!("hello?");
         handle_event(event, &logger).await;
     }
 }
 
 async fn handle_event(event: rdev::Event, logger: &Arc<Mutex<KeyLogger>>) {
-    //debug!("{:?}", event);
-
-    // This might hurt the performance if waiting for lock but since database updates are not so
-    // often, shouldn't be a problem.
+    // can i avoid this? If a db update is happening this will probably take a lot of cpu cycles
     let mut logger = logger.lock().await;
 
     match event.event_type {

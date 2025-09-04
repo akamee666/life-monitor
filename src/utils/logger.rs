@@ -4,10 +4,28 @@ use std::fs::File;
 use std::io;
 use std::path::*;
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use tracing::*;
+use tracing_subscriber::fmt::time::FormatTime;
 use tracing_subscriber::EnvFilter;
-use tracing_subscriber::{filter, fmt, prelude::*};
+use tracing_subscriber::{fmt, prelude::*};
+
+// Custom time formatter to display only hour, minute, and second
+struct CustomTime;
+
+impl FormatTime for CustomTime {
+    fn format_time(&self, w: &mut fmt::format::Writer<'_>) -> std::fmt::Result {
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap();
+        let secs = now.as_secs();
+        let hours = (secs / 3600) % 24;
+        let minutes = (secs / 60) % 60;
+        let seconds = secs % 60;
+        write!(w, "{:02}:{:02}:{:02}  ::", hours, minutes, seconds)
+    }
+}
 
 // This function will define the level that logs will be displayed and also will create a file
 // called spy.log in different paths depending on the platform.
@@ -28,7 +46,6 @@ pub fn init(enable_debug: bool) {
         registry(env_filter_file, env_filter_std, enable_debug);
     } else {
         // Display only error, info, and warns to stdout by default.
-        // TODO: RUST_LOG="debug" doesn't work?
         let env_filter_std = EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| EnvFilter::new("info"))
             .add_directive("hyper=off".parse().unwrap())
@@ -46,62 +63,57 @@ pub fn init(enable_debug: bool) {
 }
 
 fn registry(env_filter_file: EnvFilter, env_filter_std: EnvFilter, enable_debug: bool) {
-    // TODO: Shouldn't panic here.
-    let (log_file, path) = match create_file() {
-        Ok((f, p)) => (f, p),
-        Err(err) => panic!("Failed to create log file: {err}"),
-    };
+    if let Ok((file, path)) = create_file() {
+        info!("Log file created at: {}", path.display());
 
-    // Configure the stdout log format based on the `enable_debug` flag.
-    let stdout_log = fmt::layer().with_target(false).without_time().event_format(
-        fmt::format()
-            .with_file(enable_debug) // Include file name only if debug is enabled
-            .with_line_number(enable_debug) // Include line number only if debug is enabled
+        let file_layer = fmt::layer()
+            .with_writer(Arc::new(file))
+            .with_ansi(false)
+            .with_target(false)
+            .with_timer(CustomTime)
+            .event_format(
+                fmt::format()
+                    .with_file(enable_debug)
+                    .with_line_number(enable_debug)
+                    .with_target(false),
+            )
+            .with_filter(env_filter_file);
+
+        // yeah i am repeating this code bc otherwise it will fail with a error message with a hundred traits and 8 hundred types 1923123 lines long and aint
+        // gonna try to fix it
+        let stdout_layer = fmt::layer()
+            .with_target(false)
             .without_time()
-            .with_target(false),
-    );
+            .event_format(
+                fmt::format()
+                    .with_file(enable_debug)
+                    .with_line_number(enable_debug)
+                    .without_time()
+                    .with_target(false),
+            )
+            .with_filter(env_filter_std);
 
-    // Configure the debug log format based on the `enable_debug` flag.
-    let debug_log = fmt::layer()
-        .with_writer(Arc::new(log_file))
-        .with_ansi(false)
-        .with_target(false)
-        .without_time()
-        .event_format(
-            fmt::format()
-                .with_file(enable_debug) // Include file name only if debug is enabled
-                .with_line_number(enable_debug) // Include line number only if debug is enabled
-                .without_time()
-                .with_target(false),
-        );
+        tracing_subscriber::registry()
+            .with(file_layer)
+            .with(stdout_layer)
+            .init();
+    } else {
+        error!("Failed to create log file, logging to file is disabled.");
 
-    // A layer that collects metrics using specific events.
-    let metrics_layer = filter::LevelFilter::INFO;
-    tracing_subscriber::registry()
-        .with(
-            stdout_log
-                // Add an `INFO` filter to the stdout logging layer
-                .with_filter(env_filter_std)
-                // Combine the filtered `stdout_log` layer with the
-                // `debug_log` layer, producing a new `Layered` layer.
-                .and_then(debug_log)
-                .with_filter(env_filter_file)
-                // Add a filter to *both* layers that rejects spans and
-                // events whose targets start with `metrics`.
-                .with_filter(filter::filter_fn(|metadata| {
-                    !metadata.target().starts_with("metrics")
-                })),
-        )
-        .with(
-            // Add a filter to the metrics label that *only* enables
-            // events whose targets start with `metrics`.
-            metrics_layer.with_filter(filter::filter_fn(|metadata| {
-                metadata.target().starts_with("metrics")
-            })),
-        )
-        .init();
+        let stdout_layer = fmt::layer()
+            .with_target(false)
+            .without_time()
+            .event_format(
+                fmt::format()
+                    .with_file(enable_debug)
+                    .with_line_number(enable_debug)
+                    .without_time()
+                    .with_target(false),
+            )
+            .with_filter(env_filter_std);
 
-    info!("Log file created at: {}", path.display());
+        tracing_subscriber::registry().with(stdout_layer).init();
+    }
 }
 
 fn create_file() -> Result<(File, PathBuf), std::io::Error> {
@@ -120,7 +132,11 @@ fn create_file() -> Result<(File, PathBuf), std::io::Error> {
         if let Some(parent_dir) = path.parent() {
             fs::create_dir_all(parent_dir)?;
         }
-        let f = fs::File::create(path.clone())?;
+        let f = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path.clone())?;
+
         (f, path)
     } else {
         let home_dir = env::var("HOME").map_err(|_| {
@@ -135,7 +151,11 @@ fn create_file() -> Result<(File, PathBuf), std::io::Error> {
         if let Some(parent_dir) = path.parent() {
             fs::create_dir_all(parent_dir)?;
         }
-        let f = fs::File::create(path.clone())?;
+        let f = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path.clone())?;
+
         (f, path)
     };
 
