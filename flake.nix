@@ -108,6 +108,7 @@
             pkgs.rust-analyzer
             pkgs.lazygit
             pkgs.cargo-watch
+            pkgs.sqlitebrowser
           ];
 
           shellHook = ''
