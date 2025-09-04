@@ -3,8 +3,6 @@ use x11rb::protocol::screensaver;
 use x11rb::protocol::xproto::*;
 use x11rb::rust_connection::RustConnection;
 
-use crate::platform::linux::common::*;
-
 use tokio::time::Duration;
 
 // https://www.reddit.com/r/rust/comments/f7yrle/get_information_about_current_w_xorg/
@@ -62,32 +60,6 @@ pub fn _get_screen_dpi() -> Result<f64, Box<dyn std::error::Error>> {
 
     let average_dpi = (dpi_x + dpi_y) / 2.0;
     Ok(average_dpi)
-}
-
-pub fn get_mouse_settings() -> Result<MouseSettings, Box<dyn std::error::Error>> {
-    // Open connection to the X server
-    let (conn, _) = RustConnection::connect(None)?;
-
-    // Get the mouse acceleration settings
-    let pointer_control = conn.get_pointer_control()?.reply()?;
-
-    // The values are:
-    // - `acceleration_numerator`: Numerator for pointer acceleration
-    // - `acceleration_denominator`: Denominator for pointer acceleration
-    // - `threshold`: The threshold before acceleration applies
-    // These values are set to 1,1,0 respectively if no mouse acceleration is active, which will
-    // not changes the results if used later.
-    let acceleration_numerator = pointer_control.acceleration_numerator;
-    let acceleration_denominator = pointer_control.acceleration_denominator;
-    let threshold = pointer_control.threshold;
-
-    let s: MouseSettings = MouseSettings {
-        acceleration_numerator,
-        acceleration_denominator,
-        threshold,
-        ..Default::default()
-    };
-    Ok(s)
 }
 
 pub fn get_idle_time() -> Result<Duration, Box<dyn std::error::Error>> {

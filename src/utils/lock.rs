@@ -1,8 +1,8 @@
 use std::fs::OpenOptions;
-use std::io::{ErrorKind, Result, Write};
+use std::io::Write;
 use std::process;
 
-use tracing::*;
+use anyhow::{Context, Result};
 
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
@@ -19,41 +19,50 @@ use windows::Win32::Foundation::HANDLE;
 use crate::common::program_data_dir;
 
 pub fn ensure_single_instance() -> Result<()> {
-    let mut path = program_data_dir()?;
-    path.push("life.lock");
+    let path = program_data_dir()
+        .with_context(|| "Could not determine directory to store the lock file")?
+        .join("life.lock");
 
+    let mut lock_file = acquire_lock(&path)
+        .with_context(|| format!("Could not acquire lock in file: {}", path.display()))?;
+
+    lock_file.set_len(0)?;
+    write!(lock_file, "{}", process::id())
+        .with_context(|| format!("Could not write pid to locked file: {}", path.display()))?;
+
+    std::mem::forget(lock_file);
+
+    Ok(())
+}
+
+use std::fs::File;
+use std::path::PathBuf;
+
+#[cfg(target_os = "linux")]
+fn acquire_lock(lock_f_path: &PathBuf) -> Result<File> {
     let mut file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
-        .open(&path)?;
+        .open(lock_f_path)?;
 
-    acquire_lock(&file)?;
-
-    file.set_len(0)?; // truncate safely
-    write!(file, "{}", process::id())?;
-
-    std::mem::forget(file);
-
-    Ok(())
-}
-
-#[cfg(target_os = "linux")]
-fn acquire_lock(file: &std::fs::File) -> Result<()> {
-    let ret = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-    if ret != 0 {
-        let err = std::io::Error::last_os_error();
-        if err.kind() == ErrorKind::WouldBlock {
-            return Err(std::io::Error::new(
-                ErrorKind::AlreadyExists,
-                "Another instance is running",
-            ));
+    let ret =
+        unsafe { nix::libc::flock(file.as_raw_fd(), nix::libc::LOCK_EX | nix::libc::LOCK_NB) };
+    if ret == -1 {
+        let err = nix::errno::Errno::last();
+        // I think this should be "handled" by the caller but it's ok in this case since we can
+        // provide useful context? don't know aaaaaaa rust error handling is hard sometimes
+        if err == nix::errno::Errno::EWOULDBLOCK {
+            use std::io::Read;
+            let mut buf = String::new();
+            let _ = file.read_to_string(&mut buf);
+            let pid = buf.trim();
+            let pid = if pid.is_empty() { "N/A" } else { pid };
+            anyhow::bail!("Another instance is already running with pid: {pid}, you shouldn't start more than one instance of life-monitor");
         }
-        Err(err)
-    } else {
-        Ok(())
     }
+    Ok(file)
 }
 
 #[cfg(target_os = "windows")]
