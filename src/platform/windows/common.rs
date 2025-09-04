@@ -4,6 +4,8 @@ use sysinfo::{Pid, ProcessRefreshKind, RefreshKind};
 use tracing::*;
 use windows::core::Error;
 
+use crate::Cli;
+
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -52,10 +54,8 @@ pub fn check_startup_status() -> Result<bool, Box<dyn std::error::Error>> {
     Ok(startup_exists)
 }
 
-pub fn configure_startup(
-    should_enable: bool,
-    is_enabled: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub fn configure_startup(args: &Cli) -> Result<(), Box<dyn std::error::Error>> {
+    unimplemented!();
     let startup_folder = if let Some(appdata) = env::var_os("APPDATA") {
         PathBuf::from(appdata)
             .join("Microsoft")
@@ -66,15 +66,10 @@ pub fn configure_startup(
     } else {
         return Err("Could not find APPDATA environment variable".into());
     };
-
     let shortcut_path = startup_folder.join("life_monitor.lnk");
     let current_exe = env::current_exe()?;
 
-    if should_enable {
-        if is_enabled {
-            info!("Startup is already enabled!");
-            return Ok(());
-        }
+    if args.enable_startup {
         // Using PowerShell to create shortcut since it's more reliable than direct COM automation
         let ps_script = format!(
             "$WScriptShell = New-Object -ComObject WScript.Shell; \

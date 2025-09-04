@@ -47,23 +47,29 @@ impl ApiConfig {
         }
     }
 
-    pub fn from_file(path: &str) -> Result<Self, std::io::Error> {
-        let config_str = std::fs::read_to_string(path)?;
-        let mut config: ApiConfig = serde_json::from_str(&config_str)?;
+    /// This will panic if the file operation fails. It should return BackEndError maybe? or BackEndError::APIError?
+    pub fn from_file(path: &str) -> Self {
+        let config_str = std::fs::read_to_string(path).unwrap_or_else(|err| {
+            error!("failed to read the contents of the config file");
+            panic!("fatal error: {err}");
+        });
+        let mut config: ApiConfig = serde_json::from_str(&config_str).unwrap_or_else(|err| {
+            error!("failed to parse the contents of the config file");
+            panic!("fatal error: {err}");
+        });
 
         info!("API Config: {:#?}", config);
         if config.api_key.is_none() {
-            info!("API key not provided by config file. Attempting to find using env variable.");
-
+            info!("API key found in the config file");
             if let Ok(api_key) = env::var("API_KEY") {
-                info!("API key find on env variable.");
+                info!("API key found in $API_KEY");
                 config.api_key = Some(api_key);
             } else {
-                warn!("API key not found neither on env variable or config file.");
+                warn!("API key not found in environment variable or configuration file.");
+                warn!("Calls to remote api will be made without a key!");
             }
         }
-
-        Ok(config)
+        config
     }
 }
 

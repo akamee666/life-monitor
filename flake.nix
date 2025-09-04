@@ -82,6 +82,10 @@
               pkgsCross.mingwW64.stdenv.cc
               wineWowPackages.stable
             ];
+            buildInputs = with pkgs.pkgsCross.mingwW64; [
+              windows.pthreads
+              sqlite
+            ];
             CARGO_BUILD_TARGET = "x86_64-pc-windows-gnu";
             CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUNNER = pkgs.writeScript "wine-wrapper" ''
               export WINEPREFIX="$(mktemp -d)"
@@ -99,9 +103,12 @@
 
           buildInputs = [
             devToolchain
+            pkgs.pkgsCross.mingwW64.sqlite
+            pkgs.pkgsCross.mingwW64.windows.pthreads
             pkgs.rust-analyzer
             pkgs.lazygit
             pkgs.cargo-watch
+            pkgs.sqlitebrowser
           ];
 
           shellHook = ''

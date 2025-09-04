@@ -66,28 +66,30 @@ pub fn spawn_ticker(tx: mpsc::Sender<Event>, duration: Duration, event: Event) {
     });
 }
 
-// Is this function really necessary?.
-pub fn find_path() -> Result<PathBuf, std::io::Error> {
-    let path = if cfg!(target_os = "windows") {
-        let local_app_data = env::var("LOCALAPPDATA").map_err(|_| {
+/// Returns a platform-specific path for storing program-related files and ensures the directory exists.
+///
+/// On Windows: `%LOCALAPPDATA%\akame_monitor`  
+/// On Linux: `$HOME/.local/share/akame_monitor`  
+///
+/// # Errors
+/// Returns an error if the required environment variable is not set, if the OS is unsupported,
+/// or if the directory cannot be created.
+pub fn program_data_dir() -> io::Result<PathBuf> {
+    // Determine the base directory for application data
+    let base_dir = if cfg!(target_os = "windows") {
+        env::var("LOCALAPPDATA").map(PathBuf::from).map_err(|_| {
             io::Error::new(
                 io::ErrorKind::NotFound,
                 "LOCALAPPDATA environment variable not set",
             )
-        })?;
-        let mut path = PathBuf::from(local_app_data);
-        path.push("akame_monitor");
-
-        path
+        })?
     } else if cfg!(target_os = "linux") {
-        let home_dir = env::var("HOME").map_err(|_| {
+        let home = env::var("HOME").map_err(|_| {
             io::Error::new(io::ErrorKind::NotFound, "HOME environment variable not set")
         })?;
-        let mut path = PathBuf::from(home_dir);
+        let mut path = PathBuf::from(home);
         path.push(".local");
         path.push("share");
-        path.push("akame_monitor");
-
         path
     } else {
         return Err(io::Error::new(
@@ -95,6 +97,12 @@ pub fn find_path() -> Result<PathBuf, std::io::Error> {
             "Unsupported operating system",
         ));
     };
+
+    // Append application folder
+    let path = base_dir.join("life_monitor");
+
+    // Ensure the directory exists
+    std::fs::create_dir_all(&path)?;
 
     Ok(path)
 }

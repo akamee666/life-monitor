@@ -26,28 +26,31 @@ pub trait DataStore {
 #[derive(Debug, Clone)]
 pub struct LocalDbStore {
     con: Arc<Mutex<Connection>>,
+    gran_level: u32,
 }
 
 impl LocalDbStore {
-    pub fn new(gran_level: Option<u32>, should_clear: bool) -> Result<Self, BackEndError> {
+    pub fn new(req_gran_level: Option<u32>, should_clear: bool) -> Result<Self, BackEndError> {
         if should_clear {
             info!("Clean argument provided, cleaning database!");
 
-            match clean_database() {
+            match clear_database() {
                 Ok(_) => {}
-                Err(e) => {
-                    warn!("Could not delete database, because of error: {e}. Most likely the database does not exist already, no need to crash.");
+                Err(err) => {
+                    error!("Failed to clear database");
+                    panic!("Fatal error: {err}");
                 }
             }
         };
 
         let conn = open_con()?;
-        initialize_database(&conn, gran_level)?;
 
+        let gran_level = initialize_database(&conn, req_gran_level)?;
         info!("Backend using SQLite sucessfully initialized.");
 
         Ok(Self {
             con: Arc::new(Mutex::new(conn)),
+            gran_level,
         })
     }
 }
@@ -64,6 +67,16 @@ impl DataStore for LocalDbStore {
         .await?
     }
 
+    async fn get_keys_data(&self) -> Result<KeyLogger, BackEndError> {
+        let con = self.con.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let con = con.lock().unwrap();
+            get_keyst(&con).map_err(BackEndError::DbError)
+        })
+        .await?
+    }
+
     async fn store_proc_data(&self, proc_info: &[ProcessInfo]) -> Result<(), BackEndError> {
         let con = self.con.clone();
         let procs = proc_info.to_vec();
@@ -71,16 +84,6 @@ impl DataStore for LocalDbStore {
         tokio::task::spawn_blocking(move || {
             let con = con.lock().unwrap();
             update_proct(&con, &procs).map_err(BackEndError::DbError)
-        })
-        .await?
-    }
-
-    async fn get_keys_data(&self) -> Result<KeyLogger, BackEndError> {
-        let con = self.con.clone();
-
-        tokio::task::spawn_blocking(move || {
-            let con = con.lock().unwrap();
-            get_keyst(&con).map_err(BackEndError::DbError)
         })
         .await?
     }
@@ -104,26 +107,38 @@ pub struct ApiStore {
 
 impl ApiStore {
     pub fn new(config_path: &String) -> Result<Self, BackEndError> {
-        info!("Config file name: {:?}", config_path);
+        info!("Config file name: '{}'", config_path);
 
-        let config = ApiConfig::from_file(config_path).unwrap_or_else(|err| {
-            error!("Could not parse {config_path}. Error: {err}");
-            panic!()
-        });
-
-        // Using builder to handle possible errors.
+        let config = ApiConfig::from_file(config_path);
         let client = Client::builder().build()?;
         info!("Backend using API sucessfully initialized.");
-
         Ok(Self { client, config })
     }
 }
 
 impl DataStore for ApiStore {
+    async fn get_keys_data(&self) -> Result<KeyLogger, BackEndError> {
+        let k = KeyLogger {
+            ..Default::default()
+        };
+        let result = to_api(&self.client, &self.config, &k, reqwest::Method::GET)
+            .await?
+            .unwrap();
+        Ok(result)
+    }
+
     async fn store_keys_data(&self, keylogger: &KeyLogger) -> Result<(), BackEndError> {
         to_api(&self.client, &self.config, keylogger, reqwest::Method::POST).await?;
 
         Ok(())
+    }
+
+    async fn get_proc_data(&self) -> Result<Vec<ProcessInfo>, BackEndError> {
+        let p: Vec<ProcessInfo> = Vec::new();
+        let result = to_api(&self.client, &self.config, &p, reqwest::Method::GET)
+            .await?
+            .unwrap();
+        Ok(result)
     }
 
     async fn store_proc_data(&self, proc_info: &[ProcessInfo]) -> Result<(), BackEndError> {
@@ -136,24 +151,6 @@ impl DataStore for ApiStore {
         .await?;
 
         Ok(())
-    }
-
-    async fn get_keys_data(&self) -> Result<KeyLogger, BackEndError> {
-        let k = KeyLogger {
-            ..Default::default()
-        };
-        let result = to_api(&self.client, &self.config, &k, reqwest::Method::GET)
-            .await?
-            .unwrap();
-        Ok(result)
-    }
-
-    async fn get_proc_data(&self) -> Result<Vec<ProcessInfo>, BackEndError> {
-        let p: Vec<ProcessInfo> = Vec::new();
-        let result = to_api(&self.client, &self.config, &p, reqwest::Method::GET)
-            .await?
-            .unwrap();
-        Ok(result)
     }
 }
 
@@ -193,7 +190,9 @@ impl DataStore for StorageBackend {
     }
 }
 
+// Anyhow would be a good thing hjere maybe?
 #[derive(Debug)]
+#[allow(clippy::enum_variant_names)]
 pub enum BackEndError {
     ApiError(reqwest::Error),
     DbError(rusqlite::Error),
