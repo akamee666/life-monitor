@@ -6,7 +6,7 @@ The main goal of this project is to create a mini spyware on my own to monitor w
 
 ### Installing
 
-You can install life-monitor easily by using cargo install or using github releases,although i am not sure how up to date it is compared to current commits so i recommend you to build from source :3
+You can install life-monitor easily by using cargo install or using github releases, although i am not sure how up to date it is compared to current commits so i recommend you to build from source :3
 
 1. Installing and running.
 
@@ -27,6 +27,10 @@ fish_add_path /home/your-username/.cargo/bin/
 
 ### Building from source
 
+#### TODO: 
+
+deps list here :)
+
 - Install [rustup](https://rustup.rs/) and [cargo](https://github.com/rust-lang/cargo/)
 - Install and configure the default toolchain with `rustup install stable` and `rustup default stable`
 - Install the equivalent of the `libssl-dev` package using your package manager
@@ -43,14 +47,14 @@ Usage: life-monitor [OPTIONS]
 
 | Flag | Long Form | Description |
 | --- | --- | --- |
-| `-t` | `--interval` < secs > | Set interval for data sending (secs) |
+| `-t` | `--interval` [secs] | Set interval for data sending (secs) |
 | `-k` | `--no-keys `| Disable key/mouse tracking |
 | `-w` | `--no-window`  | Disable window-based tracking |
 | `-d` | `--debug` | Enable debug mode |
-| `-p` | `--dpi` < dpi > | Specify mouse DPI for tracking |
+| `-p` | `--dpi` [dpi] | Specify mouse DPI for tracking |
 | `-c` | `--clear`  | Clear existing data, start new |
-| `-g` | `--gran` <0-6>| Divide the entries for keys based on hour. |
-| `-r` | `--remote` < file > | Send collected data through remote defined by json file. |
+| `-g` | `--gran` [0-6]| Divide the entries for keys based on hour. |
+| `-r` | `--remote` [file] | Send collected data through remote defined by json file. |
 | `-h` | `--help` | Show help information |
 
 More detailed descriptions can be found running with --help flag.
