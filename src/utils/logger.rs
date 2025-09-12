@@ -6,6 +6,8 @@ use std::path::*;
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use anyhow::Result;
+
 use tracing::*;
 use tracing_subscriber::fmt::time::FormatTime;
 use tracing_subscriber::EnvFilter;
@@ -16,6 +18,7 @@ struct CustomTime;
 
 impl FormatTime for CustomTime {
     fn format_time(&self, w: &mut fmt::format::Writer<'_>) -> std::fmt::Result {
+        // this unwrap is also fine!
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap();
@@ -32,6 +35,7 @@ impl FormatTime for CustomTime {
 pub fn init(enable_debug: bool) {
     if enable_debug {
         // We disable logs from other crates that also use tracing so we don't polute the log file/stdout
+        // These unwraps are fine too
         let env_filter_std = EnvFilter::new("debug")
             .add_directive("hyper=off".parse().unwrap())
             .add_directive("hyper_util=off".parse().unwrap())
@@ -63,6 +67,7 @@ pub fn init(enable_debug: bool) {
 }
 
 fn registry(env_filter_file: EnvFilter, env_filter_std: EnvFilter, enable_debug: bool) {
+    // This doesn't need to propagate!
     if let Ok((file, path)) = create_file() {
         info!("Log file created at: {}", path.display());
 
@@ -116,7 +121,7 @@ fn registry(env_filter_file: EnvFilter, env_filter_std: EnvFilter, enable_debug:
     }
 }
 
-fn create_file() -> Result<(File, PathBuf), std::io::Error> {
+fn create_file() -> Result<(File, PathBuf)> {
     // Find a proper file to store the database in both os, create if already not exist
     let file = if cfg!(target_os = "windows") {
         let local_app_data = env::var("LOCALAPPDATA").map_err(|_| {

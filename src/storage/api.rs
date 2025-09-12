@@ -1,5 +1,5 @@
 use crate::common::*;
-use crate::keylogger::KeyLogger;
+use anyhow::{Context, Result};
 
 use reqwest::Client;
 use serde_json::json;
@@ -48,17 +48,14 @@ impl ApiConfig {
     }
 
     /// This will panic if the file operation fails. It should return BackEndError maybe? or BackEndError::APIError?
-    pub fn from_file(path: &str) -> Self {
-        let config_str = std::fs::read_to_string(path).unwrap_or_else(|err| {
-            error!("failed to read the contents of the config file");
-            panic!("fatal error: {err}");
-        });
-        let mut config: ApiConfig = serde_json::from_str(&config_str).unwrap_or_else(|err| {
-            error!("failed to parse the contents of the config file");
-            panic!("fatal error: {err}");
-        });
+    pub fn from_file(path: &str) -> Result<Self> {
+        let config_str = std::fs::read_to_string(path)
+            .with_context(|| format!("Failed to read contents of config file: {path}"))?;
+        let mut config: ApiConfig = serde_json::from_str(&config_str).with_context(|| {
+            format!("Failed to parse the contents of file: {path} to a valid json")
+        })?;
+        // debug!("API Config: {:#?}", config);
 
-        info!("API Config: {:#?}", config);
         if config.api_key.is_none() {
             info!("API key found in the config file");
             if let Ok(api_key) = env::var("API_KEY") {
@@ -69,7 +66,7 @@ impl ApiConfig {
                 warn!("Calls to remote api will be made without a key!");
             }
         }
-        config
+        Ok(config)
     }
 }
 
@@ -79,19 +76,18 @@ pub trait ApiSendable {
     fn from_json(json: serde_json::Value) -> Self;
 }
 
-impl ApiSendable for KeyLogger {
+impl ApiSendable for InputLogger {
     fn get_route(&self, config: &ApiConfig) -> String {
         config.keys_endpoint.clone()
     }
 
     fn to_json(&self) -> serde_json::Value {
         json!({
-            "t_lc": self.t_lc,
-            "t_rc": self.t_rc,
-            "t_mc": self.t_mc,
-            "t_kp": self.t_kp,
-            "t_mm": self.t_mm,
-            "dpi": self.mouse_settings.dpi,
+            "left_clicks": self.left_clicks,
+            "right_clicks": self.right_clicks,
+            "middle_clicks": self.middle_clicks,
+            "key_presses": self.key_presses,
+            "pixels_traveled": self.pixels_traveled,
         })
     }
     fn from_json(json: serde_json::Value) -> Self {

@@ -1,10 +1,11 @@
-use crate::common::Event;
+use crate::common::TaskSignals;
 use crate::common::*;
 use crate::platform::common::*;
 use crate::storage::backend::{DataStore, StorageBackend};
 
 use std::sync::Arc;
 
+use anyhow::{Context, Result};
 use tokio::sync::mpsc::channel;
 use tokio::sync::Mutex;
 use tokio::time::Duration;
@@ -120,13 +121,14 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for WaylandData {
                     .map(|chunk| u32::from_le_bytes(chunk.try_into().unwrap()))
                     .collect();
                 if states.contains(&2) {
-                    if let Some(focused_window) =
+                    if let Some(_focused_window) =
                         state.windows.iter().find(|t| t.wl_handle == *handle)
                     {
-                        debug!(
-                            "The window [{}] is currently in focus",
-                            focused_window.w_class.as_deref().unwrap_or("N/A")
-                        );
+                        // TODO:
+                        // debug!(
+                        //     "The window [{}] is currently in focus",
+                        //     focused_window.w_class.as_deref().unwrap_or("N/A")
+                        // );
                     }
                 } else {
                     // You can also handle when a window loses focus.
@@ -162,17 +164,12 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for WaylandData {
     }
 }
 
-pub async fn init(interval: Option<u32>, backend: StorageBackend) {
-    // Adding some difference between the two tasks so they don't try to call database at the
-    // same time and waste time waiting for lock.
-    let db_int = if let Some(interval) = interval {
-        info!("Interval argument provided, changing values.");
-        interval + 5
-    } else {
-        300 + 5
-    };
-
-    let logger = Arc::new(Mutex::new(ProcessTracker::new(&backend).await));
+// TODO: WAYLAND PROPERLY SUPPORT
+pub async fn run(db_update_interval: u32, backend: StorageBackend) -> Result<()> {
+    let process_tracker = ProcessTracker::new(&backend).await.with_context(|| {
+        "Failed to initialize process runtime because could not create ProcessTracker data"
+    })?;
+    let logger = Arc::new(Mutex::new(process_tracker));
     let (tx, mut rx) = channel(20);
 
     let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok();
@@ -228,33 +225,33 @@ pub async fn init(interval: Option<u32>, backend: StorageBackend) {
 
     if !is_wayland {
         // This event will send events each one second so we can track the active window in x11.
-        spawn_ticker(tx.clone(), Duration::from_secs(1), Event::Tick);
+        spawn_ticker(tx.clone(), Duration::from_secs(1), TaskSignals::Tick);
         // Each twenty seconds we gonna check if user is idle
         // Since wayland is event driven, we don't need a event to check if user is idle or not.
         // TODO: Or maybe we do?
-        spawn_ticker(tx.clone(), Duration::from_secs(20), Event::IdleCheck);
+        spawn_ticker(tx.clone(), Duration::from_secs(20), TaskSignals::IdleCheck);
     }
     // Each [interval here] seconds we gonna send updates to the database
     spawn_ticker(
         tx.clone(),
-        Duration::from_secs(db_int.into()),
-        Event::DbUpdate,
+        Duration::from_secs(db_update_interval.into()),
+        TaskSignals::DbUpdate,
     );
 
     let mut idle = false;
     while let Some(event) = rx.recv().await {
         match event {
-            Event::Tick => {
+            TaskSignals::Tick => {
                 if !idle {
                     let mut tracker = logger.lock().await;
                     handle_active_window(&mut tracker).await;
                 }
             }
-            Event::IdleCheck => {
+            TaskSignals::IdleCheck => {
                 let tracker = logger.lock().await;
                 idle = is_idle(&tracker.idle_period);
             }
-            Event::DbUpdate => {
+            TaskSignals::DbUpdate => {
                 let tracker = logger.lock().await;
                 if let Err(e) = backend.store_proc_data(&tracker.procs).await {
                     error!("Error sending data to procs table. Error: {e}");
@@ -262,4 +259,5 @@ pub async fn init(interval: Option<u32>, backend: StorageBackend) {
             }
         }
     }
+    anyhow::bail!("Processes listener unexpectly stopped");
 }

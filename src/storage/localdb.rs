@@ -1,5 +1,4 @@
 use crate::common::*;
-use crate::keylogger::KeyLogger;
 
 use chrono::Duration;
 use chrono::NaiveTime;
@@ -10,42 +9,45 @@ use rusqlite::Connection;
 use rusqlite::OpenFlags;
 use rusqlite::Result as SqlResult;
 
+use anyhow::{Context, Result};
+
 use std::fs;
 use std::io;
 use std::io::Write;
 
-#[cfg(target_os = "linux")]
-use crate::platform::linux::common::MouseSettings;
 use tracing::*;
 
 #[cfg(target_os = "windows")]
 use crate::platform::windows::common::MouseSettings;
 
-pub fn initialize_database(conn: &Connection, requested_gran: Option<u32>) -> SqlResult<u32> {
+pub fn setup_database(conn: &Connection, requested_gran: Option<u32>) -> Result<u32> {
     // create procs table (it doesn't need any setup)
-    conn.execute("CREATE TABLE IF NOT EXISTS procs ( id INTEGER PRIMARY KEY AUTOINCREMENT, w_name TEXT NOT NULL, w_time_foc INTEGER NOT NULL, w_class TEXT NOT NULL);", [])?;
+    conn.execute("CREATE TABLE IF NOT EXISTS procs ( id INTEGER PRIMARY KEY AUTOINCREMENT, w_name TEXT NOT NULL, w_time_foc INTEGER NOT NULL, w_class TEXT NOT NULL);", []).with_context(|| "Failed to initialize procs table")?;
 
     // create keys table
-    let keyst_exist: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='keys');",
-        [],
-        |row| row.get(0),
-    )?;
+    let keyst_exist: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='keys');",
+            [],
+            |row| row.get(0),
+        )
+        .with_context(|| "Failed to check if keys table exists")?;
 
     // if user didn't specify any granularity level, we create the table with the default (0)
     // and return the gran level of the database for the caller use it
     if !keyst_exist {
         // TODO: magic number
         let gran_level = requested_gran.unwrap_or(0);
-        setup_keys_table(conn, gran_level)?;
+        setup_keys_table(conn, gran_level).with_context(|| {
+            format!("Failed to initiliaze keys table with granularity level: {gran_level}")
+        })?;
         return Ok(gran_level);
     }
 
-    let (_, _, current_gran_level) = find_granlevel(conn);
-
-    // keys table exists
+    let (_, _, current_gran_level) = find_granlevel(conn)
+        .with_context(|| "Failed to determine the current granularity level of the keys table")?;
     if let Some(new_gran_level) = requested_gran {
-        // If we already have keys table and gran was provided,it means the user is changing
+        // If we already have keys table and gran was provided, it means the user is changing
         // the level of granularity, so first we need to see how much rows do we have to
         // measure how much levels the user is changing.
 
@@ -89,14 +91,17 @@ pub fn initialize_database(conn: &Connection, requested_gran: Option<u32>) -> Sq
         match choice.as_str() {
             "d" => {
                 // Drop the existing table and create a new one
-                conn.execute("DROP TABLE keys;", [])?;
+                conn.execute("DROP TABLE keys;", [])
+                    .with_context(|| "Failed to drop the table keys to recreate")?;
                 info!("Dropped 'keys' table, recreating with granularity {new_gran_level}.");
-                setup_keys_table(conn, new_gran_level)?;
+                setup_keys_table(conn, new_gran_level).with_context(|| {
+                    format!("Failed to recreate keys with new granularity {new_gran_level}")
+                })?;
             }
             "r" => {
                 // Attempt to reorganize the existing table to fit the new granularity.p
                 info!("Reorganizing 'keys' table from {current_gran_level} → {new_gran_level}.");
-                reorganize_table(current_gran_level, new_gran_level)?;
+                reorganize_table(current_gran_level, new_gran_level).with_context(|| format!("Failed to reorganize keys table from: {current_gran_level} to: {new_gran_level}"))?;
             }
             _ => unreachable!(),
         }
@@ -108,35 +113,40 @@ pub fn initialize_database(conn: &Connection, requested_gran: Option<u32>) -> Sq
 }
 
 /// Creates the `keys` table and populates it with empty rows according to the granularity level.
-fn setup_keys_table(conn: &Connection, g_level: u32) -> SqlResult<()> {
+fn setup_keys_table(conn: &Connection, g_level: u32) -> Result<()> {
     // SQLite does not have a dedicated date/time datatype. Instead, date and time values can stored as any of the following:
     let cq = "CREATE TABLE IF NOT EXISTS keys (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        t_lc INTEGER NOT NULL,
-        t_rc INTEGER NOT NULL,
-        t_mc INTEGER NOT NULL,
-        t_kp INTEGER NOT NULL,
-        t_mm INTEGER NOT NULL,
+        left_clicks INTEGER NOT NULL,
+        right_clicks INTEGER NOT NULL,
+        middle_clicks INTEGER NOT NULL,
+        key_presses INTEGER NOT NULL,
+        cm_traveled INTEGER NOT NULL,
         dpi INTEGER NOT NULL,
         timestamp TEXT NOT NULL
     );";
 
     let (rows, interval_minutes) = match_gran_level(g_level);
-    conn.execute(cq, [])?;
+    conn.execute(cq, [])
+        .with_context(|| "Failed to create keys table")?;
 
     let today = Local::now().date_naive();
     let mut current_time = today.and_hms_opt(0, 0, 0).unwrap();
-    let mut stmt = conn.prepare_cached(
-        "INSERT INTO keys (t_lc, t_rc, t_mc, t_kp, t_mm, dpi, timestamp) 
+    let mut stmt = conn
+        .prepare_cached(
+            "INSERT INTO keys (left_clicks, right_clicks, middle_clicks, key_presses, cm_traveled, dpi, timestamp) 
          VALUES (0, 0, 0, 0, 0, 0, ?)",
-    )?;
+        )
+        .with_context(|| "Failed to prepare cached query to insert rows in keys table")?;
     debug!("today date_naive: {today}");
-    for _ in 0..rows {
+    for i in 0..rows {
         let timestamp = current_time.format("%H:%M").to_string();
-        stmt.execute([timestamp])?;
+        stmt.execute([timestamp.clone()]).with_context(|| {
+            format!("Failed to insert row number: {i} with timestamp: {timestamp} into keys table")
+        })?;
         current_time += Duration::minutes(interval_minutes as i64);
     }
-    info!("Tables created with granularity level {}!", g_level);
+    info!("Keys table created with granularity level {g_level}!");
     Ok(())
 }
 
@@ -154,13 +164,10 @@ fn match_gran_level(gran_level: u32) -> (u32, u32) {
 
 /// Return the matching number of rows, time interval in minutes and its matching granularity level
 /// This *WILL* always make a query to the database, if you don't need the n of rows, use `match_gran_level()`
-fn find_granlevel(conn: &Connection) -> (u32, u32, u32) {
+fn find_granlevel(conn: &Connection) -> Result<(u32, u32, u32)> {
     let current_rowsn: u32 = conn
         .query_row("SELECT COUNT(*) FROM keys", [], |row| row.get(0))
-        .unwrap_or_else(|err| {
-            error!("Failed to determine the current granularity. Table keys might be corrupted");
-            panic!("Fatal error: {err}");
-        });
+        .with_context(|| "Failed to determine the number of rows in keys table")?;
     let (rows_n, interval, gran_level) = match current_rowsn {
         72 => (72, 15, 5),  // 15-minute intervals (72 rows)
         48 => (48, 30, 4),  // 30-minute intervals (48 rows)
@@ -169,10 +176,10 @@ fn find_granlevel(conn: &Connection) -> (u32, u32, u32) {
         6 => (6, 240, 1),   // 4-hour intervals (6 rows)
         _ => (1, 1440, 1),  // Default: No granularity (1 row)
     };
-    (rows_n, interval, gran_level)
+    Ok((rows_n, interval, gran_level))
 }
 
-fn reorganize_table(current_gran: u32, new_gran: u32) -> SqlResult<()> {
+fn reorganize_table(current_gran: u32, new_gran: u32) -> Result<()> {
     // determine the number of rows for each granularity level
     let (current_rows_n, _) = match_gran_level(current_gran);
     let (new_rows_n, _) = match_gran_level(new_gran);
@@ -183,12 +190,18 @@ fn reorganize_table(current_gran: u32, new_gran: u32) -> SqlResult<()> {
     );
 
     if current_gran < new_gran {
-        let mut aux_conn = open_con()?;
+        let mut aux_conn =
+            open_con().with_context(|| "Failed to open a connection with sqlite database")?;
         // Avoid corrupting the database
-        let tx = aux_conn.transaction()?;
-        parse_to_higher_gran(&tx, new_gran, new_rows_n)?;
+        let tx = aux_conn
+            .transaction()
+            .with_context(|| "Failed to start a new transaction")?;
+        parse_to_higher_gran(&tx, new_gran, new_rows_n)
+            .with_context(|| "Failed to parse keys table to higher granularity level")?;
         // we only commit if the parse don't fail
         tx.commit()
+            .with_context(|| "Failed to commit the batch of transactions")?;
+        Ok(())
     } else {
         let mut aux_conn = open_con()?;
         // Avoid corrupting the database
@@ -197,6 +210,8 @@ fn reorganize_table(current_gran: u32, new_gran: u32) -> SqlResult<()> {
         info!("Merging {rows_to_merge} rows");
         parse_to_lower_gran(&tx, new_gran, rows_to_merge)?;
         tx.commit()
+            .with_context(|| "Failed to commit all transactions to organize keys table")?;
+        Ok(())
     }
 }
 
@@ -204,20 +219,24 @@ fn reorganize_table(current_gran: u32, new_gran: u32) -> SqlResult<()> {
 /// `N`: The number of integer columns to extract (must be ≤ 6).
 /// A vector of tuples where:
 /// - The first element is an array `[i32; N]` containing the first `N` columns in order:
-///   0: `t_lc`, 1: `t_rc`, 2: `t_mc`, 3: `t_kp`, 4: `t_mm`, 5: `dpi`.
+///   0: `left_clicks`, 1: `right_clicks`, 2: `middle_clicks`, 3: `key_presses`, 4: `cm_traveled`, 5: `dpi`.
 /// - The second element is the timestamp String of the associated row.
 /// - If `N` exceeds 6, the query will panic at runtime due to out-of-bounds access.
-fn fetch_keys_columns<const N: usize>(conn: &Connection) -> SqlResult<Vec<([i32; N], String)>> {
-    let mut stmt = conn.prepare("SELECT t_lc, t_rc, t_mc, t_kp, t_mm, dpi, timestamp FROM keys")?;
+fn fetch_keys_columns<const N: usize>(conn: &Connection) -> Result<Vec<([i32; N], String)>> {
+    let mut stmt = conn
+        .prepare("SELECT left_clicks, right_clicks, middle_clicks, key_presses, cm_traveled, dpi, timestamp FROM keys")
+        .with_context(|| "Failed to prepare SELECT statement")?;
 
-    let rows = stmt.query_map([], |row| {
-        let mut values = [0; N];
-        for (i, item) in values.iter_mut().enumerate().take(N) {
-            *item = row.get::<_, i32>(i)?;
-        }
-        let timestamp: String = row.get(6)?;
-        Ok((values, timestamp))
-    })?;
+    let rows = stmt
+        .query_map([], |row| {
+            let mut values = [0; N];
+            for (i, item) in values.iter_mut().enumerate().take(N) {
+                *item = row.get::<_, i32>(i)?;
+            }
+            let timestamp: String = row.get(6)?;
+            Ok((values, timestamp))
+        })
+        .with_context(|| "Underlying sqlite query to retrieve rows failed")?;
 
     let mut result = Vec::new();
     for row_result in rows {
@@ -228,7 +247,7 @@ fn fetch_keys_columns<const N: usize>(conn: &Connection) -> SqlResult<Vec<([i32;
 
 /// Reorganizes the `keys` table to a higher granularity level.
 /// This function performs the following steps:
-/// 1. Computes the total values of the five key columns (`t_lc`, `t_rc`, `t_mc`, `t_kp`, `t_mm`)
+/// 1. Computes the total values of the five key columns (`left_clicks`, `right_clicks`, `middle_clicks`, `key_presses`, `cm_traveled`)
 ///    from the existing table to preserve cumulative data.
 /// 2. Drops and recreates the `keys` table with the new granularity schema requested by the user.
 /// 3. Precomputes average values for each key column based on the old totals and the desired number of new rows.
@@ -237,10 +256,10 @@ fn fetch_keys_columns<const N: usize>(conn: &Connection) -> SqlResult<Vec<([i32;
 ///
 /// - Accuracy may be imperfect when changing to a higher granularity because data is averaged and redistributed.
 /// - All operations are performed in a single transaction to prevent partial updates or corruption.
-fn parse_to_higher_gran(conn: &Connection, new_gran: u32, new_rows_n: u32) -> SqlResult<()> {
-    warn!("Cannot reorganize with full accuracy when changing to a higher granularity; summing and redistributingdata...");
-
-    let rows: Vec<([i32; 5], String)> = fetch_keys_columns::<5>(conn)?;
+fn parse_to_higher_gran(conn: &Connection, new_gran: u32, new_rows_n: u32) -> Result<()> {
+    warn!("Cannot reorganize with full accuracy when changing to a higher granularity; summing and redistributing data...");
+    let rows: Vec<([i32; 5], String)> = fetch_keys_columns::<5>(conn)
+        .with_context(|| "Failed to fetch existent data from keys table")?;
 
     let mut old_totals = [0; 5];
     for (rows, _) in rows.iter() {
@@ -250,8 +269,11 @@ fn parse_to_higher_gran(conn: &Connection, new_gran: u32, new_rows_n: u32) -> Sq
     }
 
     // recreate table
-    conn.execute("DROP TABLE IF EXISTS keys", [])?;
-    setup_keys_table(conn, new_gran)?;
+    conn.execute("DROP TABLE IF EXISTS keys", [])
+        .with_context(|| "Failed to drop existent keys table")?;
+    setup_keys_table(conn, new_gran).with_context(|| {
+        format!("Failed to recreate keys table with new granularity: {new_gran}")
+    })?;
 
     // this will be sorted according to the SELECT query
     let averages: Vec<i32> = old_totals.iter().map(|&x| x / new_rows_n as i32).collect();
@@ -259,7 +281,7 @@ fn parse_to_higher_gran(conn: &Connection, new_gran: u32, new_rows_n: u32) -> Sq
         conn.execute(
             "
         UPDATE keys
-        SET t_lc = ?, t_rc = ?, t_mc = ?, t_kp = ?, t_mm = ?, dpi = ?
+        SET left_clicks = ?, right_clicks = ?, middle_clicks = ?, key_presses = ?, cm_traveled = ?, dpi = ?
         WHERE id = ?",
             params![
                 averages[0],
@@ -270,10 +292,12 @@ fn parse_to_higher_gran(conn: &Connection, new_gran: u32, new_rows_n: u32) -> Sq
                 800,
                 i
             ],
-        )?;
+        )
+        .with_context(|| format!("Failed to update data in row: {i} with average value"))?;
     }
 
-    let rows: Vec<([i32; 5], String)> = fetch_keys_columns::<5>(conn)?;
+    let rows: Vec<([i32; 5], String)> = fetch_keys_columns::<5>(conn)
+        .with_context(|| "Failed to fetch data from new keys table")?;
     let mut new_totals = [0; 5];
     for (rows, _) in rows.iter() {
         for (total, val) in new_totals.iter_mut().zip(rows.iter()) {
@@ -283,7 +307,13 @@ fn parse_to_higher_gran(conn: &Connection, new_gran: u32, new_rows_n: u32) -> Sq
 
     info!("Table reorganization complete.");
     println!("Reorganization accuracy:");
-    let labels = ["t_lc", "t_rc", "t_mc", "t_kp", "t_mm"];
+    let labels = [
+        "left_clicks",
+        "right_clicks",
+        "middle_clicks",
+        "key_presses",
+        "cm_traveled",
+    ];
     labels
         .iter()
         .zip(new_totals.iter())
@@ -300,7 +330,7 @@ fn parse_to_higher_gran(conn: &Connection, new_gran: u32, new_rows_n: u32) -> Sq
     Ok(())
 }
 
-fn parse_to_lower_gran(conn: &Connection, new_gran: u32, rows_to_merge: u32) -> SqlResult<()> {
+fn parse_to_lower_gran(conn: &Connection, new_gran: u32, rows_to_merge: u32) -> Result<()> {
     // go to parse_to_higher_gran to see why we open another connection here
     info!(
         "Reorganizing keys table to a lower granularity level. Each new row will be an aggregation of {} original rows.",
@@ -308,7 +338,8 @@ fn parse_to_lower_gran(conn: &Connection, new_gran: u32, rows_to_merge: u32) -> 
     );
 
     // TODO: This amount of magic numbers is bothering me, i should create a struct for better readiblity
-    let rows: Vec<([i32; 6], String)> = fetch_keys_columns(conn)?;
+    let rows: Vec<([i32; 6], String)> =
+        fetch_keys_columns(conn).with_context(|| "Failed to fetch data from keys table")?;
 
     let mut aggregated_rows = Vec::new();
     for chunk in rows.chunks(rows_to_merge as usize) {
@@ -317,7 +348,7 @@ fn parse_to_lower_gran(conn: &Connection, new_gran: u32, rows_to_merge: u32) -> 
         }
 
         let timestamp = chunk.first().unwrap().1.clone();
-        let mut totals = [0; 6]; // [t_lc, t_rc, t_mc, t_kp, t_mm, dpi]
+        let mut totals = [0; 6]; // [left_clicks, right_clicks, middle_clicks, key_presses, cm_traveled, dpi]
 
         // sum each column in the chunk into `totals`
         // totals[i] += values[i] for each row in the current chunk
@@ -333,14 +364,18 @@ fn parse_to_lower_gran(conn: &Connection, new_gran: u32, rows_to_merge: u32) -> 
         ));
     }
 
-    conn.execute("DROP TABLE keys;", [])?;
-    setup_keys_table(conn, new_gran)?;
+    conn.execute("DROP TABLE keys;", [])
+        .with_context(|| "Failed to drop existent table")?;
+    setup_keys_table(conn, new_gran).with_context(|| {
+        format!("Failed to create new keys table with granularity level: {new_gran}")
+    })?;
 
-    let q = "INSERT INTO keys (t_lc, t_rc, t_mc, t_kp, t_mm, dpi, timestamp) 
+    let q = "INSERT INTO keys (left_clicks, right_clicks, middle_clicks, key_presses, cm_traveled, dpi, timestamp) 
          VALUES (0, 0, 0, 0, 0, 0, ?)";
 
     for row in aggregated_rows {
-        conn.execute(q, params![row.0, row.1, row.2, row.3, row.4, row.5, row.6])?;
+        conn.execute(q, params![row.0, row.1, row.2, row.3, row.4, row.5, row.6])
+            .with_context(|| "Failed to add new aggregated rows in the keys table")?;
     }
 
     info!(
@@ -351,28 +386,35 @@ fn parse_to_lower_gran(conn: &Connection, new_gran: u32, rows_to_merge: u32) -> 
     Ok(())
 }
 
-pub fn clear_database() -> std::io::Result<()> {
-    let mut db_path = program_data_dir()?;
-    db_path.push("data.db");
+pub fn clear_database() -> Result<()> {
+    let db_path = program_data_dir()
+        .with_context(|| "Could not determine directory to attempt to clear the sqlite database")?
+        .join("data.db");
 
-    if let Err(err) = fs::remove_file(db_path.clone()) {
-        match err.kind() {
-            io::ErrorKind::NotFound => {
-                error!(
-                    "Skipping cleanup: database file not found at '{}'",
-                    db_path.display()
-                );
-                return Ok(());
-            }
-            _ => return Err(err),
+    match fs::remove_file(db_path.clone()) {
+        Ok(_) => {
+            info!(
+                "Successfully removed database file: '{}'",
+                db_path.display()
+            );
+            Ok(())
         }
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            // this isn't a failure case for us; it just means there's nothing to clean up.
+            // We log it and return Ok.
+            warn!(
+                "Skipping cleanup: sqlite database not found at default location: '{}'",
+                db_path.display()
+            );
+            Ok(())
+        }
+        Err(err) => Err(err).with_context(|| {
+            format!(
+                "Failed to delete sqlite database at: '{}'",
+                db_path.display()
+            )
+        }),
     }
-
-    info!(
-        "Database at '{}' was succesfully deleted!",
-        db_path.display()
-    );
-    Ok(())
 }
 
 /// The function bucket_start takes a specific time (like "10:55") and an interval (like 30 minutes) and figures out the starting time of the "bucket" or "slot" it belongs to.
@@ -397,55 +439,57 @@ fn find_bucket(current_time: &str, interval_minutes: u32) -> Option<String> {
     let floored_secs = (floored * 60) as u32;
     let time_bucket = NaiveTime::from_num_seconds_from_midnight_opt(floored_secs, 0)?;
     let time_bucket_formated = time_bucket.format("%H:%M").to_string();
-    info!("Found the bucket we need to update: {time_bucket_formated}");
     Some(time_bucket_formated)
 }
 
-pub fn update_keyst(conn: &Connection, logger_data: &KeyLogger) -> SqlResult<()> {
+pub fn update_keyst(conn: &Connection, logger_data: &InputLogger) -> Result<()> {
     let now = Local::now();
     let now = format!("{:02}:{:02}", now.hour(), now.minute());
 
-    let (_, interval, _) = find_granlevel(conn);
+    let (_, interval, _) =
+        find_granlevel(conn).with_context(|| "Failed to determine granularity level")?;
     let Some(bucket) = find_bucket(&now, interval) else {
         error!("No valid bucket found for time {}", now);
+        // TODO: is this fine?
         return Ok(());
     };
 
     let q = "
             UPDATE keys
-            SET t_lc = ?,
-                t_rc = ?,
-                t_mc = ?,
-                t_kp = ?,
-                t_mm = ?,
+            SET left_clicks = ?,
+                right_clicks = ?,
+                middle_clicks = ?,
+                key_presses = ?,
+                cm_traveled = ?,
                 dpi = ?
             WHERE timestamp = ?;
         ";
 
-    let affected_rows = conn.execute(
-        q,
-        params![
-            logger_data.t_lc,
-            logger_data.t_rc,
-            logger_data.t_mc,
-            logger_data.t_kp,
-            // TODO: this may fuck up something
-            logger_data.t_mm.floor(),
-            logger_data.mouse_settings.dpi,
-            bucket,
-        ],
-    )?;
+    let affected_rows = conn
+        .execute(
+            q,
+            params![
+                logger_data.left_clicks,
+                logger_data.right_clicks,
+                logger_data.middle_clicks,
+                logger_data.key_presses,
+                logger_data.cm_traveled,
+                logger_data.mouse_dpi,
+                bucket,
+            ],
+        )
+        .with_context(|| "Could not update keys table, underlying sqlite call failed!")?;
 
     match affected_rows {
         1 => debug!(
             "Updated bucket '{}': LC=[{}], RC=[{}], MC=[{}], KP=[{}], MM=[{}], DPI=[{}]",
             bucket,
-            logger_data.t_lc,
-            logger_data.t_rc,
-            logger_data.t_mc,
-            logger_data.t_kp,
-            logger_data.t_mm,
-            logger_data.mouse_settings.dpi
+            logger_data.left_clicks,
+            logger_data.right_clicks,
+            logger_data.middle_clicks,
+            logger_data.key_presses,
+            logger_data.cm_traveled,
+            logger_data.mouse_dpi
         ),
         0 => warn!("No row matched timestamp '{}'", bucket),
         _ => error!(
@@ -458,28 +502,27 @@ pub fn update_keyst(conn: &Connection, logger_data: &KeyLogger) -> SqlResult<()>
 }
 
 // This might not work anymore.
+// TODO: why did i commented it?
 // And i guess i should create a ticker that will reset keylogger values at each database interval.
-pub fn get_keyst(conn: &Connection) -> SqlResult<KeyLogger> {
+pub fn get_keyst(conn: &Connection) -> Result<InputLogger> {
     let query = "
-    SELECT t_lc, t_rc, t_mc, t_kp, t_mm,dpi
+    SELECT left_clicks, right_clicks, middle_clicks, key_presses, cm_traveled,dpi
     FROM keys
     LIMIT 1;
     ";
 
     let mut stmt = conn.prepare(query)?;
-
-    // Assuming there is only one row
+    // Old: Assuming there is only one row
+    // new: I mean how does it not fail if there is more than one row in the fucking table? is the old
+    // me that stupid or is the new me dumb?
     let row = stmt.query_row([], |row| {
-        let k = KeyLogger {
-            t_lc: row.get(0)?,
-            t_rc: row.get(1)?,
-            t_mc: row.get(2)?,
-            t_kp: row.get(3)?,
-            t_mm: row.get(4)?,
-            mouse_settings: MouseSettings {
-                dpi: row.get(5)?,
-                ..Default::default()
-            },
+        let k = InputLogger {
+            left_clicks: row.get(0)?,
+            right_clicks: row.get(1)?,
+            middle_clicks: row.get(2)?,
+            key_presses: row.get(3)?,
+            cm_traveled: row.get(4)?,
+            mouse_dpi: row.get(5)?,
             ..Default::default()
         };
         Ok(k)
@@ -489,7 +532,7 @@ pub fn get_keyst(conn: &Connection) -> SqlResult<KeyLogger> {
 }
 
 // Need to be owned by the caller, Vec seems better in that case.
-pub fn get_proct(conn: &Connection) -> SqlResult<Vec<ProcessInfo>> {
+pub fn get_proct(conn: &Connection) -> Result<Vec<ProcessInfo>> {
     let query = "
         SELECT w_name,w_time_foc, w_class
         FROM procs;
@@ -537,17 +580,22 @@ pub fn update_proct(conn: &Connection, process_vec: &[ProcessInfo]) -> SqlResult
     Ok(())
 }
 
-pub fn open_con() -> SqlResult<Connection> {
-    let mut db_path = program_data_dir().unwrap_or_else(|err| {
-        error!("Failed to resolve database file path");
-        panic!("Fatal error: {err}");
-    });
-    db_path.push("data.db");
+pub fn open_con() -> Result<Connection> {
+    let db_path = program_data_dir()
+        .with_context(|| "Could not determine directory to attempt to clear the sqlite database")?
+        .join("data.db");
+    info!("Connection open with database: [{}]", db_path.display());
 
     let conn = Connection::open_with_flags(
-        db_path,
+        db_path.clone(),
         OpenFlags::SQLITE_OPEN_CREATE | OpenFlags::SQLITE_OPEN_READ_WRITE,
-    )?;
+    )
+    .with_context(|| {
+        format!(
+            "Failed to open database connection with sqlite database at: {}",
+            db_path.display()
+        )
+    })?;
     Ok(conn)
 }
 
