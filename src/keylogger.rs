@@ -13,7 +13,7 @@ use nix::unistd::read;
 use tokio::io::unix::AsyncFd;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::channel;
-
+use tokio::time::*;
 use tracing::*;
 
 use crate::common::*;
@@ -25,6 +25,7 @@ use crate::storage::backend::StorageBackend;
 // moves about 3 lines of text, which is roughly 0.4 to 0.5 cm.
 // You can make this configurable.
 const ASSUMED_CM_PER_SCROLL_CLICK: f64 = 0.4;
+static mut IDLE_TIME: u64 = 0;
 
 /// Either a relative change for EV_REL, absolute new value for EV_ABS (joysticks ...), or 0 for EV_KEY for release, 1 for keypress and 2 for autorepeat
 /// https://docs.kernel.org/input/input.html
@@ -321,14 +322,14 @@ pub async fn run(dpi: Option<u32>, update_interval: u32, backend: StorageBackend
             "Failed to initialize Inputs runtime because could not create InputLogger data"
         })?;
 
-    let (tasks_tx, mut tasks_rx) = channel::<TaskSignals>(32);
+    let (tasks_tx, mut tasks_rx) = channel::<Signals>(32);
     let (events_tx, mut events_rx) = channel::<InputEvent>(256);
 
     // database updates
     let ticker_handle = spawn_ticker(
         tasks_tx.clone(),
         Duration::from_secs(update_interval.into()),
-        TaskSignals::DbUpdate,
+        Signals::DbUpdate,
     );
 
     tokio::spawn(async move {
@@ -342,18 +343,37 @@ pub async fn run(dpi: Option<u32>, update_interval: u32, backend: StorageBackend
     spawn_input_listeners(events_tx)
         .await
         .with_context(|| "Failed to spawn input listeners")?;
-
+    let idle = Duration::from_secs(20);
+    let mut ticker = interval(idle);
+    let mut last_event: Option<input_event> = None;
     loop {
         tokio::select! {
+            _ = ticker.tick() => {
+                debug!("Checking the time of the last event");
+                if let Some(event) = last_event {
+                    let event_timeval = event.time;
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                        .unwrap();
+
+                    let delta = now.checked_sub(Duration::new(event_timeval.tv_sec as u64, event_timeval.tv_usec as u32)).unwrap_or_default();
+                    debug!("Time since last event: {:.6} seconds", delta.as_secs_f64());
+                    unsafe {
+                        IDLE_TIME = delta.as_secs()
+                    }
+                }
+            }
             // An input event was received from a device.
             Some(event) = events_rx.recv() => {
                 match event {
                     InputEvent::Keyboard(event) => {
+                        last_event = Some(event);
                         if event.value == KeyPressState::Down as i32 {
                             inputs_data.key_presses += 1;
                         }
                     },
                     InputEvent::Mouse(event) => {
+                        last_event = Some(event);
                         match event.type_ as u32 {
                             EV_KEY => {
                                 if event.value == KeyPressState::Down as i32 {
@@ -395,7 +415,7 @@ pub async fn run(dpi: Option<u32>, update_interval: u32, backend: StorageBackend
 
             // A signal was received from another task (e.g., the ticker).
             Some(signal) = tasks_rx.recv() => {
-                if matches!(signal, TaskSignals::DbUpdate) {
+                if matches!(signal, Signals::DbUpdate) {
                     if inputs_data.mouse_dpi > 0 {
                         const INCHES_TO_CM: f64 = 2.54;
                         inputs_data.cm_traveled = (inputs_data.pixels_traveled as f64 / inputs_data.mouse_dpi as f64 * INCHES_TO_CM) as u64;
@@ -415,4 +435,8 @@ pub async fn run(dpi: Option<u32>, update_interval: u32, backend: StorageBackend
         }
     }
     anyhow::bail!("Input listener unexpectedly stopped");
+}
+
+pub fn is_idle() -> bool {
+    unsafe { IDLE_TIME > 20 }
 }

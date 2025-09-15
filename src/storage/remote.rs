@@ -1,10 +1,10 @@
 use crate::common::*;
+
 use anyhow::{Context, Result};
 
 use reqwest::Client;
 use serde_json::json;
 
-use core::panic;
 use std::env;
 
 use tracing::*;
@@ -16,6 +16,8 @@ pub struct ApiConfig {
     keys_endpoint: String,
     proc_endpoint: String,
 }
+
+// TODO: CHANGE REMOTE CODE FROM backend to HERE
 
 impl Default for ApiConfig {
     fn default() -> Self {

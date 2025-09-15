@@ -1,19 +1,18 @@
 //! This file is responsible to make it easier change between using an API or a SQLite as database
 //! storage.
-
-use crate::common::InputLogger;
 use crate::common::*;
-use anyhow::{anyhow, Context, Result};
-use tracing::*;
-
-use reqwest::Client;
-use rusqlite::Connection;
-
-use crate::storage::api::*;
 use crate::storage::localdb::*;
 
-use std::sync::Arc;
-use std::sync::Mutex;
+use rusqlite::Connection;
+
+use std::sync::{Arc, Mutex};
+
+use anyhow::*;
+
+use tracing::*;
+
+#[cfg(feature = "x11")]
+use reqwest::*;
 
 #[allow(async_fn_in_trait)]
 pub trait DataStore {
@@ -24,14 +23,11 @@ pub trait DataStore {
 }
 
 #[derive(Debug, Clone)]
-#[allow(unused)]
-pub struct LocalDbStore {
+pub struct LocalDb {
     con: Arc<Mutex<Connection>>,
-    // TODO: What do i need to do with it here?
-    gran_level: u32,
 }
 
-impl LocalDbStore {
+impl LocalDb {
     pub fn new(req_gran_level: Option<u32>, should_clear: bool) -> Result<Self> {
         if should_clear {
             info!("Clean argument provided, cleaning database!");
@@ -39,18 +35,17 @@ impl LocalDbStore {
         };
 
         let conn = open_con().context("Failed to open connection with sqlite database")?;
-        let gran_level = setup_database(&conn, req_gran_level)
+        setup_database(&conn, req_gran_level)
             .context("Failed to properly setup sqlite database")?;
 
         info!("Backend using SQLite sucessfully initialized.");
         Ok(Self {
             con: Arc::new(Mutex::new(conn)),
-            gran_level,
         })
     }
 }
 
-impl DataStore for LocalDbStore {
+impl DataStore for LocalDb {
     async fn store_keys_data(&self, keylogger: &InputLogger) -> Result<()> {
         let k: InputLogger = keylogger.clone();
         let con = self.con.clone();
@@ -98,12 +93,14 @@ impl DataStore for LocalDbStore {
 }
 
 #[derive(Debug, Clone)]
-pub struct ApiStore {
+#[cfg(feature = "remote")]
+pub struct RemoteDb {
     client: Client,
     config: ApiConfig,
 }
 
-impl ApiStore {
+#[cfg(feature = "remote")]
+impl RemoteDb {
     pub fn new(config_path: &String) -> Result<Self> {
         info!("Config file name: '{}'", config_path);
 
@@ -114,7 +111,8 @@ impl ApiStore {
     }
 }
 
-impl DataStore for ApiStore {
+#[cfg(feature = "remote")]
+impl DataStore for RemoteDb {
     async fn get_keys_data(&self) -> Result<InputLogger> {
         let k = InputLogger {
             ..Default::default()
@@ -162,14 +160,16 @@ impl DataStore for ApiStore {
 
 #[derive(Debug, Clone)]
 pub enum StorageBackend {
-    Local(LocalDbStore),
-    Api(ApiStore),
+    Local(LocalDb),
+    #[cfg(feature = "remote")]
+    Api(RemoteDb),
 }
 
 impl DataStore for StorageBackend {
     async fn store_keys_data(&self, keylogger: &InputLogger) -> Result<()> {
         match self {
             StorageBackend::Local(db) => db.store_keys_data(keylogger).await,
+            #[cfg(feature = "remote")]
             StorageBackend::Api(api) => api.store_keys_data(keylogger).await,
         }
     }
@@ -177,6 +177,7 @@ impl DataStore for StorageBackend {
     async fn store_proc_data(&self, proc_info: &[ProcessInfo]) -> Result<()> {
         match self {
             StorageBackend::Local(db) => db.store_proc_data(proc_info).await,
+            #[cfg(feature = "remote")]
             StorageBackend::Api(api) => api.store_proc_data(proc_info).await,
         }
     }
@@ -184,6 +185,7 @@ impl DataStore for StorageBackend {
     async fn get_keys_data(&self) -> Result<InputLogger> {
         match self {
             StorageBackend::Local(db) => db.get_keys_data().await,
+            #[cfg(feature = "remote")]
             StorageBackend::Api(api) => api.get_keys_data().await,
         }
     }
@@ -192,6 +194,7 @@ impl DataStore for StorageBackend {
         match self {
             StorageBackend::Local(db) => db.get_proc_data().await,
             // .with_context(|| "Failed to retrieve process data from local storage"),
+            #[cfg(feature = "remote")]
             StorageBackend::Api(api) => api.get_proc_data().await,
             // .with_context(|| "Failed to retrieve process data from API"),
         }

@@ -1,7 +1,5 @@
 //! This file is responsible to store functions, enums or
 //! structs that can be used for all platforms supported.
-use serde::Deserialize;
-
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::interval;
@@ -19,20 +17,19 @@ use std::io::{self};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum TaskSignals {
+pub enum Signals {
     Tick,
-    IdleCheck,
     DbUpdate,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ProcessInfo {
     pub w_name: String,
     pub w_time: u64,
     pub w_class: String,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct InputLogger {
     /// Total number of left mouse button clicks.
     pub left_clicks: u64,
@@ -132,8 +129,6 @@ pub fn spawn_ticker<T>(tx: mpsc::Sender<T>, duration: Duration, event_to_send: T
 where
     T: Clone + Send + 'static,
 {
-    debug!("Spawning ticker task with duration {:?}", duration);
-
     let join_handle = tokio::spawn(async move {
         let mut interval = interval(duration);
         interval.tick().await;

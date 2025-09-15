@@ -20,9 +20,9 @@ use tracing::*;
 #[cfg(target_os = "windows")]
 use crate::platform::windows::common::MouseSettings;
 
-pub fn setup_database(conn: &Connection, requested_gran: Option<u32>) -> Result<u32> {
+pub fn setup_database(conn: &Connection, requested_gran: Option<u32>) -> Result<()> {
     // create procs table (it doesn't need any setup)
-    conn.execute("CREATE TABLE IF NOT EXISTS procs ( id INTEGER PRIMARY KEY AUTOINCREMENT, w_name TEXT NOT NULL, w_time_foc INTEGER NOT NULL, w_class TEXT NOT NULL);", []).with_context(|| "Failed to initialize procs table")?;
+    conn.execute("CREATE TABLE IF NOT EXISTS procs ( id INTEGER PRIMARY KEY AUTOINCREMENT, window_name TEXT NOT NULL, time_focused INTEGER NOT NULL, window_class TEXT NOT NULL);", []).with_context(|| "Failed to initialize procs table")?;
 
     // create keys table
     let keyst_exist: bool = conn
@@ -41,7 +41,7 @@ pub fn setup_database(conn: &Connection, requested_gran: Option<u32>) -> Result<
         setup_keys_table(conn, gran_level).with_context(|| {
             format!("Failed to initiliaze keys table with granularity level: {gran_level}")
         })?;
-        return Ok(gran_level);
+        return Ok(());
     }
 
     let (_, _, current_gran_level) = find_granlevel(conn)
@@ -53,7 +53,7 @@ pub fn setup_database(conn: &Connection, requested_gran: Option<u32>) -> Result<
 
         if current_gran_level == new_gran_level {
             info!("Requested granularity level [{new_gran_level}] matches current level [{current_gran_level}]; skipping update.");
-            return Ok(current_gran_level);
+            return Ok(());
         }
 
         // persistent prompt until a valid option is provided.
@@ -105,11 +105,11 @@ pub fn setup_database(conn: &Connection, requested_gran: Option<u32>) -> Result<
             }
             _ => unreachable!(),
         }
-        return Ok(new_gran_level);
+        return Ok(());
     }
 
     info!("Table 'keys' already exists and no granularity change requested.");
-    Ok(current_gran_level)
+    Ok(())
 }
 
 /// Creates the `keys` table and populates it with empty rows according to the granularity level.
@@ -138,7 +138,6 @@ fn setup_keys_table(conn: &Connection, g_level: u32) -> Result<()> {
          VALUES (0, 0, 0, 0, 0, 0, ?)",
         )
         .with_context(|| "Failed to prepare cached query to insert rows in keys table")?;
-    debug!("today date_naive: {today}");
     for i in 0..rows {
         let timestamp = current_time.format("%H:%M").to_string();
         stmt.execute([timestamp.clone()]).with_context(|| {
@@ -482,7 +481,7 @@ pub fn update_keyst(conn: &Connection, logger_data: &InputLogger) -> Result<()> 
 
     match affected_rows {
         1 => debug!(
-            "Updated bucket '{}': LC=[{}], RC=[{}], MC=[{}], KP=[{}], MM=[{}], DPI=[{}]",
+            "Updated bucket '{}': lc=[{}], rc=[{}], mc=[{}], kp=[{}], mm=[{}], dpi=[{}]",
             bucket,
             logger_data.left_clicks,
             logger_data.right_clicks,
@@ -534,7 +533,7 @@ pub fn get_keyst(conn: &Connection) -> Result<InputLogger> {
 // Need to be owned by the caller, Vec seems better in that case.
 pub fn get_proct(conn: &Connection) -> Result<Vec<ProcessInfo>> {
     let query = "
-        SELECT w_name,w_time_foc, w_class
+        SELECT window_name,time_focused, window_class
         FROM procs;
     ";
 
@@ -556,27 +555,27 @@ pub fn get_proct(conn: &Connection) -> Result<Vec<ProcessInfo>> {
 // Only borrowing and only reading the data, &[ProcessInfo] is better in that case.
 pub fn update_proct(conn: &Connection, process_vec: &[ProcessInfo]) -> SqlResult<()> {
     for process in process_vec {
-        let check_q = "SELECT 1 FROM procs WHERE w_name = ? LIMIT 1;";
+        let check_q = "SELECT 1 FROM procs WHERE window_name = ? LIMIT 1;";
         let mut stmt_check = conn.prepare(check_q)?;
         let exists = stmt_check.exists(params![&process.w_name])?;
 
         if exists {
-            //debug!("w_name: {} exists!", &process.w_name);
-            let query_update = "UPDATE procs SET w_time_foc = ?, w_class = ? WHERE w_name = ?;";
+            let query_update =
+                "UPDATE procs SET time_focused = ?, window_class = ? WHERE window_name = ?;";
             conn.execute(
                 query_update,
                 params![process.w_time, process.w_class, process.w_name],
             )?;
         } else {
-            //debug!("w_name: {} does not exists!", &process.w_name);
             let query_insert =
-                "INSERT INTO procs (w_name, w_time_foc, w_class) VALUES (?, ?, ?, ?);";
+                "INSERT INTO procs (window_name, time_focused, window_class) VALUES (?, ?, ?);";
             conn.execute(
                 query_insert,
                 params![process.w_name, process.w_time, process.w_class],
             )?;
         }
     }
+
     Ok(())
 }
 

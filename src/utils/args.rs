@@ -6,7 +6,7 @@ use tracing::info;
 #[command(name = "Life Monitor")]
 #[command(about = "A program to monitor daily activity, see help for default behavior")]
 #[command(
-    long_about = "Life Monitor is a comprehensive tool designed to track and analyze your daily computer usage. It monitors various aspects of your activity, including keyboard and mouse input, active windows, and overall process usage(No, i am not a spyware i swear). This data can be used to gain insights into your productivity, work patterns, and computer usage habits. The program does not provide any overview for the collected data, it just collect and save them to the database file in your respective path, use them as you wish."
+    long_about = "Life Monitor is a comprehensive tool designed to track and analyze your daily computer usage. It monitors various aspects of your activity, including keyboard and mouse input, active windows, and overall process usage (No, i am not a spyware i swear). This data can be used to gain insights into your productivity, work patterns, and computer usage habits. The program does not provide any overview for the collected data, it just collect and save them to the database file in your respective path, use them as you wish."
 )]
 pub struct Cli {
     #[arg(
@@ -27,26 +27,6 @@ pub struct Cli {
         long_help = "Default value is 0, meaning the database will only store the raw total of all your activity. Use higher levels to split the data into specific intervals."
     )]
     pub gran: Option<u32>,
-
-    #[arg(
-        short = 'k',
-        long,
-        default_value_t = false,
-        help = "If true, disables tracking of key presses and mouse movements. [default: false]",
-        long_help = "This option allows you to disable the tracking of keyboard and mouse input. When enabled, the program will not record any information about key presses or mouse movements. This can be useful if you want to monitor only window activity without detailed input tracking, or if you have privacy concerns about logging keystrokes. Note that this option conflicts with the --no-window option, as at least one type of tracking must be enabled.",
-        conflicts_with = "no_window"
-    )]
-    pub no_keys: bool,
-
-    #[arg(
-        short = 'w',
-        long,
-        default_value_t = false,
-        help = "If true, disables tracking based on the currently active window. [default: false]",
-        long_help = "This option disables the tracking of active windows. When enabled, the program will not record information about which applications or windows are in use. This can be useful if you only want to track overall input activity without associating it with specific applications. Note that this option conflicts with the --no-keys option, as at least one type of tracking must be enabled.",
-        conflicts_with = "no_keys"
-    )]
-    pub no_window: bool,
 
     #[cfg(target_os = "windows")]
     #[arg(
@@ -74,7 +54,7 @@ pub struct Cli {
         long,
         value_name = "config.json",
         help = "If true, enables updates to database through an remote database using routes determined by a json config file passed to this flag. [default: config.json]",
-        long_help = "this feature enables the program to update a remote database instead of or  the local database, see in README.md to how use it. This can be useful for centralized data collection or for accessing your data from multiple devices. However, as this is a beta feature, it may not be as stable or secure as the local database option. It's usable but only for a specific case see the explanation in github page if you still want to use it anyway"
+        long_help = "This flag enable updates to a remote database instead of the local database, see in README.md to how use it. This can be useful for centralized data collection or for accessing your data from multiple devices. However, as this is a beta feature, it may not be as stable or secure as the local database option. It's usable but only for a specific case see the explanation in github page if you still want to use it anyway"
     )]
     pub remote: Option<String>,
 
@@ -83,7 +63,6 @@ pub struct Cli {
         long,
         help = "Specify the DPI setting of your mouse for accurate movement tracking. [default: 800]",
         long_help = "This option allows you to specify the DPI (dots per inch) setting of your mouse. Providing the correct DPI value helps the program accurately measure how much you're moving your mouse. The default value is 800 DPI, which is common for many mice. Check your mouse settings or manufacturer specifications to find the correct DPI value. This option conflicts with --no-keys, as mouse tracking is part of the key and mouse input tracking feature.",
-        conflicts_with = "no_keys",
         value_parser = value_parser!(u32).range(1..),
     )]
     pub dpi: Option<u32>,
@@ -119,8 +98,6 @@ impl Cli {
     pub fn print_args(&self) {
         info!("Arguments provided:");
         info!("Interval: {:?}", self.interval.unwrap_or(300));
-        info!("No Keys Tracking: {:?}", self.no_keys);
-        info!("No Window Tracking: {:?}", self.no_window);
         #[cfg(target_os = "windows")]
         info!("No systray: {:?}", self.no_systray);
         info!("Debug mode: {:?}", self.debug);

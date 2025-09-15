@@ -60,7 +60,7 @@ async fn run(mut args: Cli) -> Result<()> {
     ensure_single_instance()
         .with_context(|| "Failed to ensure that we are the only instance of the program")?;
 
-    debug!(
+    info!(
         "Lock acquired. Running application with PID {}",
         std::process::id()
     );
@@ -69,32 +69,35 @@ async fn run(mut args: Cli) -> Result<()> {
         info!("Debug mode enabled but no interval was provided. Using default value of 5 seconds!");
         args.interval = 5.into();
     }
+
     let db_update_interval = args.interval.unwrap_or(300);
 
+    let storage_backend = StorageBackend::Local(
+        LocalDb::new(args.gran, args.clear)
+            .with_context(|| "Failed to initialize SQLite backend")?,
+    );
+
     // We choose the API backend if user provide a path of the config with remote flag
-    let storage_backend: StorageBackend = if let Some(ref config_path) = args.remote {
-        let api = ApiStore::new(config_path).with_context(|| {
+    #[cfg(feature = "remote")]
+    let storage_backend = if let Some(ref config_path) = args.remote {
+        let api = RemoteDb::new(config_path).with_context(|| {
             format!("Failed to initialize API backend using config file: {config_path}")
         })?;
         StorageBackend::Api(api)
     } else {
-        let db = LocalDbStore::new(args.gran, args.clear)
+        let db = LocalDb::new(args.gran, args.clear)
             .with_context(|| "Failed to initialize SQLite backend")?;
         StorageBackend::Local(db)
     };
 
     let mut tasks_set = JoinSet::new();
-    if !args.no_keys {
-        tasks_set.spawn(keylogger::run(
-            args.dpi,
-            db_update_interval + 5,
-            storage_backend.clone(),
-        ));
-    }
+    tasks_set.spawn(keylogger::run(
+        args.dpi,
+        db_update_interval + 5,
+        storage_backend.clone(),
+    ));
 
-    if !args.no_window {
-        tasks_set.spawn(process::run(db_update_interval, storage_backend));
-    }
+    tasks_set.spawn(process::run(db_update_interval, storage_backend));
 
     #[cfg(target_os = "windows")]
     if !args.no_systray {

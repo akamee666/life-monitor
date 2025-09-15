@@ -1,18 +1,17 @@
-use std::fs::create_dir_all;
 /// This file is used to store code that will be used for both wayland or x11
-use std::fs::{self, write};
+use std::fs::{self, create_dir_all, write};
 use std::path::PathBuf;
 use std::process::Command;
 
 use crate::utils::args::Cli;
-use anyhow::{Context, Result};
 
+use anyhow::*;
 use tracing::*;
 
 const SERVICE_NAME: &str = "life-monitor.service";
 
 #[allow(dead_code)]
-pub fn check_startup_status() -> Result<bool, std::io::Error> {
+pub fn check_startup_status() -> Result<bool> {
     let status = Command::new("systemctl")
         .args(["--user", "is-enabled", SERVICE_NAME])
         .output()?;
