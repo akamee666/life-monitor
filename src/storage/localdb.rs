@@ -544,7 +544,7 @@ pub fn get_proct(conn: &Connection) -> Result<Vec<ProcessInfo>> {
             Ok(ProcessInfo {
                 w_name: row.get(0)?,
                 w_time: row.get(1)?,
-                w_class: row.get(3)?,
+                w_class: row.get(2)?,
             })
         })?
         .collect::<Result<Vec<ProcessInfo>, _>>()?;

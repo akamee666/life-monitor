@@ -3,6 +3,9 @@
 use crate::common::*;
 use crate::storage::localdb::*;
 
+#[cfg(feature = "remote")]
+use crate::RemoteDb;
+
 use rusqlite::Connection;
 
 use std::sync::{Arc, Mutex};
@@ -10,9 +13,6 @@ use std::sync::{Arc, Mutex};
 use anyhow::*;
 
 use tracing::*;
-
-#[cfg(feature = "x11")]
-use reqwest::*;
 
 #[allow(async_fn_in_trait)]
 pub trait DataStore {
@@ -85,76 +85,10 @@ impl DataStore for LocalDb {
 
         let res = tokio::task::spawn_blocking(move || {
             let con = con.lock().unwrap();
-            get_proct(&con).context("Failed to get process data from the database")
+            get_proct(&con)
         })
         .await??;
         Ok(res)
-    }
-}
-
-#[derive(Debug, Clone)]
-#[cfg(feature = "remote")]
-pub struct RemoteDb {
-    client: Client,
-    config: ApiConfig,
-}
-
-#[cfg(feature = "remote")]
-impl RemoteDb {
-    pub fn new(config_path: &String) -> Result<Self> {
-        info!("Config file name: '{}'", config_path);
-
-        let config = ApiConfig::from_file(config_path)?;
-        let client = Client::builder().build()?;
-        info!("Backend using API sucessfully initialized.");
-        Ok(Self { client, config })
-    }
-}
-
-#[cfg(feature = "remote")]
-impl DataStore for RemoteDb {
-    async fn get_keys_data(&self) -> Result<InputLogger> {
-        let k = InputLogger {
-            ..Default::default()
-        };
-        let result = to_api(&self.client, &self.config, &k, reqwest::Method::GET)
-            .await
-            .context("API request for key data failed")?
-            .ok_or_else(|| {
-                anyhow!("API returned no key data, but expected a InputLogger object")
-            })?;
-        Ok(result)
-    }
-
-    async fn store_keys_data(&self, keylogger: &InputLogger) -> Result<()> {
-        to_api(&self.client, &self.config, keylogger, reqwest::Method::POST)
-            .await
-            .context("Failed to send key data to the API")?;
-        Ok(())
-    }
-
-    async fn get_proc_data(&self) -> Result<Vec<ProcessInfo>> {
-        let p: Vec<ProcessInfo> = Vec::new();
-        let result = to_api(&self.client, &self.config, &p, reqwest::Method::GET)
-            .await
-            .context("API request for process data failed")?
-            .ok_or_else(|| {
-                anyhow!("API returned no process data, but expected a vector of processes")
-            })?;
-        Ok(result)
-    }
-
-    async fn store_proc_data(&self, proc_info: &[ProcessInfo]) -> Result<()> {
-        to_api(
-            &self.client,
-            &self.config,
-            &proc_info.to_vec(),
-            reqwest::Method::POST,
-        )
-        .await
-        .context("Failed to send process data to the API")?;
-
-        Ok(())
     }
 }
 
@@ -190,13 +124,18 @@ impl DataStore for StorageBackend {
         }
     }
 
+    //TODO: Error handling in the ohter functosndfaobndasoi;hj
     async fn get_proc_data(&self) -> Result<Vec<ProcessInfo>> {
         match self {
-            StorageBackend::Local(db) => db.get_proc_data().await,
-            // .with_context(|| "Failed to retrieve process data from local storage"),
+            StorageBackend::Local(db) => db
+                .get_proc_data()
+                .await
+                .with_context(|| "Failed to retrieve process data from local storage"),
             #[cfg(feature = "remote")]
-            StorageBackend::Api(api) => api.get_proc_data().await,
-            // .with_context(|| "Failed to retrieve process data from API"),
+            StorageBackend::Api(api) => api
+                .get_proc_data()
+                .await
+                .with_context(|| "Failed to retrieve process data from API"),
         }
     }
 }

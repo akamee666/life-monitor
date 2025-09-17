@@ -17,12 +17,14 @@ use std::io::{self};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(dead_code)]
 pub enum Signals {
     Tick,
     DbUpdate,
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "remote", derive(serde::Deserialize))]
 pub struct ProcessInfo {
     pub w_name: String,
     pub w_time: u64,
@@ -30,6 +32,7 @@ pub struct ProcessInfo {
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
+#[cfg_attr(feature = "remote", derive(serde::Deserialize))]
 pub struct InputLogger {
     /// Total number of left mouse button clicks.
     pub left_clicks: u64,
@@ -60,21 +63,17 @@ pub struct ProcessTracker {
     pub time: u64,
     pub last_wname: String,
     pub last_wclass: String,
-    pub idle_period: u64,
     pub procs: Vec<ProcessInfo>,
 }
 
 impl ProcessTracker {
     pub async fn new(backend: &StorageBackend) -> Result<Self> {
-        let d: Vec<ProcessInfo> = backend.get_proc_data().await.with_context(|| {
-            "Failed to get data from processes table to initiliaze ProcessTracker struct"
-        })?;
+        let d: Vec<ProcessInfo> = backend.get_proc_data().await?;
 
         Ok(ProcessTracker {
             time: 0,
             last_wname: String::new(),
             last_wclass: String::new(),
-            idle_period: 20,
             procs: d,
         })
     }

@@ -2,17 +2,21 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
 use x11rb::rust_connection::RustConnection;
 
+use crate::common::*;
+use crate::platform::common::*;
+
 use anyhow::*;
+use tracing::*;
 
 #[cfg(feature = "x11")]
-struct X11Ctx {
+pub struct X11Ctx {
     conn: RustConnection,
     screen_num: usize,
 }
 
 #[cfg(feature = "x11")]
 impl X11Ctx {
-    fn new() -> Result<Self> {
+    pub fn new() -> Result<Self> {
         let (conn, screen_num) = x11rb::connect(None)?;
         Ok(Self { conn, screen_num })
     }
@@ -20,7 +24,7 @@ impl X11Ctx {
 
 /// This function upload the time for the entry in the vector only if we change window to reduce the
 /// overload by not going through the vector every second.
-pub async fn handle_active_window(x11: X11Ctx, procs_data: &mut ProcessTracker) -> Result<()> {
+pub async fn handle_active_window(x11: &X11Ctx, procs_data: &mut ProcessTracker) -> Result<()> {
     let (w_name, w_class) = get_focused_window(x11)?;
     let now = uptime()?;
 
@@ -82,19 +86,23 @@ pub async fn handle_active_window(x11: X11Ctx, procs_data: &mut ProcessTracker) 
 // https://www.reddit.com/r/rust/comments/f7yrle/get_information_about_current_w_xorg/
 // Returns name and class of the focused window in that order.
 /// Find focused window in x11 environment.
-pub fn get_focused_window(x11: X11Ctx) -> Result<(String, String)> {
-    let root = conn.setup().roots[screen].root;
-    let net_active_window = get_or_intern_atom(&conn, b"_NET_ACTIVE_WINDOW");
-    let net_wm_name = get_or_intern_atom(&conn, b"_NET_WM_NAME");
-    let utf8_string = get_or_intern_atom(&conn, b"UTF8_STRING");
+pub fn get_focused_window(x11: &X11Ctx) -> Result<(String, String)> {
+    let root = x11.conn.setup().roots[x11.screen_num].root;
+    let net_active_window = get_or_intern_atom(&x11.conn, b"_NET_ACTIVE_WINDOW");
+    let net_wm_name = get_or_intern_atom(&x11.conn, b"_NET_WM_NAME");
+    let utf8_string = get_or_intern_atom(&x11.conn, b"UTF8_STRING");
 
-    let focus = find_active_window(&conn, root, net_active_window)?;
+    let focus = find_active_window(&x11.conn, root, net_active_window)?;
 
     let (wm_class, string): (Atom, Atom) = (AtomEnum::WM_CLASS.into(), AtomEnum::STRING.into());
 
     // Get the property from the window we need
-    let name = conn.get_property(false, focus, net_wm_name, utf8_string, 0, u32::MAX)?;
-    let class = conn.get_property(false, focus, wm_class, string, 0, u32::MAX)?;
+    let name = x11
+        .conn
+        .get_property(false, focus, net_wm_name, utf8_string, 0, u32::MAX)?;
+    let class = x11
+        .conn
+        .get_property(false, focus, wm_class, string, 0, u32::MAX)?;
     let (name, class) = (name.reply()?, class.reply()?);
 
     let class = parse_wm_class(&class)?;
@@ -102,23 +110,6 @@ pub fn get_focused_window(x11: X11Ctx) -> Result<(String, String)> {
     let class = class.to_string();
 
     Ok((name, class))
-}
-
-pub fn get_screen_dpi(conn: &RustConnection, screen: usize) -> Result<f64> {
-    let setup = conn.setup();
-    let screen = &setup.roots[screen];
-    let width_px = screen.width_in_pixels as f64;
-    let height_px = screen.height_in_pixels as f64;
-
-    let width_mm = screen.width_in_millimeters as f64;
-    let height_mm = screen.height_in_millimeters as f64;
-
-    // Calculate DPI
-    let dpi_x = (width_px / width_mm) * 25.4; // 25.4 mm in an inch
-    let dpi_y = (height_px / height_mm) * 25.4;
-
-    let average_dpi = (dpi_x + dpi_y) / 2.0;
-    Ok(average_dpi)
 }
 
 fn get_or_intern_atom(conn: &RustConnection, name: &[u8]) -> Atom {

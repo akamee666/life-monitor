@@ -12,6 +12,8 @@ use crate::platform::linux::common::*;
 
 #[cfg(target_os = "linux")]
 use crate::platform::linux::process;
+#[cfg(feature = "remote")]
+use crate::storage::remote::*;
 
 use crate::storage::backend::*;
 use crate::utils::args::Cli;
@@ -72,6 +74,7 @@ async fn run(mut args: Cli) -> Result<()> {
 
     let db_update_interval = args.interval.unwrap_or(300);
 
+    #[cfg(not(feature = "remote"))]
     let storage_backend = StorageBackend::Local(
         LocalDb::new(args.gran, args.clear)
             .with_context(|| "Failed to initialize SQLite backend")?,

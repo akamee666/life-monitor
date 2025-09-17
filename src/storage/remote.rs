@@ -1,13 +1,15 @@
 use crate::common::*;
+use crate::DataStore;
 
-use anyhow::{Context, Result};
+use anyhow::*;
 
 use reqwest::Client;
 use serde_json::json;
 
-use std::env;
-
 use tracing::*;
+
+use std::env;
+use std::result::Result::Ok;
 
 #[derive(Clone, serde::Deserialize, Debug)]
 pub struct ApiConfig {
@@ -17,6 +19,68 @@ pub struct ApiConfig {
     proc_endpoint: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct RemoteDb {
+    client: Client,
+    config: ApiConfig,
+}
+
+impl RemoteDb {
+    pub fn new(config_path: &String) -> Result<Self> {
+        info!("Config file name: '{}'", config_path);
+
+        let config = ApiConfig::from_file(config_path)?;
+        let client = Client::builder().build()?;
+        info!("Backend using API sucessfully initialized.");
+        Ok(Self { client, config })
+    }
+}
+
+impl DataStore for RemoteDb {
+    async fn get_keys_data(&self) -> Result<InputLogger> {
+        let k = InputLogger {
+            ..Default::default()
+        };
+        let result = to_api(&self.client, &self.config, &k, reqwest::Method::GET)
+            .await
+            .context("API request for key data failed")?
+            .ok_or_else(|| {
+                anyhow!("API returned no key data, but expected a InputLogger object")
+            })?;
+        Ok(result)
+    }
+
+    async fn store_keys_data(&self, keylogger: &InputLogger) -> Result<()> {
+        to_api(&self.client, &self.config, keylogger, reqwest::Method::POST)
+            .await
+            .context("Failed to send key data to the API")?;
+        Ok(())
+    }
+
+    async fn get_proc_data(&self) -> Result<Vec<ProcessInfo>> {
+        let p: Vec<ProcessInfo> = Vec::new();
+        let result = to_api(&self.client, &self.config, &p, reqwest::Method::GET)
+            .await
+            .context("API request for process data failed")?
+            .ok_or_else(|| {
+                anyhow!("API returned no process data, but expected a vector of processes")
+            })?;
+        Ok(result)
+    }
+
+    async fn store_proc_data(&self, proc_info: &[ProcessInfo]) -> Result<()> {
+        to_api(
+            &self.client,
+            &self.config,
+            &proc_info.to_vec(),
+            reqwest::Method::POST,
+        )
+        .await
+        .context("Failed to send process data to the API")?;
+
+        Ok(())
+    }
+}
 // TODO: CHANGE REMOTE CODE FROM backend to HERE
 
 impl Default for ApiConfig {
@@ -60,12 +124,16 @@ impl ApiConfig {
 
         if config.api_key.is_none() {
             info!("API key found in the config file");
-            if let Ok(api_key) = env::var("API_KEY") {
-                info!("API key found in $API_KEY");
-                config.api_key = Some(api_key);
-            } else {
-                warn!("API key not found in environment variable or configuration file.");
-                warn!("Calls to remote api will be made without a key!");
+            match env::var("API_KEY") {
+                Ok(key) => {
+                    info!("API key found in $API_KEY");
+                    config.api_key = Some(key);
+                }
+
+                Err(err) => {
+                    warn!("Failed to get $API_KEY from environment: {err:?}");
+                    warn!("Calls to remote api will be made without a key!");
+                }
             }
         }
         Ok(config)
@@ -127,7 +195,7 @@ pub async fn to_api<T: ApiSendable + Sized + std::fmt::Debug>(
     config: &ApiConfig,
     data: &T,
     method: reqwest::Method,
-) -> Result<Option<T>, reqwest::Error> {
+) -> Result<Option<T>> {
     let url = format!("{}{}", config.base_url, data.get_route(config));
     debug!("Request {} to: {}", method, url);
     let mut req = match method {

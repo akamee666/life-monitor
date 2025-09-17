@@ -10,7 +10,7 @@ use crate::platform::windows::common::*;
 use windows::Win32::System::SystemInformation::GetTickCount64;
 
 #[cfg(target_os = "linux")]
-fn uptime() -> Result<u64> {
+pub fn uptime() -> Result<u64> {
     let content =
         fs::read_to_string("/proc/uptime").with_context(|| "Failed to read /proc/uptime")?;
 
