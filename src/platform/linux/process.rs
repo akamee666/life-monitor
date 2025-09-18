@@ -41,6 +41,15 @@ pub async fn run_x11(
     }
 }
 
+enum TrackingState {
+    /// No window is being tracked at the moment
+    NoFocus,
+    /// A window is focused and the user isn't idle
+    Active(Window, Instant),
+    /// A window is focused, but the user is idle (timer now is paused)
+    Idle(Window),
+}
+
 pub async fn run_wayland(
     mut proc_data: ProcessTracker,
     update_interval: u32,
@@ -55,7 +64,7 @@ pub async fn run_wayland(
         }
     });
 
-    let mut current: Option<(Window, Instant)> = None;
+    let mut state = TrackingState::NoFocus;
     let mut idle_check = interval(Duration::from_secs(20));
     let mut database_update = interval(Duration::from_secs(update_interval as u64));
 
@@ -63,28 +72,52 @@ pub async fn run_wayland(
         tokio::select! {
             Some(event) = events_rx.recv() => match event {
                 FocusEvent::FocusGained(new_window) => {
-                    if let Some((old_window, start_time)) = current.take() {
+                    // if a previous window was active, record its time before switching
+                    if let TrackingState::Active(old_window, start_time) = state {
                         record_window_time(&mut proc_data.procs, old_window, start_time.elapsed());
                     }
-                    current = Some((new_window, Instant::now()));
+                    // set the new window as being active to start its time
+                    state = TrackingState::Active(new_window, Instant::now());
                 }
                 FocusEvent::FocusLost(lost_window) => {
-                    if let Some((old_window, start_time)) = current.take() {
-                        if old_window.w_class == lost_window.w_class {
-                            record_window_time(&mut proc_data.procs, old_window, start_time.elapsed());
+                    // we only care about this event if the window that lost focus
+                    // is the one we are currently tracking as active.
+                    if let TrackingState::Active(ref active_window, _) = state {
+                        if active_window.w_name == lost_window.w_name {
+                            // The currently tracked window is the one that lost focus.
+                            // We take the state, record its time, and set the new state to NoFocus.
+                            if let TrackingState::Active(old_window, start_time) = std::mem::replace(&mut state, TrackingState::NoFocus) {
+                                record_window_time(&mut proc_data.procs, old_window, start_time.elapsed());
+                            }
                         }
+                        // if the windows do NOT match, we do nothing. This means a FocusGained
+                        // event for another window has already occurred and the state is correct.
                     }
                 }
             },
 
-            // Idle check
             _ = idle_check.tick() => {
-                if let Some((window, _)) = &current {
-                    if is_idle() {
-                        info!("User idle, pausing timer for {:?}", window.w_class);
-                        let (idle_window, idle_start_time) = current.take().unwrap();
-                        record_window_time(&mut proc_data.procs, idle_window, idle_start_time.elapsed());
+                match state {
+                    // the user was active, check if they've now become idle.
+                    TrackingState::Active(ref window, start_time) => {
+                        if is_idle() {
+                            info!("User is now idle, pausing timer for {:?}", window.w_class);
+                            // record the time accumulated before becoming idle.
+                            record_window_time(&mut proc_data.procs, window.clone(), start_time.elapsed());
+                            // transition to the Idle state, preserving the window info.
+                            state = TrackingState::Idle(window.clone());
+                        }
                     }
+                    // the user was idle, check if they've now become active.
+                    TrackingState::Idle(ref window) => {
+                        if !is_idle() {
+                            info!("User is active again, resuming timer for {:?}", window.w_class);
+                            // Transition back to Active, restarting the timer from now.
+                            state = TrackingState::Active(window.clone(), Instant::now());
+                        }
+                    }
+                    // if no window is in focus, do nothing.
+                    TrackingState::NoFocus => {}
                 }
             }
 

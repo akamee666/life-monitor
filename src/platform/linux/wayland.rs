@@ -203,8 +203,8 @@ pub fn listen_for_wlevents(sender: Sender<FocusEvent>) -> Result<()> {
     }
 }
 
-pub fn record_window_time(procs: &mut Vec<ProcessInfo>, window: Window, duration: Duration) {
-    let elapsed_secs = duration.as_secs();
+pub fn record_window_time(procs: &mut Vec<ProcessInfo>, window: Window, time_actived: Duration) {
+    let elapsed_secs = time_actived.as_secs();
 
     // Don't record empty durations
     if elapsed_secs == 0 {

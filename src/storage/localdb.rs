@@ -149,32 +149,34 @@ fn setup_keys_table(conn: &Connection, g_level: u32) -> Result<()> {
     Ok(())
 }
 
-/// Return the matching number of rows and the time interval in minutes from a specific granularity level
+/// Return the matching number of rows and the time interval in minutes from a specific granularity level.
 fn match_gran_level(gran_level: u32) -> (u32, u32) {
     match gran_level {
-        5 => (72, 15),  // 15-minute intervals (72 rows per day)
+        5 => (96, 15),  // 15-minute intervals (96 rows per day)
         4 => (48, 30),  // 30-minute intervals (48 rows per day)
         3 => (24, 60),  // 1-hour intervals (24 rows per day)
         2 => (12, 120), // 2-hour intervals (12 rows per day)
         1 => (6, 240),  // 4-hour intervals (6 rows per day)
-        _ => (1, 0),    // 24-hour intervals (1 row per day) // only one entry
+        _ => (1, 1440), // Default/Level 0: 24-hour interval (1 row per day)
     }
 }
 
-/// Return the matching number of rows, time interval in minutes and its matching granularity level
-/// This *WILL* always make a query to the database, if you don't need the n of rows, use `match_gran_level()`
+/// Return the matching number of rows, time interval in minutes and its matching granularity level.
+/// This *WILL* always make a query to the database.
 fn find_granlevel(conn: &Connection) -> Result<(u32, u32, u32)> {
     let current_rowsn: u32 = conn
         .query_row("SELECT COUNT(*) FROM keys", [], |row| row.get(0))
         .with_context(|| "Failed to determine the number of rows in keys table")?;
+
     let (rows_n, interval, gran_level) = match current_rowsn {
-        72 => (72, 15, 5),  // 15-minute intervals (72 rows)
-        48 => (48, 30, 4),  // 30-minute intervals (48 rows)
-        24 => (24, 60, 3),  // 1-hour intervals (24 rows)
-        12 => (12, 120, 2), // 2-hour intervals (12 rows)
-        6 => (6, 240, 1),   // 4-hour intervals (6 rows)
-        _ => (1, 1440, 1),  // Default: No granularity (1 row)
+        96 => (96, 15, 5),
+        48 => (48, 30, 4),
+        24 => (24, 60, 3),
+        12 => (12, 120, 2),
+        6 => (6, 240, 1),
+        _ => (1, 1440, 0), // Default to level 0 for a single entry
     };
+
     Ok((rows_n, interval, gran_level))
 }
 

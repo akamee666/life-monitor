@@ -437,6 +437,8 @@ pub async fn run(dpi: Option<u32>, update_interval: u32, backend: StorageBackend
     anyhow::bail!("Input listener unexpectedly stopped");
 }
 
+/// Returns true if the last input event happened +20 seconds ago
+/// * What if user is watching something?
 pub fn is_idle() -> bool {
     unsafe { IDLE_TIME > 20 }
 }
