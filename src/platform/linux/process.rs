@@ -32,7 +32,6 @@ pub async fn run_x11(
             }
 
             _ = database_update.tick() => {
-                debug!("Sending procs: {:#?}",proc_data.procs);
                 if let Err(err) = backend.store_proc_data(&proc_data.procs).await {
                     error!("Error sending data to procs table: {err:?}");
                 }
@@ -90,7 +89,6 @@ pub async fn run_wayland(
             }
 
             _ = database_update.tick() => {
-                debug!("Sending procs: {:#?}", proc_data.procs);
                 if let Err(err) = backend.store_proc_data(&proc_data.procs).await {
                     error!("Error sending data to procs table: {err:?}");
                 }

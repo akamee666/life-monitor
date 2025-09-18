@@ -28,6 +28,7 @@ use tracing::*;
 
 mod common;
 // bindgen generated
+#[cfg(target_os = "linux")]
 mod input_bindings;
 mod keylogger;
 mod platform;

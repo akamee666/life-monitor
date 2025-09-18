@@ -1,6 +1,6 @@
 fn main() {
-    #[cfg(target_os = "linux")]
-    let bindings = bindgen::builder()
+    if std::env::var_os("CARGO_CFG_WINDOWS").is_none() {
+        let bindings = bindgen::builder()
         .header_contents(
             "bindings.h",
             "
@@ -11,13 +11,14 @@ fn main() {
         .generate()
         .expect("failed to generate bindings for linux/input.h");
 
-    #[cfg(target_os = "linux")]
     bindings
         .write_to_file(format!(
             "{}/input_bindings.rs",
             std::env::var("OUT_DIR").expect("OUT_DIR not set")
         ))
         .expect("Failed to write binds to outdir");
+
+    }
 
     embed_resource::compile("icon-resource.rc", embed_resource::NONE);
 }
