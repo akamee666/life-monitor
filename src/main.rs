@@ -12,6 +12,10 @@ use crate::platform::linux::common::*;
 
 #[cfg(target_os = "linux")]
 use crate::platform::linux::process;
+
+#[cfg(target_os = "windows")]
+use crate::platform::windows::inputs::*;
+
 #[cfg(feature = "remote")]
 use crate::storage::remote::*;
 
@@ -30,7 +34,6 @@ mod common;
 // bindgen generated
 #[cfg(target_os = "linux")]
 mod input_bindings;
-mod keylogger;
 mod platform;
 mod storage;
 mod utils;
@@ -39,9 +42,9 @@ mod utils;
 async fn main() {
     let args = Cli::parse();
     logger::init(args.debug);
-    if let Err(err) = run(args).await {
-        error!("Fatal Error: {err:?}");
-    }
+    // if let Err(err) = run(args).await {
+    //     error!("Fatal Error: {err:?}");
+    // }
 }
 
 async fn run(mut args: Cli) -> Result<()> {

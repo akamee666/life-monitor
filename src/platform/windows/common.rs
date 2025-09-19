@@ -4,6 +4,12 @@ use sysinfo::{Pid, ProcessRefreshKind, RefreshKind};
 use tracing::*;
 use windows::core::Error;
 
+use std::result::Result::Ok;
+
+use anyhow::*;
+
+use windows::Win32::System::SystemInformation::GetTickCount64;
+
 use crate::Cli;
 
 use std::env;
@@ -23,7 +29,7 @@ use windows::Win32::{
     },
 };
 
-pub fn check_startup_status() -> Result<bool, Box<dyn std::error::Error>> {
+pub fn check_startup_status() -> Result<bool> {
     use std::path::PathBuf;
 
     // Check Startup folder
@@ -54,7 +60,7 @@ pub fn check_startup_status() -> Result<bool, Box<dyn std::error::Error>> {
     Ok(startup_exists)
 }
 
-pub fn configure_startup(args: &Cli) -> Result<(), Box<dyn std::error::Error>> {
+pub fn configure_startup(args: &Cli) -> Result<()> {
     unimplemented!();
     let startup_folder = if let Some(appdata) = env::var_os("APPDATA") {
         PathBuf::from(appdata)
@@ -64,7 +70,7 @@ pub fn configure_startup(args: &Cli) -> Result<(), Box<dyn std::error::Error>> {
             .join("Programs")
             .join("Startup")
     } else {
-        return Err("Could not find APPDATA environment variable".into());
+        return Err(anyhow!("Could not find APPDATA environment variable"));
     };
     let shortcut_path = startup_folder.join("life_monitor.lnk");
     let current_exe = env::current_exe()?;
@@ -95,17 +101,17 @@ pub fn configure_startup(args: &Cli) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 // Returns window title and class in that order.
-pub fn get_focused_window() -> Result<(String, String), windows::core::Error> {
+pub fn get_focused_window() -> Result<(String, String)> {
     unsafe {
         let hwnd = GetForegroundWindow();
         if hwnd.0 == 0 {
-            return Err(Error::from_win32());
+            return Err(anyhow!(Error::from_win32()));
         }
 
         let mut title: [u16; 256] = [0; 256];
         let title_len = GetWindowTextW(hwnd, &mut title);
         if title_len == 0 {
-            return Err(Error::from_win32());
+            return Err(anyhow!(Error::from_win32()));
         }
 
         // Convert the title from UTF-16 to String
@@ -116,7 +122,7 @@ pub fn get_focused_window() -> Result<(String, String), windows::core::Error> {
         let mut process_pid: u32 = 0;
         GetWindowThreadProcessId(hwnd, Some(&mut process_pid));
         let sys = sysinfo::System::new_with_specifics(
-            RefreshKind::new().with_processes(ProcessRefreshKind::new()),
+            RefreshKind::nothing().with_processes(ProcessRefreshKind::everything()),
         );
         let proc = sys.processes().get(&Pid::from_u32(process_pid)).unwrap();
         let w_class = proc.name().to_string_lossy().to_string();
@@ -124,7 +130,7 @@ pub fn get_focused_window() -> Result<(String, String), windows::core::Error> {
     }
 }
 
-pub fn get_idle_time() -> Result<Duration, windows::core::Error> {
+pub fn get_idle_time() -> Result<Duration> {
     // Retrieves the number of milliseconds that have elapsed since the system was started, up to 49.7 days.
     // we will be using it to get how much time was went since the last user input
     let tick_count = unsafe { GetTickCount() };
@@ -140,7 +146,7 @@ pub fn get_idle_time() -> Result<Duration, windows::core::Error> {
     let success = unsafe { GetLastInputInfo(p_last_input_info) };
 
     if !success.as_bool() {
-        return Err(Error::from_win32());
+        return Err(anyhow!(Error::from_win32()));
     }
 
     let diff = tick_count - last_input_info.dwTime;
@@ -189,7 +195,7 @@ impl MouseSettings {
     }
 }
 
-pub fn get_mouse_settings() -> Result<MouseSettings, windows::core::Error> {
+pub fn get_mouse_settings() -> Result<MouseSettings> {
     let mut mouse_params = [0i32; 3];
     let mut speed = 0i32;
     let mut enhanced_pointer_precision = 0i32;
@@ -229,4 +235,16 @@ pub fn get_mouse_settings() -> Result<MouseSettings, windows::core::Error> {
     debug!("Mouse settings: {:?}", mouse_settings);
 
     Ok(mouse_settings)
+}
+
+#[cfg(target_os = "windows")]
+fn uptime() -> u64 {
+    unsafe { GetTickCount64() / 1_000 }
+}
+
+pub fn is_idle() -> bool {
+    if uptime() > 20 {
+        return true;
+    }
+    false
 }

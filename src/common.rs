@@ -88,39 +88,39 @@ impl InputLogger {
         Ok(k)
     }
 
-    #[cfg(target_os = "windows")]
-    fn update_distance(&mut self, x: f64, y: f64) {
-        if let Some((last_x, last_y)) = self.last_pos {
-            let distance_moved = ((last_x - x).powi(2) + (last_y - y).powi(2)).sqrt();
-
-            let adjusted_distance = if self.mouse_settings.enhanced_pointer_precision {
-                self.apply_windows_acceleration(distance_moved)
-            } else {
-                distance_moved
-            };
-
-            self.pixels_moved += adjusted_distance;
-        }
-        self.last_pos = Some((x, y));
-    }
-
-    #[cfg(target_os = "windows")]
-    fn apply_windows_acceleration(&self, distance: f64) -> f64 {
-        let speed = distance; // Assume distance is proportional to speed
-        let threshold1 = self.mouse_settings.threshold as f64;
-        let threshold2 = self.mouse_settings.threshold2 as f64;
-        let acceleration = self.mouse_settings.acceleration as f64;
-
-        if speed > threshold2 {
-            distance * acceleration
-        } else if speed > threshold1 {
-            let t = (speed - threshold1) / (threshold2 - threshold1);
-            let accel_factor = 1.0 + t * (acceleration - 1.0);
-            distance * accel_factor
-        } else {
-            distance
-        }
-    }
+    // #[cfg(target_os = "windows")]
+    // fn update_distance(&mut self, x: f64, y: f64) {
+    //     if let Some((last_x, last_y)) = self.last_pos {
+    //         let distance_moved = ((last_x - x).powi(2) + (last_y - y).powi(2)).sqrt();
+    //
+    //         let adjusted_distance = if self.mouse_settings.enhanced_pointer_precision {
+    //             self.apply_windows_acceleration(distance_moved)
+    //         } else {
+    //             distance_moved
+    //         };
+    //
+    //         self.pixels_moved += adjusted_distance;
+    //     }
+    //     self.last_pos = Some((x, y));
+    // }
+    //
+    // #[cfg(target_os = "windows")]
+    // fn apply_windows_acceleration(&self, distance: f64) -> f64 {
+    //     let speed = distance; // Assume distance is proportional to speed
+    //     let threshold1 = self.mouse_settings.threshold as f64;
+    //     let threshold2 = self.mouse_settings.threshold2 as f64;
+    //     let acceleration = self.mouse_settings.acceleration as f64;
+    //
+    //     if speed > threshold2 {
+    //         distance * acceleration
+    //     } else if speed > threshold1 {
+    //         let t = (speed - threshold1) / (threshold2 - threshold1);
+    //         let accel_factor = 1.0 + t * (acceleration - 1.0);
+    //         distance * accel_factor
+    //     } else {
+    //         distance
+    //     }
+    // }
 }
 
 /// Spawns a new asynchronous task that sends a message on a channel at a regular interval.
