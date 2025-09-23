@@ -1,7 +1,6 @@
-use crate::common::*;
-
 use tokio::sync::mpsc::*;
-use tokio::time::*;
+
+use crate::platform::common::*;
 
 use anyhow::*;
 use tracing::*;
@@ -17,12 +16,12 @@ use wayland_protocols_wlr::foreign_toplevel::v1::client::{
 
 struct WaylandData {
     manager: Option<ZwlrForeignToplevelManagerV1>,
-    windows: Vec<Window>,
+    windows: Vec<WaylandWindow>,
     channel_sender: Sender<FocusEvent>,
 }
 
 #[derive(Debug, Clone)]
-pub struct Window {
+pub struct WaylandWindow {
     wl_handle: ZwlrForeignToplevelHandleV1,
     pub w_name: String,
     pub w_class: String,
@@ -73,7 +72,7 @@ impl Dispatch<ZwlrForeignToplevelManagerV1, ()> for WaylandData {
         match event {
             Event::Toplevel { toplevel } => {
                 // Adding existent windows
-                state.windows.push(Window {
+                state.windows.push(WaylandWindow {
                     wl_handle: toplevel,
                     w_name: "".to_string(),
                     w_class: "".to_string(),
@@ -127,17 +126,27 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for WaylandData {
                     if let Some(focused_window) =
                         state.windows.iter().find(|t| t.wl_handle == *handle)
                     {
+                        let window = Window {
+                            name: focused_window.w_name.clone(),
+                            class: focused_window.w_class.clone(),
+                        };
+
                         state
                             .channel_sender
-                            .try_send(FocusEvent::FocusGained(focused_window.clone()))
+                            .try_send(FocusEvent::FocusGained(window))
                             .unwrap();
                     }
                 } else if let Some(unfocused_window) =
                     state.windows.iter().find(|t| t.wl_handle == *handle)
                 {
+                    let window = Window {
+                        name: unfocused_window.w_name.clone(),
+                        class: unfocused_window.w_class.clone(),
+                    };
+
                     state
                         .channel_sender
-                        .try_send(FocusEvent::FocusLost(unfocused_window.clone()))
+                        .try_send(FocusEvent::FocusLost(window))
                         .unwrap();
                 }
             }

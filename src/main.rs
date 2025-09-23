@@ -42,9 +42,9 @@ mod utils;
 async fn main() {
     let args = Cli::parse();
     logger::init(args.debug);
-    // if let Err(err) = run(args).await {
-    //     error!("Fatal Error: {err:?}");
-    // }
+    if let Err(err) = run(args).await {
+        error!("Fatal Error: {err:?}");
+    }
 }
 
 async fn run(mut args: Cli) -> Result<()> {
@@ -98,7 +98,7 @@ async fn run(mut args: Cli) -> Result<()> {
     };
 
     let mut tasks_set = JoinSet::new();
-    tasks_set.spawn(keylogger::run(
+    tasks_set.spawn(crate::platform::linux::inputs::run(
         args.dpi,
         db_update_interval + 5,
         storage_backend.clone(),

@@ -1,16 +1,9 @@
+use std::fs::File;
 use std::io::Write;
+use std::path::PathBuf;
 use std::process;
 
 use anyhow::*;
-
-#[cfg(target_os = "linux")]
-use std::os::fd::AsRawFd;
-
-#[cfg(target_os = "windows")]
-use std::os::windows::io::AsRawHandle;
-
-#[cfg(target_os = "windows")]
-use windows::Win32::Storage::FileSystem::LockFile;
 
 use crate::common::program_data_dir;
 
@@ -33,9 +26,8 @@ pub fn ensure_single_instance() -> Result<()> {
 
 #[cfg(target_os = "linux")]
 fn acquire_lock(lock_f_path: &PathBuf) -> Result<File> {
-    use std::fs::File;
     use std::fs::OpenOptions;
-    use std::path::PathBuf;
+    use std::os::fd::AsRawFd;
 
     let mut file = OpenOptions::new()
         .read(true)
@@ -64,6 +56,9 @@ fn acquire_lock(lock_f_path: &PathBuf) -> Result<File> {
 
 #[cfg(target_os = "windows")]
 fn acquire_lock(lock_f_path: &PathBuf) -> Result<File> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Storage::FileSystem::LockFile;
+
     let mut file = OpenOptions::new()
         .read(true)
         .write(true)
