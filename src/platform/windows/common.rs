@@ -1,3 +1,4 @@
+#[cfg(feature = "remote")]
 use serde::Deserialize;
 use std::{ffi::OsString, os::windows::ffi::OsStringExt};
 use sysinfo::{Pid, ProcessRefreshKind, RefreshKind};
@@ -104,7 +105,7 @@ pub fn configure_startup(args: &Cli) -> Result<()> {
 pub fn get_focused_window() -> Result<(String, String)> {
     unsafe {
         let hwnd = GetForegroundWindow();
-        if hwnd.0 == 0 {
+        if hwnd.0 == std::ptr::null_mut() {
             return Err(anyhow!(Error::from_win32()));
         }
 
@@ -153,7 +154,8 @@ pub fn get_idle_time() -> Result<Duration> {
     Ok(Duration::from_millis(diff.into()))
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "remote", derive(serde::Deserialize))]
 #[allow(dead_code)]
 pub struct MouseSettings {
     pub threshold: i32,

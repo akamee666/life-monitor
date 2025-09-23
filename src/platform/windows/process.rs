@@ -2,7 +2,7 @@ use crate::common::*;
 use crate::platform::windows::common::*;
 use crate::storage::backend::{DataStore, StorageBackend};
 
-use anyhow::*;
+use anyhow::{Context, Result};
 use tokio::time::*;
 use tracing::*;
 
@@ -16,11 +16,8 @@ pub async fn run(update_interval: u32, backend: StorageBackend) -> Result<()> {
         tokio::select! {
             _ = tick.tick() => {
                 if !is_idle() {
-                    if let Ok((w_name, w_class)) = get_focused_window() {
-                        info!("w_name: {w_name} and class: {w_class}");
-                    } else {
-                        error!("Failed to get the foreground window: {err:?}");
-                    }
+                    // TODO: IMPLEMENT CODE
+                    let (w_name, w_class) = get_focused_window().with_context(|| "Failed to find foreground window")?;
                 }
             }
 

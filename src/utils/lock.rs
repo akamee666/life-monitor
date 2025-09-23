@@ -56,20 +56,20 @@ fn acquire_lock(lock_f_path: &PathBuf) -> Result<File> {
 
 #[cfg(target_os = "windows")]
 fn acquire_lock(lock_f_path: &PathBuf) -> Result<File> {
+    use std::fs::OpenOptions;
     use std::os::windows::io::AsRawHandle;
     use windows::Win32::Storage::FileSystem::LockFile;
-
-    let mut file = OpenOptions::new()
+    let file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
         .open(lock_f_path)?;
 
-    let handle = file.as_raw_handle();
+    let handle = windows::Win32::Foundation::HANDLE(file.as_raw_handle());
 
     // Lock the entire file
-    let result = unsafe {
+    unsafe {
         LockFile(handle, 0, 0, u32::MAX, u32::MAX)
             .with_context(|| format!("Call to LockFile API failed for file: {file:?}"))?
     };

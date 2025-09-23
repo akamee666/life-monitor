@@ -1,12 +1,11 @@
 use x11rb::connection::Connection;
-use x11rb::protocol::xproto::*;
+use x11rb::protocol::xproto::{self, *};
 use x11rb::rust_connection::RustConnection;
 
 use crate::common::*;
-use crate::platform::common::*;
+use crate::*;
 
 use anyhow::*;
-use tracing::*;
 
 #[cfg(feature = "x11")]
 pub struct X11Ctx {
@@ -124,9 +123,9 @@ fn get_or_intern_atom(conn: &RustConnection, name: &[u8]) -> Atom {
 
 fn find_active_window(
     conn: &impl Connection,
-    root: Window,
+    root: xproto::Window,
     net_active_window: Atom,
-) -> Result<Window> {
+) -> Result<xproto::Window> {
     let window: Atom = AtomEnum::WINDOW.into();
     let active_window = conn
         .get_property(false, root, net_active_window, window, 0, 1)?

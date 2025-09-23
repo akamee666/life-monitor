@@ -1,7 +1,6 @@
 use crate::common::*;
 use crate::platform::common::*;
 use crate::platform::linux::inputs::*;
-use crate::platform::linux::wayland::*;
 use crate::storage::backend::{DataStore, StorageBackend};
 
 use anyhow::*;
@@ -51,11 +50,14 @@ enum TrackingState {
     Idle(Window),
 }
 
+#[cfg(feature = "wayland")]
 pub async fn run_wayland(
     mut proc_data: ProcessTracker,
     update_interval: u32,
     backend: StorageBackend,
 ) -> Result<()> {
+    use crate::platform::linux::wayland::*;
+
     let (events_tx, mut events_rx) = channel::<FocusEvent>(240);
 
     // spawn Wayland listener
@@ -137,8 +139,11 @@ pub async fn run(update_interval: u32, backend: StorageBackend) -> Result<()> {
     let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok();
 
     if is_wayland {
+        info!("Wayland detected!");
+        #[cfg(feature = "wayland")]
         run_wayland(proc_data, update_interval, backend).await?;
     } else {
+        info!("X11 detected!");
         #[cfg(feature = "x11")]
         run_x11(proc_data, update_interval, backend).await?;
 

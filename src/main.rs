@@ -42,6 +42,7 @@ mod utils;
 async fn main() {
     let args = Cli::parse();
     logger::init(args.debug);
+
     if let Err(err) = run(args).await {
         error!("Fatal Error: {err:?}");
     }
@@ -98,7 +99,15 @@ async fn run(mut args: Cli) -> Result<()> {
     };
 
     let mut tasks_set = JoinSet::new();
+    #[cfg(target_os = "linux")]
     tasks_set.spawn(crate::platform::linux::inputs::run(
+        args.dpi,
+        db_update_interval + 5,
+        storage_backend.clone(),
+    ));
+
+    #[cfg(target_os = "windows")]
+    tasks_set.spawn(crate::platform::windows::inputs::run(
         args.dpi,
         db_update_interval + 5,
         storage_backend.clone(),
@@ -107,9 +116,9 @@ async fn run(mut args: Cli) -> Result<()> {
     tasks_set.spawn(process::run(db_update_interval, storage_backend));
 
     #[cfg(target_os = "windows")]
-    if !args.no_systray {
-        tasks_set.spawn(systray::init());
-    }
+    // if !args.no_systray {
+    //     tasks_set.spawn(systray::init());
+    // }
 
     // Need to wait the tasks finish, which they should'nt.
     while let Some(res) = tasks_set.join_next().await {
