@@ -30,10 +30,10 @@ use clap::Parser;
 use tokio::task::JoinSet;
 use tracing::*;
 
-mod common;
-// bindgen generated
 #[cfg(target_os = "linux")]
 mod input_bindings;
+
+mod common;
 mod platform;
 mod storage;
 mod utils;
@@ -116,9 +116,9 @@ async fn run(mut args: Cli) -> Result<()> {
     tasks_set.spawn(process::run(db_update_interval, storage_backend));
 
     #[cfg(target_os = "windows")]
-    // if !args.no_systray {
-    //     tasks_set.spawn(systray::init());
-    // }
+    if !args.no_systray {
+        tasks_set.spawn(systray::init());
+    }
 
     // Need to wait the tasks finish, which they should'nt.
     while let Some(res) = tasks_set.join_next().await {
