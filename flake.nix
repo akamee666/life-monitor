@@ -116,8 +116,8 @@
           buildInputs = [
             # Required
             devToolchain
-            pkgs.llvmPackages_14.libclang
-            pkgs.llvmPackages_14.clang
+            pkgs.llvmPackages_21.libclang
+            pkgs.llvmPackages_21.clang
             pkgs.pkgsCross.mingwW64.sqlite
             pkgs.pkgsCross.mingwW64.windows.pthreads
             # Optional
@@ -130,7 +130,7 @@
           ];
 
           # Used by bindgen
-          LIBCLANG_PATH = "${pkgs.llvmPackages_14.libclang.lib}/lib";
+          LIBCLANG_PATH = "${pkgs.llvmPackages_21.libclang.lib}/lib";
 
           # From: https://github.com/NixOS/nixpkgs/blob/1fab95f5190d087e66a3502481e34e15d62090aa/pkgs/applications/networking/browsers/firefox/common.nix#L247-L253
           # Set C flags for Rust's bindgen program. Unlike ordinary C
