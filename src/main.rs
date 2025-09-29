@@ -117,7 +117,7 @@ async fn run(mut args: Cli) -> Result<()> {
 
     #[cfg(target_os = "windows")]
     if !args.no_systray {
-        tasks_set.spawn(systray::init());
+        tasks_set.spawn(systray::init_tray());
     }
 
     // Need to wait the tasks finish, which they should'nt.

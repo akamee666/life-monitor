@@ -413,7 +413,7 @@ pub async fn run(dpi: Option<u32>, update_interval: u32, backend: StorageBackend
                 }
             }
 
-            // A signal was received from another task (e.g., the ticker).
+            // A signal was received from another task.
             Some(signal) = tasks_rx.recv() => {
                 if matches!(signal, Signals::DbUpdate) {
                     if inputs_data.mouse_dpi > 0 {
