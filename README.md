@@ -29,6 +29,10 @@ fish_add_path /home/your-username/.cargo/bin/
 
 #### TODO: deps list here :)
 
+```bash
+    sudo pacman -S sqlite
+```
+
 - Install [rustup](https://rustup.rs/) and [cargo](https://github.com/rust-lang/cargo/)
 - Install and configure the default toolchain with `rustup install stable` and `rustup default stable`
 - Install the equivalent of the `libssl-dev` package using your package manager
@@ -122,8 +126,8 @@ If you are struggling to understand the code, contact me somewhere, and I will d
 - [x] Check weird shit on startup and i totally forgot about windows lol(I do not know what i needed to do but it seems to be done so.).
 - [x] Should not start again if life-monitor is already running.
 - [x] Wayland support.
-  - [ ] Read directly from /dev/input
-- [ ] Separate better blocking and non-blocking code.
+  - [x] Read directly from /dev/input
+- [x] Separate better blocking and non-blocking code.
 - [ ] Doc to remote flag.
 - [ ] Check CPU load with the new features. Now that i have more data in both table to go through it may impact the performance a little bit.
 - [ ] Maybe create a cool tui to display the collected data in a cool way to the user i guess, how would i do it on windows though?.

@@ -2,13 +2,14 @@ use crate::common::*;
 use crate::storage::backend::*;
 use crate::StorageBackend;
 
-use anyhow::Context;
+use anyhow::{Context, Result};
 use std::ffi::c_void;
 use std::mem::size_of;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::channel;
 use tokio::time::*;
 use tracing::*;
+use windows::Win32::Graphics::Gdi::{GetDC, GetDeviceCaps, ReleaseDC, HORZSIZE, VERTSIZE};
 
 use windows::core::{w, Error, HRESULT, PCWSTR};
 use windows::Win32::Devices::HumanInterfaceDevice::HidD_GetProductString;
@@ -19,13 +20,14 @@ use windows::Win32::Storage::FileSystem::{
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::{
     GetRawInputData, GetRawInputDeviceInfoW, GetRawInputDeviceList, RegisterRawInputDevices,
-    HRAWINPUT, MOUSE_MOVE_RELATIVE, RAWINPUT, RAWINPUTDEVICE, RAWINPUTDEVICELIST, RAWINPUTHEADER,
-    RIDEV_INPUTSINK, RIDI_DEVICENAME, RID_INPUT,
+    HRAWINPUT, MOUSE_MOVE_ABSOLUTE, MOUSE_MOVE_RELATIVE, RAWINPUT, RAWINPUTDEVICE,
+    RAWINPUTDEVICELIST, RAWINPUTHEADER, RAWKEYBOARD, RAWMOUSE, RIDEV_INPUTSINK, RIDI_DEVICENAME,
+    RID_INPUT,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 /// List all raw input devices
-fn list_raw_input_devices() -> anyhow::Result<Vec<RAWINPUTDEVICELIST>> {
+fn list_raw_input_devices() -> Result<Vec<RAWINPUTDEVICELIST>> {
     unsafe {
         let mut num_devices: u32 = 0;
         let size = size_of::<RAWINPUTDEVICELIST>() as u32;
@@ -44,23 +46,13 @@ fn list_raw_input_devices() -> anyhow::Result<Vec<RAWINPUTDEVICELIST>> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub enum RawInputEvent {
-    Keyboard {
-        vkey: u16,
-        flags: u16,
-        message: u32,
-    },
-    Mouse {
-        flags: u16,
-        button_flags: u16,
-        button_data: u16,
-        x: i32,
-        y: i32,
-    },
+    Keyboard(RAWKEYBOARD),
+    Mouse(RAWMOUSE),
 }
 
-unsafe fn get_human_readable_name(device_handle: HANDLE) -> anyhow::Result<String> {
+unsafe fn get_human_readable_name(device_handle: HANDLE) -> Result<String> {
     let mut size: u32 = 0;
     if GetRawInputDeviceInfoW(Some(device_handle), RIDI_DEVICENAME, None, &mut size) != 0 {
         return Err(anyhow::anyhow!(
@@ -121,11 +113,8 @@ unsafe fn get_human_readable_name(device_handle: HANDLE) -> anyhow::Result<Strin
     Ok(name)
 }
 
-pub async fn run(
-    dpi: Option<u32>,
-    update_interval: u32,
-    backend: StorageBackend,
-) -> anyhow::Result<()> {
+// TODO: Filter repeating presses and mouse tracking, isn't working.
+pub async fn run(dpi: Option<u32>, update_interval: u32, backend: StorageBackend) -> Result<()> {
     let mut inputs_data = InputLogger::new(&backend, dpi.unwrap_or(800))
         .await
         .with_context(|| {
@@ -140,6 +129,19 @@ pub async fn run(
         let name = unsafe { get_human_readable_name(dev.hDevice) }
             .unwrap_or_else(|e| format!("[Error: {e}]"));
         debug!("Device {i}: type={:?}, name={}", dev.dwType, name);
+    }
+
+    // get screen data:
+    {
+        let screen_dc = unsafe { GetDC(None) };
+        if screen_dc.is_invalid() {
+            anyhow::bail!("Failed to get screen size!");
+        }
+
+        inputs_data.w.screen_width_mm = unsafe { GetDeviceCaps(Some(screen_dc), HORZSIZE).into() };
+        inputs_data.w.screen_height_mm = unsafe { GetDeviceCaps(Some(screen_dc), VERTSIZE).into() };
+
+        let _ = unsafe { ReleaseDC(None, screen_dc) };
     }
 
     // This is required because GetMessageW is a blocking call.
@@ -158,9 +160,9 @@ pub async fn run(
             }
 
             _ = db_updates.tick() => {
-                if inputs_data.mouse_dpi > 0 {
+                if inputs_data.pixels_traveled != 0 {
                     const INCHES_TO_CM: f64 = 2.54;
-                    inputs_data.cm_traveled = (inputs_data.pixels_traveled as f64 / inputs_data.mouse_dpi as f64 * INCHES_TO_CM) as u64;
+                    inputs_data.cm_traveled = (inputs_data.pixels_traveled as f64 / inputs_data.mouse_dpi as f64) * INCHES_TO_CM;
                 }
 
                 if let Err(e) = backend.store_keys_data(&inputs_data).await {
@@ -177,44 +179,84 @@ pub async fn run(
     anyhow::bail!("Message Loop finished unexpectly!")
 }
 
+// https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-rawmouse#remarks
+// TODO: Parse this bullshit correclty
 fn process_event(inputs: &mut InputLogger, event: RawInputEvent) {
     match event {
-        RawInputEvent::Keyboard { flags, .. } if flags == RI_KEY_MAKE as u16 => {
-            inputs.key_presses += 1;
+        RawInputEvent::Keyboard(event) => {
+            let vkey = event.VKey;
+
+            // This is needed to not couting auto repeat.
+            if (event.Flags & RI_KEY_BREAK as u16) == 0 {
+                // key down
+                if inputs.w.pressed_keys_state.insert(vkey) {
+                    inputs.key_presses += 1;
+                }
+            } else {
+                // key up event
+                inputs.w.pressed_keys_state.remove(&vkey);
+            }
         }
-        RawInputEvent::Mouse {
-            button_flags,
-            button_data,
-            x,
-            y,
-            flags,
-        } => {
-            if flags == MOUSE_MOVE_RELATIVE.0 {
-                let dx = x as f64;
-                let dy = y as f64;
+
+        RawInputEvent::Mouse(event) => {
+            // Relative movement we already get the delta for x and y
+            if (event.usFlags.0 & MOUSE_MOVE_ABSOLUTE.0) == 0 {
+                let dx = event.lLastX as f64;
+                let dy = event.lLastY as f64;
                 let dist = (dx * dx + dy * dy).sqrt();
                 inputs.pixels_traveled += dist as u64;
             }
-            if button_flags as u32 & RI_MOUSE_LEFT_BUTTON_DOWN != 0 {
-                inputs.left_clicks += 1;
-            }
-            if button_flags as u32 & RI_MOUSE_RIGHT_BUTTON_DOWN != 0 {
-                inputs.right_clicks += 1;
-            }
-            if button_flags as u32 & RI_MOUSE_MIDDLE_BUTTON_DOWN != 0 {
-                inputs.middle_clicks += 1;
+
+            // win32 doesn't use pixels as movement in this case
+            if (event.usFlags.0 & MOUSE_MOVE_ABSOLUTE.0) != 0 {
+                // (0,0) is the top-left corner of the primary monitor
+                // (65535,65535) is the botton-right
+                let current_x = event.lLastX;
+                let current_y = event.lLastY;
+                if let (Some(last_x), Some(last_y)) = (inputs.w.last_abs_x, inputs.w.last_abs_y) {
+                    let raw_dx = (current_x - last_x) as f64;
+                    let raw_dy = (current_y - last_y) as f64;
+
+                    let dx_mm = raw_dx * (inputs.w.screen_width_mm / 65535.0);
+                    let dy_mm = raw_dy * (inputs.w.screen_height_mm / 65535.0);
+                    let dist_mm = (dx_mm * dx_mm + dy_mm * dy_mm).sqrt();
+                    // try to ignore noise, but this still doesn't seem to help in accuracy. it
+                    // seems we stumbled in a paradox: The Coastline Paradox. What can we do then?
+                    const JITTER_THRESHOLD_MM: f64 = 0.3;
+                    if dist_mm > JITTER_THRESHOLD_MM {
+                        inputs.cm_traveled += dist_mm / 10.0;
+                    }
+                }
+                inputs.w.last_abs_x = Some(current_x);
+                inputs.w.last_abs_y = Some(current_y);
             }
 
-            if button_flags as u32 & RI_MOUSE_WHEEL != 0 {
-                let delta = button_data as i16;
-                inputs.vertical_scroll_clicks += (delta.abs() as u32 / WHEEL_DELTA as u32) as u64;
+            unsafe {
+                if (event.Anonymous.Anonymous.usButtonFlags & RI_MOUSE_LEFT_BUTTON_DOWN as u16) != 0
+                {
+                    inputs.left_clicks += 1;
+                }
+                if (event.Anonymous.Anonymous.usButtonFlags & RI_MOUSE_RIGHT_BUTTON_DOWN as u16)
+                    != 0
+                {
+                    inputs.right_clicks += 1;
+                }
+                if (event.Anonymous.Anonymous.usButtonFlags & RI_MOUSE_MIDDLE_BUTTON_DOWN as u16)
+                    != 0
+                {
+                    inputs.middle_clicks += 1;
+                }
+
+                if (event.Anonymous.Anonymous.usButtonFlags & RI_MOUSE_WHEEL as u16) != 0 {
+                    let delta = event.Anonymous.Anonymous.usButtonData;
+                    debug!("delta: {delta}");
+                }
             }
         }
-        _ => {}
     }
 }
 
-fn run_message_loop(tx: mpsc::Sender<RawInputEvent>) -> anyhow::Result<()> {
+fn run_message_loop(tx: mpsc::Sender<RawInputEvent>) -> Result<()> {
     unsafe {
         let hinstance = GetModuleHandleW(None)?;
         let class_name = w!("RawInputSinkWindowClass");
@@ -329,10 +371,7 @@ unsafe extern "system" fn wnd_proc(
     }
 }
 
-unsafe fn handle_raw_input(
-    handle: HRAWINPUT,
-    tx: &mpsc::Sender<RawInputEvent>,
-) -> anyhow::Result<()> {
+unsafe fn handle_raw_input(handle: HRAWINPUT, tx: &mpsc::Sender<RawInputEvent>) -> Result<()> {
     let mut size: u32 = 0;
     GetRawInputData(
         handle,
@@ -364,22 +403,12 @@ unsafe fn handle_raw_input(
         1 => {
             // RIM_TYPEKEYBOARD
             let kb = raw.data.keyboard;
-            Some(RawInputEvent::Keyboard {
-                vkey: kb.VKey,
-                flags: kb.Flags,
-                message: kb.Message,
-            })
+            Some(RawInputEvent::Keyboard(kb))
         }
         0 => {
             // RIM_TYPEMOUSE
             let mouse = raw.data.mouse;
-            Some(RawInputEvent::Mouse {
-                flags: mouse.usFlags.0,
-                button_flags: mouse.Anonymous.Anonymous.usButtonFlags,
-                button_data: mouse.Anonymous.Anonymous.usButtonData,
-                x: mouse.lLastX,
-                y: mouse.lLastY,
-            })
+            Some(RawInputEvent::Mouse(mouse))
         }
         _ => None,
     };

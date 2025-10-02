@@ -123,7 +123,6 @@
             # Optional
             pkgs.evtest
             pkgs.rust-analyzer
-            pkgs.lazygit
             pkgs.cargo-watch
             pkgs.sqlitebrowser
             pkgs.wine64

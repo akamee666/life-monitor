@@ -54,7 +54,7 @@ fn run_tray_loop() -> Result<()> {
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
-            TranslateMessage(&msg);
+            let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
 
@@ -135,8 +135,9 @@ unsafe extern "system" fn wnd_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     match msg {
+        // How do we handle errors here?
         WM_TRAYICON if lparam.0 as u32 == WM_RBUTTONUP => {
-            show_context_menu(hwnd);
+            show_context_menu(hwnd).expect("Failed to handle message in systray");
             LRESULT(0)
         }
 
@@ -154,9 +155,9 @@ unsafe extern "system" fn wnd_proc(
     }
 }
 
-unsafe fn show_context_menu(hwnd: HWND) {
+unsafe fn show_context_menu(hwnd: HWND) -> Result<()> {
     let mut point = POINT::default();
-    GetCursorPos(&mut point);
+    GetCursorPos(&mut point)?;
 
     if let Ok(hmenu) = CreatePopupMenu() {
         AppendMenuW(
@@ -164,12 +165,12 @@ unsafe fn show_context_menu(hwnd: HWND) {
             MF_STRING,
             TrayCommand::GoTo as usize,
             w!("Project Source"),
-        );
-        AppendMenuW(hmenu, MF_SEPARATOR, 0, None);
-        AppendMenuW(hmenu, MF_STRING, TrayCommand::Quit as usize, w!("Quit"));
+        )?;
+        AppendMenuW(hmenu, MF_SEPARATOR, 0, None)?;
+        AppendMenuW(hmenu, MF_STRING, TrayCommand::Quit as usize, w!("Quit"))?;
 
-        SetForegroundWindow(hwnd);
-        TrackPopupMenu(
+        let _ = SetForegroundWindow(hwnd);
+        let _ = TrackPopupMenu(
             hmenu,
             TPM_BOTTOMALIGN | TPM_LEFTALIGN,
             point.x,
@@ -178,8 +179,10 @@ unsafe fn show_context_menu(hwnd: HWND) {
             hwnd,
             None,
         );
-        DestroyMenu(hmenu);
+        DestroyMenu(hmenu)?;
     }
+
+    Ok(())
 }
 
 fn handle_command(cmd: u16) {
@@ -206,4 +209,3 @@ fn handle_command(cmd: u16) {
 pub fn LOWORD(l: usize) -> usize {
     l & 0xffff
 }
-

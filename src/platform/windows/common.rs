@@ -1,9 +1,10 @@
-#[cfg(feature = "remote")]
-use serde::Deserialize;
 use std::{ffi::OsString, os::windows::ffi::OsStringExt};
 use sysinfo::{Pid, ProcessRefreshKind, RefreshKind};
 use tracing::*;
 use windows::core::Error;
+
+#[cfg(feature = "remote")]
+use serde::Deserialize;
 
 use std::result::Result::Ok;
 
@@ -105,7 +106,7 @@ pub fn configure_startup(args: &Cli) -> Result<()> {
 pub fn get_focused_window() -> Result<(String, String)> {
     unsafe {
         let hwnd = GetForegroundWindow();
-        if hwnd.0 == std::ptr::null_mut() {
+        if hwnd.0.is_null() {
             return Err(anyhow!(Error::from_win32()));
         }
 

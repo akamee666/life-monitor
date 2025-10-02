@@ -1,9 +1,13 @@
 //! This file is responsible to store functions, enums or
 //! structs that can be used for all platforms supported.
+#[cfg(target_os = "windows")]
+use tokio::net::windows;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::interval;
 use tokio::time::Duration;
+
+use std::collections::HashSet;
 
 use anyhow::Context;
 use anyhow::Result;
@@ -34,6 +38,8 @@ pub struct ProcessInfo {
 #[derive(Debug, Default, Clone, PartialEq)]
 #[cfg_attr(feature = "remote", derive(serde::Deserialize))]
 pub struct InputLogger {
+    #[cfg(target_os = "windows")]
+    pub w: WindowsSpecific,
     /// Total number of left mouse button clicks.
     pub left_clicks: u64,
     /// Total number of right mouse button clicks.
@@ -45,9 +51,10 @@ pub struct InputLogger {
     /// Total distance the cursor has moved, measured in pixels.
     pub pixels_traveled: u64,
     /// Total distance the cursor has moved, measured in centimeters.
-    pub cm_traveled: u64,
+    pub cm_traveled: f64,
     /// DPI
     pub mouse_dpi: u64,
+    // TODO: This should be traveled
     /// Total number of raw vertical scroll wheel clicks.
     pub vertical_scroll_clicks: u64,
     /// Total number of raw horizontal scroll wheel clicks.
@@ -58,6 +65,15 @@ pub struct InputLogger {
     pub horizontal_scroll_cm: f64,
 }
 
+#[derive(Debug, Default, Clone, PartialEq)]
+#[cfg_attr(feature = "remote", derive(serde::Deserialize))]
+pub struct WindowsSpecific {
+    pub pressed_keys_state: HashSet<u16>,
+    pub screen_width_mm: f64,
+    pub screen_height_mm: f64,
+    pub last_abs_x: Option<i32>,
+    pub last_abs_y: Option<i32>,
+}
 #[derive(Debug)]
 pub struct ProcessTracker {
     pub time: u64,
