@@ -8,7 +8,7 @@ pub struct Window {
     pub class: String,
 }
 
-// This needs to change, window should be a generic that can handle Window, or? i don't know
+// TODO: the fuck do i need to do here? This needs to change, window should be a generic that can handle Window, or? i don't know
 pub fn record_window_time(procs: &mut Vec<ProcessInfo>, window: Window, time_actived: Duration) {
     let elapsed_secs = time_actived.as_secs();
 

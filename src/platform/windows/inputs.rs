@@ -5,9 +5,9 @@ use crate::StorageBackend;
 use anyhow::{Context, Result};
 use std::ffi::c_void;
 use std::mem::size_of;
-use tokio::sync::mpsc;
-use tokio::sync::mpsc::channel;
-use tokio::time::*;
+
+use tokio::{sync::mpsc::*, sync::*, time::*};
+
 use tracing::*;
 use windows::Win32::Graphics::Gdi::{GetDC, GetDeviceCaps, ReleaseDC, HORZSIZE, VERTSIZE};
 
@@ -20,9 +20,8 @@ use windows::Win32::Storage::FileSystem::{
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::{
     GetRawInputData, GetRawInputDeviceInfoW, GetRawInputDeviceList, RegisterRawInputDevices,
-    HRAWINPUT, MOUSE_MOVE_ABSOLUTE, MOUSE_MOVE_RELATIVE, RAWINPUT, RAWINPUTDEVICE,
-    RAWINPUTDEVICELIST, RAWINPUTHEADER, RAWKEYBOARD, RAWMOUSE, RIDEV_INPUTSINK, RIDI_DEVICENAME,
-    RID_INPUT,
+    HRAWINPUT, MOUSE_MOVE_ABSOLUTE, RAWINPUT, RAWINPUTDEVICE, RAWINPUTDEVICELIST, RAWINPUTHEADER,
+    RAWKEYBOARD, RAWMOUSE, RIDEV_INPUTSINK, RIDI_DEVICENAME, RID_INPUT,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -113,7 +112,6 @@ unsafe fn get_human_readable_name(device_handle: HANDLE) -> Result<String> {
     Ok(name)
 }
 
-// TODO: Filter repeating presses and mouse tracking, isn't working.
 pub async fn run(dpi: Option<u32>, update_interval: u32, backend: StorageBackend) -> Result<()> {
     let mut inputs_data = InputLogger::new(&backend, dpi.unwrap_or(800))
         .await
@@ -131,7 +129,6 @@ pub async fn run(dpi: Option<u32>, update_interval: u32, backend: StorageBackend
         debug!("Device {i}: type={:?}, name={}", dev.dwType, name);
     }
 
-    // get screen data:
     {
         let screen_dc = unsafe { GetDC(None) };
         if screen_dc.is_invalid() {
@@ -180,7 +177,6 @@ pub async fn run(dpi: Option<u32>, update_interval: u32, backend: StorageBackend
 }
 
 // https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-rawmouse#remarks
-// TODO: Parse this bullshit correclty
 fn process_event(inputs: &mut InputLogger, event: RawInputEvent) {
     match event {
         RawInputEvent::Keyboard(event) => {
@@ -221,7 +217,7 @@ fn process_event(inputs: &mut InputLogger, event: RawInputEvent) {
                     let dy_mm = raw_dy * (inputs.w.screen_height_mm / 65535.0);
                     let dist_mm = (dx_mm * dx_mm + dy_mm * dy_mm).sqrt();
                     // try to ignore noise, but this still doesn't seem to help in accuracy. it
-                    // seems we stumbled in a paradox: The Coastline Paradox. What can we do then?
+                    // seems we stumbled in a paradox: The Coastline Paradox.
                     const JITTER_THRESHOLD_MM: f64 = 0.3;
                     if dist_mm > JITTER_THRESHOLD_MM {
                         inputs.cm_traveled += dist_mm / 10.0;
@@ -249,7 +245,6 @@ fn process_event(inputs: &mut InputLogger, event: RawInputEvent) {
 
                 if (event.Anonymous.Anonymous.usButtonFlags & RI_MOUSE_WHEEL as u16) != 0 {
                     let delta = event.Anonymous.Anonymous.usButtonData;
-                    debug!("delta: {delta}");
                 }
             }
         }

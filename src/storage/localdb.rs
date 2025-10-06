@@ -1,24 +1,12 @@
 use crate::common::*;
 
-use chrono::Duration;
-use chrono::NaiveTime;
-use chrono::{Local, Timelike};
-
-use rusqlite::params;
-use rusqlite::Connection;
-use rusqlite::OpenFlags;
-use rusqlite::Result as SqlResult;
+use chrono::{Duration, Local, NaiveTime, Timelike};
 
 use anyhow::{Context, Result};
-
-use std::fs;
-use std::io;
-use std::io::Write;
+use rusqlite::{params, Connection, OpenFlags, Result as SqlResult};
+use std::{fs, io, io::Write};
 
 use tracing::*;
-
-#[cfg(target_os = "windows")]
-use crate::platform::windows::common::MouseSettings;
 
 pub fn setup_database(conn: &Connection, requested_gran: Option<u32>) -> Result<()> {
     // create procs table (it doesn't need any setup)
@@ -122,7 +110,6 @@ fn setup_keys_table(conn: &Connection, g_level: u32) -> Result<()> {
         middle_clicks INTEGER NOT NULL,
         key_presses INTEGER NOT NULL,
         cm_traveled INTEGER NOT NULL,
-        dpi INTEGER NOT NULL,
         timestamp TEXT NOT NULL
     );";
 
@@ -134,8 +121,8 @@ fn setup_keys_table(conn: &Connection, g_level: u32) -> Result<()> {
     let mut current_time = today.and_hms_opt(0, 0, 0).unwrap();
     let mut stmt = conn
         .prepare_cached(
-            "INSERT INTO keys (left_clicks, right_clicks, middle_clicks, key_presses, cm_traveled, dpi, timestamp) 
-         VALUES (0, 0, 0, 0, 0, 0, ?)",
+            "INSERT INTO keys (left_clicks, right_clicks, middle_clicks, key_presses, cm_traveled, timestamp) 
+         VALUES (0, 0, 0, 0, 0, ?)",
         )
         .with_context(|| "Failed to prepare cached query to insert rows in keys table")?;
     for i in 0..rows {
@@ -220,12 +207,12 @@ fn reorganize_table(current_gran: u32, new_gran: u32) -> Result<()> {
 /// `N`: The number of integer columns to extract (must be ≤ 6).
 /// A vector of tuples where:
 /// - The first element is an array `[i32; N]` containing the first `N` columns in order:
-///   0: `left_clicks`, 1: `right_clicks`, 2: `middle_clicks`, 3: `key_presses`, 4: `cm_traveled`, 5: `dpi`.
+///   0: `left_clicks`, 1: `right_clicks`, 2: `middle_clicks`, 3: `key_presses`, 4: `cm_traveled`.
 /// - The second element is the timestamp String of the associated row.
 /// - If `N` exceeds 6, the query will panic at runtime due to out-of-bounds access.
 fn fetch_keys_columns<const N: usize>(conn: &Connection) -> Result<Vec<([i32; N], String)>> {
     let mut stmt = conn
-        .prepare("SELECT left_clicks, right_clicks, middle_clicks, key_presses, cm_traveled, dpi, timestamp FROM keys")
+        .prepare("SELECT left_clicks, right_clicks, middle_clicks, key_presses, cm_traveled, timestamp FROM keys")
         .with_context(|| "Failed to prepare SELECT statement")?;
 
     let rows = stmt
@@ -282,7 +269,7 @@ fn parse_to_higher_gran(conn: &Connection, new_gran: u32, new_rows_n: u32) -> Re
         conn.execute(
             "
         UPDATE keys
-        SET left_clicks = ?, right_clicks = ?, middle_clicks = ?, key_presses = ?, cm_traveled = ?, dpi = ?
+        SET left_clicks = ?, right_clicks = ?, middle_clicks = ?, key_presses = ?, cm_traveled = ?
         WHERE id = ?",
             params![
                 averages[0],
@@ -290,7 +277,6 @@ fn parse_to_higher_gran(conn: &Connection, new_gran: u32, new_rows_n: u32) -> Re
                 averages[2],
                 averages[3],
                 averages[4],
-                800,
                 i
             ],
         )
@@ -349,7 +335,7 @@ fn parse_to_lower_gran(conn: &Connection, new_gran: u32, rows_to_merge: u32) -> 
         }
 
         let timestamp = chunk.first().unwrap().1.clone();
-        let mut totals = [0; 6]; // [left_clicks, right_clicks, middle_clicks, key_presses, cm_traveled, dpi]
+        let mut totals = [0; 5]; // [left_clicks, right_clicks, middle_clicks, key_presses, cm_traveled]
 
         // sum each column in the chunk into `totals`
         // totals[i] += values[i] for each row in the current chunk
@@ -358,10 +344,9 @@ fn parse_to_lower_gran(conn: &Connection, new_gran: u32, rows_to_merge: u32) -> 
                 *total += val;
             }
         }
-        let dpi = totals[5]; // dpi is the same in all the rows
 
         aggregated_rows.push((
-            totals[0], totals[1], totals[2], totals[3], totals[4], dpi, timestamp,
+            totals[0], totals[1], totals[2], totals[3], totals[4], timestamp,
         ));
     }
 
@@ -371,11 +356,11 @@ fn parse_to_lower_gran(conn: &Connection, new_gran: u32, rows_to_merge: u32) -> 
         format!("Failed to create new keys table with granularity level: {new_gran}")
     })?;
 
-    let q = "INSERT INTO keys (left_clicks, right_clicks, middle_clicks, key_presses, cm_traveled, dpi, timestamp) 
-         VALUES (0, 0, 0, 0, 0, 0, ?)";
+    let q = "INSERT INTO keys (left_clicks, right_clicks, middle_clicks, key_presses, cm_traveled,  timestamp) 
+         VALUES (0, 0, 0, 0,  0, ?)";
 
     for row in aggregated_rows {
-        conn.execute(q, params![row.0, row.1, row.2, row.3, row.4, row.5, row.6])
+        conn.execute(q, params![row.0, row.1, row.2, row.3, row.4, row.5])
             .with_context(|| "Failed to add new aggregated rows in the keys table")?;
     }
 
@@ -462,7 +447,6 @@ pub fn update_keyst(conn: &Connection, logger_data: &InputLogger) -> Result<()> 
                 middle_clicks = ?,
                 key_presses = ?,
                 cm_traveled = ?,
-                dpi = ?
             WHERE timestamp = ?;
         ";
 
@@ -475,7 +459,6 @@ pub fn update_keyst(conn: &Connection, logger_data: &InputLogger) -> Result<()> 
                 logger_data.middle_clicks,
                 logger_data.key_presses,
                 logger_data.cm_traveled,
-                logger_data.mouse_dpi,
                 bucket,
             ],
         )
@@ -483,14 +466,13 @@ pub fn update_keyst(conn: &Connection, logger_data: &InputLogger) -> Result<()> 
 
     match affected_rows {
         1 => debug!(
-            "Updated bucket '{}': lc=[{}], rc=[{}], mc=[{}], kp=[{}], mm=[{}], dpi=[{}]",
+            "Updated bucket '{}': lc=[{}], rc=[{}], mc=[{}], kp=[{}], mm=[{}]",
             bucket,
             logger_data.left_clicks,
             logger_data.right_clicks,
             logger_data.middle_clicks,
             logger_data.key_presses,
             logger_data.cm_traveled,
-            logger_data.mouse_dpi
         ),
         0 => warn!("No row matched timestamp '{}'", bucket),
         _ => error!(
@@ -507,8 +489,7 @@ pub fn update_keyst(conn: &Connection, logger_data: &InputLogger) -> Result<()> 
 // And i guess i should create a ticker that will reset keylogger values at each database interval.
 pub fn get_keyst(conn: &Connection) -> Result<InputLogger> {
     let query = "
-    SELECT left_clicks, right_clicks, middle_clicks, key_presses, cm_traveled,dpi
-    FROM keys
+    SELECT left_clicks, right_clicks, middle_clicks, key_presses, cm_traveled FROM keys
     LIMIT 1;
     ";
 
@@ -523,7 +504,6 @@ pub fn get_keyst(conn: &Connection) -> Result<InputLogger> {
             middle_clicks: row.get(2)?,
             key_presses: row.get(3)?,
             cm_traveled: row.get(4)?,
-            mouse_dpi: row.get(5)?,
             ..Default::default()
         };
         Ok(k)
