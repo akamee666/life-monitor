@@ -446,7 +446,7 @@ pub fn update_keyst(conn: &Connection, logger_data: &InputLogger) -> Result<()> 
                 right_clicks = ?,
                 middle_clicks = ?,
                 key_presses = ?,
-                cm_traveled = ?,
+                cm_traveled = ?
             WHERE timestamp = ?;
         ";
 

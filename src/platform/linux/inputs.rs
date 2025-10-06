@@ -418,7 +418,7 @@ pub async fn run(dpi: Option<u32>, update_interval: u32, backend: StorageBackend
                 if matches!(signal, Signals::DbUpdate) {
                     if inputs_data.mouse_dpi > 0 {
                         const INCHES_TO_CM: f64 = 2.54;
-                        inputs_data.cm_traveled = (inputs_data.pixels_traveled as f64 / inputs_data.mouse_dpi as f64 * INCHES_TO_CM) as u64;
+                        inputs_data.cm_traveled = inputs_data.pixels_traveled as f64 / inputs_data.mouse_dpi as f64 * INCHES_TO_CM;
                     }
 
                     if let Err(e) = backend.store_keys_data(&inputs_data).await {

@@ -27,10 +27,9 @@ fish_add_path /home/your-username/.cargo/bin/
 
 ### Building from source
 
-#### TODO: deps list here :)
-
 ```bash
     sudo pacman -S sqlite
+    sudo pacman -S openssl
 ```
 
 - Install [rustup](https://rustup.rs/) and [cargo](https://github.com/rust-lang/cargo/)
@@ -128,7 +127,7 @@ If you are struggling to understand the code, contact me somewhere, and I will d
 - [x] Wayland support.
   - [x] Read directly from /dev/input
 - [x] Separate better blocking and non-blocking code.
-- [ ] Doc to remote flag.
+- [ ] remote doc and rework.
 - [ ] Check CPU load with the new features. Now that i have more data in both table to go through it may impact the performance a little bit.
 - [ ] Maybe create a cool tui to display the collected data in a cool way to the user i guess, how would i do it on windows though?.
   - [ ] Percentages of the most used apps would be cool.
