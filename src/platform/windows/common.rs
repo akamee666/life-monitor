@@ -1,19 +1,20 @@
-use serde::Deserialize;
+#![allow(dead_code)]
+
 use std::{ffi::OsString, os::windows::ffi::OsStringExt};
 use sysinfo::{Pid, ProcessRefreshKind, RefreshKind};
 use tracing::*;
 use windows::core::Error;
 
+use std::result::Result::Ok;
+
+use anyhow::*;
+
 use crate::Cli;
-
-use std::env;
-use std::fs;
-use std::path::PathBuf;
-use std::process::Command;
-use std::time::Duration;
-
 use windows::Win32::{
-    System::SystemInformation::GetTickCount,
+    Foundation::*,
+    Graphics::Gdi::*,
+    System::SystemInformation::*,
+    UI::HiDpi::*,
     UI::{
         Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO},
         WindowsAndMessaging::{
@@ -23,7 +24,13 @@ use windows::Win32::{
     },
 };
 
-pub fn check_startup_status() -> Result<bool, Box<dyn std::error::Error>> {
+use std::env;
+
+use std::time::Duration;
+
+use windows::Win32::System::SystemInformation::GetTickCount;
+
+pub fn check_startup_status() -> Result<bool> {
     use std::path::PathBuf;
 
     // Check Startup folder
@@ -54,58 +61,58 @@ pub fn check_startup_status() -> Result<bool, Box<dyn std::error::Error>> {
     Ok(startup_exists)
 }
 
-pub fn configure_startup(args: &Cli) -> Result<(), Box<dyn std::error::Error>> {
+pub fn configure_startup(_args: &Cli) -> Result<()> {
     unimplemented!();
-    let startup_folder = if let Some(appdata) = env::var_os("APPDATA") {
-        PathBuf::from(appdata)
-            .join("Microsoft")
-            .join("Windows")
-            .join("Start Menu")
-            .join("Programs")
-            .join("Startup")
-    } else {
-        return Err("Could not find APPDATA environment variable".into());
-    };
-    let shortcut_path = startup_folder.join("life_monitor.lnk");
-    let current_exe = env::current_exe()?;
-
-    if args.enable_startup {
-        // Using PowerShell to create shortcut since it's more reliable than direct COM automation
-        let ps_script = format!(
-            "$WScriptShell = New-Object -ComObject WScript.Shell; \
-             $Shortcut = $WScriptShell.CreateShortcut('{}'); \
-             $Shortcut.TargetPath = '{}'; \
-             $Shortcut.Save()",
-            shortcut_path.to_str().unwrap(),
-            current_exe.to_str().unwrap()
-        );
-
-        Command::new("powershell")
-            .arg("-Command")
-            .arg(&ps_script)
-            .output()?;
-
-        info!("Created startup shortcut at: {:?}", shortcut_path);
-    } else if shortcut_path.exists() {
-        fs::remove_file(&shortcut_path)?;
-        info!("Removed startup shortcut");
-    }
-
-    Ok(())
+    // let startup_folder = if let Some(appdata) = env::var_os("APPDATA") {
+    //     PathBuf::from(appdata)
+    //         .join("Microsoft")
+    //         .join("Windows")
+    //         .join("Start Menu")
+    //         .join("Programs")
+    //         .join("Startup")
+    // } else {
+    //     return Err(anyhow!("Could not find APPDATA environment variable"));
+    // };
+    // let shortcut_path = startup_folder.join("life_monitor.lnk");
+    // let current_exe = env::current_exe()?;
+    //
+    // if args.enable_startup {
+    //     // Using PowerShell to create shortcut since it's more reliable than direct COM automation
+    //     let ps_script = format!(
+    //         "$WScriptShell = New-Object -ComObject WScript.Shell; \
+    //          $Shortcut = $WScriptShell.CreateShortcut('{}'); \
+    //          $Shortcut.TargetPath = '{}'; \
+    //          $Shortcut.Save()",
+    //         shortcut_path.to_str().unwrap(),
+    //         current_exe.to_str().unwrap()
+    //     );
+    //
+    //     Command::new("powershell")
+    //         .arg("-Command")
+    //         .arg(&ps_script)
+    //         .output()?;
+    //
+    //     info!("Created startup shortcut at: {:?}", shortcut_path);
+    // } else if shortcut_path.exists() {
+    //     fs::remove_file(&shortcut_path)?;
+    //     info!("Removed startup shortcut");
+    // }
+    //
+    // Ok(())
 }
 
 // Returns window title and class in that order.
-pub fn get_focused_window() -> Result<(String, String), windows::core::Error> {
+pub fn get_focused_window() -> Result<(String, String)> {
     unsafe {
         let hwnd = GetForegroundWindow();
-        if hwnd.0 == 0 {
-            return Err(Error::from_win32());
+        if hwnd.0.is_null() {
+            return Err(anyhow!(Error::from_win32()));
         }
 
         let mut title: [u16; 256] = [0; 256];
         let title_len = GetWindowTextW(hwnd, &mut title);
         if title_len == 0 {
-            return Err(Error::from_win32());
+            return Err(anyhow!(Error::from_win32()));
         }
 
         // Convert the title from UTF-16 to String
@@ -116,7 +123,7 @@ pub fn get_focused_window() -> Result<(String, String), windows::core::Error> {
         let mut process_pid: u32 = 0;
         GetWindowThreadProcessId(hwnd, Some(&mut process_pid));
         let sys = sysinfo::System::new_with_specifics(
-            RefreshKind::new().with_processes(ProcessRefreshKind::new()),
+            RefreshKind::nothing().with_processes(ProcessRefreshKind::everything()),
         );
         let proc = sys.processes().get(&Pid::from_u32(process_pid)).unwrap();
         let w_class = proc.name().to_string_lossy().to_string();
@@ -124,7 +131,7 @@ pub fn get_focused_window() -> Result<(String, String), windows::core::Error> {
     }
 }
 
-pub fn get_idle_time() -> Result<Duration, windows::core::Error> {
+pub fn get_idle_time() -> Result<Duration> {
     // Retrieves the number of milliseconds that have elapsed since the system was started, up to 49.7 days.
     // we will be using it to get how much time was went since the last user input
     let tick_count = unsafe { GetTickCount() };
@@ -140,14 +147,15 @@ pub fn get_idle_time() -> Result<Duration, windows::core::Error> {
     let success = unsafe { GetLastInputInfo(p_last_input_info) };
 
     if !success.as_bool() {
-        return Err(Error::from_win32());
+        return Err(anyhow!(Error::from_win32()));
     }
 
     let diff = tick_count - last_input_info.dwTime;
     Ok(Duration::from_millis(diff.into()))
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "remote", derive(serde::Deserialize))]
 #[allow(dead_code)]
 pub struct MouseSettings {
     pub threshold: i32,
@@ -189,7 +197,19 @@ impl MouseSettings {
     }
 }
 
-pub fn get_mouse_settings() -> Result<MouseSettings, windows::core::Error> {
+fn get_screen_dpi() -> Result<(u32, u32), windows::core::Error> {
+    unsafe {
+        let screen_dc = GetDC(None);
+        let mut dpi_x = 0u32;
+        let mut dpi_y = 0u32;
+        let monitor = MonitorFromWindow(HWND(std::ptr::null_mut()), MONITOR_DEFAULTTOPRIMARY);
+        GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y)?;
+        let _ = ReleaseDC(None, screen_dc);
+        Ok((dpi_x, dpi_y))
+    }
+}
+
+pub fn get_mouse_settings() -> Result<MouseSettings> {
     let mut mouse_params = [0i32; 3];
     let mut speed = 0i32;
     let mut enhanced_pointer_precision = 0i32;
@@ -223,10 +243,23 @@ pub fn get_mouse_settings() -> Result<MouseSettings, windows::core::Error> {
         acceleration: mouse_params[2],
         speed,
         enhanced_pointer_precision: enhanced_pointer_precision != 0,
+        // TODO:
         dpi: 800,
     };
 
     debug!("Mouse settings: {:?}", mouse_settings);
 
     Ok(mouse_settings)
+}
+
+#[cfg(target_os = "windows")]
+pub fn uptime() -> u64 {
+    unsafe { GetTickCount64() / 1_000 }
+}
+
+pub fn is_idle() -> bool {
+    if uptime() > 20 {
+        return true;
+    }
+    false
 }

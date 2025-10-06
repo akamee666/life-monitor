@@ -27,9 +27,11 @@ fish_add_path /home/your-username/.cargo/bin/
 
 ### Building from source
 
-#### TODO: 
+#### TODO: deps list here :)
 
-deps list here :)
+```bash
+    sudo pacman -S sqlite
+```
 
 - Install [rustup](https://rustup.rs/) and [cargo](https://github.com/rust-lang/cargo/)
 - Install and configure the default toolchain with `rustup install stable` and `rustup default stable`
@@ -42,37 +44,53 @@ The compiled binary will be available at `./target/release/life-monitor`
 <a id="compiling-windows"></a>
 Note: To cross compile, you may need to install additional packages. cross-compile with `cargo build --target x86_64-pc-windows-gnu` (assuming you've already added the `windows` toolchain via `rustup target add x86_64-pc-windows-gnu`).
 
+### Building using Nix
+
+This project provides a `flake.nix` which should allow you to build it for linux and cross compile it for windows.
+
+```bash
+cd life-monitor
+nix build .#windows
+nix build .#default
+```
+
 ### Usage
+
 Usage: life-monitor [OPTIONS]
 
 | Flag | Long Form | Description |
 | --- | --- | --- |
-| `-t` | `--interval` [secs] | Set interval for data sending (secs) |
+| `-t` | `--interval` [SECS] | Set interval for data sending (secs) |
 | `-k` | `--no-keys `| Disable key/mouse tracking |
 | `-w` | `--no-window`  | Disable window-based tracking |
 | `-d` | `--debug` | Enable debug mode |
-| `-p` | `--dpi` [dpi] | Specify mouse DPI for tracking |
+| `-p` | `--dpi` [DPI] | Specify mouse DPI for tracking |
 | `-c` | `--clear`  | Clear existing data, start new |
 | `-g` | `--gran` [0-6]| Divide the entries for keys based on hour. |
-| `-r` | `--remote` [file] | Send collected data through remote defined by json file. |
+| `-r` | `--remote` [FILE] | Send collected data through remote defined by json file. |
 | `-h` | `--help` | Show help information |
 
 More detailed descriptions can be found running with --help flag.
 
-For the API and the `-g` flag check the section below.
+For the remote and the `-g` flag check the section below.
 
 `--gran`:
 
 This flag helps decide how detailed the data tracking will be for your activity, like keyboard and mouse use, across different times of the day. You can think of it as setting how “zoomed in” you want the time tracking to be:
 
-    Level 5: Breaks down your activity into 15-minute intervals.
-    Level 4: Shows activity in 30-minute intervals.
-    Level 3: Tracks in 1-hour intervals.
-    Level 2: Groups activity into 2-hour intervals.
-    Level 1: Summarizes in 4-hour intervals.
+    Level 5: Groups activity data into 15-minute intervals.
+    Level 4: Groups activity data into 30-minute intervals.
+    Level 3: Groups activity data into 1-hour intervals.
+    Level 2: Groups activity data into 2-hour intervals.
+    Level 1: Groups activity data into 4-hour intervals.
     Level 0: A single summary of your activity, with no breakdown by time.
 
 This way, you can choose how detailed or summarized you want the information to be!
+
+`--remote`:
+
+TODO:
+
 
 ### Contribute
 
@@ -108,8 +126,8 @@ If you are struggling to understand the code, contact me somewhere, and I will d
 - [x] Check weird shit on startup and i totally forgot about windows lol(I do not know what i needed to do but it seems to be done so.).
 - [x] Should not start again if life-monitor is already running.
 - [x] Wayland support.
-  - [ ] Read directly from /dev/input
-- [ ] Separate better blocking and non-blocking code.
+  - [x] Read directly from /dev/input
+- [x] Separate better blocking and non-blocking code.
 - [ ] Doc to remote flag.
 - [ ] Check CPU load with the new features. Now that i have more data in both table to go through it may impact the performance a little bit.
 - [ ] Maybe create a cool tui to display the collected data in a cool way to the user i guess, how would i do it on windows though?.

@@ -1,20 +1,9 @@
-use std::fs::OpenOptions;
+use std::fs::File;
 use std::io::Write;
+use std::path::PathBuf;
 use std::process;
 
-use anyhow::{Context, Result};
-
-#[cfg(unix)]
-use std::os::fd::AsRawFd;
-
-#[cfg(windows)]
-use std::os::windows::io::AsRawHandle;
-
-#[cfg(windows)]
-use windows::Win32::Storage::FileSystem::LockFile;
-
-#[cfg(windows)]
-use windows::Win32::Foundation::HANDLE;
+use anyhow::*;
 
 use crate::common::program_data_dir;
 
@@ -35,11 +24,11 @@ pub fn ensure_single_instance() -> Result<()> {
     Ok(())
 }
 
-use std::fs::File;
-use std::path::PathBuf;
-
 #[cfg(target_os = "linux")]
 fn acquire_lock(lock_f_path: &PathBuf) -> Result<File> {
+    use std::fs::OpenOptions;
+    use std::os::fd::AsRawFd;
+
     let mut file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -66,15 +55,24 @@ fn acquire_lock(lock_f_path: &PathBuf) -> Result<File> {
 }
 
 #[cfg(target_os = "windows")]
-fn acquire_lock(file: &std::fs::File) -> Result<()> {
-    let handle = file.as_raw_handle() as HANDLE;
+fn acquire_lock(lock_f_path: &PathBuf) -> Result<File> {
+    use std::fs::OpenOptions;
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Storage::FileSystem::LockFile;
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(lock_f_path)?;
+
+    let handle = windows::Win32::Foundation::HANDLE(file.as_raw_handle());
 
     // Lock the entire file
-    let result = unsafe { LockFile(handle, 0, 0, u32::MAX, u32::MAX) };
+    unsafe {
+        LockFile(handle, 0, 0, u32::MAX, u32::MAX)
+            .with_context(|| format!("Call to LockFile API failed for file: {file:?}"))?
+    };
 
-    if result == 0 {
-        return Err(Error::last_os_error());
-    }
-
-    Ok(())
+    Ok(file)
 }

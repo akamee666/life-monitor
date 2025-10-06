@@ -1,8 +1,7 @@
 use crate::common::*;
-use crate::keylogger::is_idle;
+use crate::platform::common::*;
+use crate::platform::linux::inputs::*;
 use crate::storage::backend::{DataStore, StorageBackend};
-
-use crate::platform::linux::wayland::*;
 
 use anyhow::*;
 use tokio::sync::mpsc::*;
@@ -26,6 +25,7 @@ pub async fn run_x11(
     loop {
         tokio::select! {
             _ = tick.tick() => {
+                // is_idle should be under common.rs since it can be used no matter if user is x11 or wayland
                 if !is_idle() {
                     handle_active_window(&x11_ctx, &mut proc_data).await?;
                 }
@@ -50,11 +50,14 @@ enum TrackingState {
     Idle(Window),
 }
 
+#[cfg(feature = "wayland")]
 pub async fn run_wayland(
     mut proc_data: ProcessTracker,
     update_interval: u32,
     backend: StorageBackend,
 ) -> Result<()> {
+    use crate::platform::linux::wayland::*;
+
     let (events_tx, mut events_rx) = channel::<FocusEvent>(240);
 
     // spawn Wayland listener
@@ -83,7 +86,7 @@ pub async fn run_wayland(
                     // we only care about this event if the window that lost focus
                     // is the one we are currently tracking as active.
                     if let TrackingState::Active(ref active_window, _) = state {
-                        if active_window.w_name == lost_window.w_name {
+                        if active_window.name == lost_window.name {
                             // The currently tracked window is the one that lost focus.
                             // We take the state, record its time, and set the new state to NoFocus.
                             if let TrackingState::Active(old_window, start_time) = std::mem::replace(&mut state, TrackingState::NoFocus) {
@@ -101,7 +104,7 @@ pub async fn run_wayland(
                     // the user was active, check if they've now become idle.
                     TrackingState::Active(ref window, start_time) => {
                         if is_idle() {
-                            info!("User is now idle, pausing timer for {:?}", window.w_class);
+                            info!("User is now idle, pausing timer for {:?}", window.class);
                             // record the time accumulated before becoming idle.
                             record_window_time(&mut proc_data.procs, window.clone(), start_time.elapsed());
                             // transition to the Idle state, preserving the window info.
@@ -111,7 +114,7 @@ pub async fn run_wayland(
                     // the user was idle, check if they've now become active.
                     TrackingState::Idle(ref window) => {
                         if !is_idle() {
-                            info!("User is active again, resuming timer for {:?}", window.w_class);
+                            info!("User is active again, resuming timer for {:?}", window.class);
                             // Transition back to Active, restarting the timer from now.
                             state = TrackingState::Active(window.clone(), Instant::now());
                         }
@@ -136,8 +139,11 @@ pub async fn run(update_interval: u32, backend: StorageBackend) -> Result<()> {
     let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok();
 
     if is_wayland {
+        info!("Wayland detected!");
+        #[cfg(feature = "wayland")]
         run_wayland(proc_data, update_interval, backend).await?;
     } else {
+        info!("X11 detected!");
         #[cfg(feature = "x11")]
         run_x11(proc_data, update_interval, backend).await?;
 

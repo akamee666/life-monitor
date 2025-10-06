@@ -12,6 +12,10 @@ use crate::platform::linux::common::*;
 
 #[cfg(target_os = "linux")]
 use crate::platform::linux::process;
+
+#[cfg(target_os = "windows")]
+use crate::platform::windows::inputs::*;
+
 #[cfg(feature = "remote")]
 use crate::storage::remote::*;
 
@@ -26,11 +30,10 @@ use clap::Parser;
 use tokio::task::JoinSet;
 use tracing::*;
 
-mod common;
-// bindgen generated
 #[cfg(target_os = "linux")]
 mod input_bindings;
-mod keylogger;
+
+mod common;
 mod platform;
 mod storage;
 mod utils;
@@ -39,6 +42,7 @@ mod utils;
 async fn main() {
     let args = Cli::parse();
     logger::init(args.debug);
+
     if let Err(err) = run(args).await {
         error!("Fatal Error: {err:?}");
     }
@@ -95,7 +99,15 @@ async fn run(mut args: Cli) -> Result<()> {
     };
 
     let mut tasks_set = JoinSet::new();
-    tasks_set.spawn(keylogger::run(
+    #[cfg(target_os = "linux")]
+    tasks_set.spawn(crate::platform::linux::inputs::run(
+        args.dpi,
+        db_update_interval + 5,
+        storage_backend.clone(),
+    ));
+
+    #[cfg(target_os = "windows")]
+    tasks_set.spawn(crate::platform::windows::inputs::run(
         args.dpi,
         db_update_interval + 5,
         storage_backend.clone(),
@@ -105,7 +117,7 @@ async fn run(mut args: Cli) -> Result<()> {
 
     #[cfg(target_os = "windows")]
     if !args.no_systray {
-        tasks_set.spawn(systray::init());
+        tasks_set.spawn(systray::init_tray());
     }
 
     // Need to wait the tasks finish, which they should'nt.

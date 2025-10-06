@@ -1,9 +1,13 @@
 //! This file is responsible to store functions, enums or
 //! structs that can be used for all platforms supported.
+#[cfg(target_os = "windows")]
+use tokio::net::windows;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::interval;
 use tokio::time::Duration;
+
+use std::collections::HashSet;
 
 use anyhow::Context;
 use anyhow::Result;
@@ -34,6 +38,8 @@ pub struct ProcessInfo {
 #[derive(Debug, Default, Clone, PartialEq)]
 #[cfg_attr(feature = "remote", derive(serde::Deserialize))]
 pub struct InputLogger {
+    #[cfg(target_os = "windows")]
+    pub w: WindowsSpecific,
     /// Total number of left mouse button clicks.
     pub left_clicks: u64,
     /// Total number of right mouse button clicks.
@@ -45,9 +51,10 @@ pub struct InputLogger {
     /// Total distance the cursor has moved, measured in pixels.
     pub pixels_traveled: u64,
     /// Total distance the cursor has moved, measured in centimeters.
-    pub cm_traveled: u64,
+    pub cm_traveled: f64,
     /// DPI
     pub mouse_dpi: u64,
+    // TODO: This should be traveled
     /// Total number of raw vertical scroll wheel clicks.
     pub vertical_scroll_clicks: u64,
     /// Total number of raw horizontal scroll wheel clicks.
@@ -58,6 +65,15 @@ pub struct InputLogger {
     pub horizontal_scroll_cm: f64,
 }
 
+#[derive(Debug, Default, Clone, PartialEq)]
+#[cfg_attr(feature = "remote", derive(serde::Deserialize))]
+pub struct WindowsSpecific {
+    pub pressed_keys_state: HashSet<u16>,
+    pub screen_width_mm: f64,
+    pub screen_height_mm: f64,
+    pub last_abs_x: Option<i32>,
+    pub last_abs_y: Option<i32>,
+}
 #[derive(Debug)]
 pub struct ProcessTracker {
     pub time: u64,
@@ -88,39 +104,39 @@ impl InputLogger {
         Ok(k)
     }
 
-    #[cfg(target_os = "windows")]
-    fn update_distance(&mut self, x: f64, y: f64) {
-        if let Some((last_x, last_y)) = self.last_pos {
-            let distance_moved = ((last_x - x).powi(2) + (last_y - y).powi(2)).sqrt();
-
-            let adjusted_distance = if self.mouse_settings.enhanced_pointer_precision {
-                self.apply_windows_acceleration(distance_moved)
-            } else {
-                distance_moved
-            };
-
-            self.pixels_moved += adjusted_distance;
-        }
-        self.last_pos = Some((x, y));
-    }
-
-    #[cfg(target_os = "windows")]
-    fn apply_windows_acceleration(&self, distance: f64) -> f64 {
-        let speed = distance; // Assume distance is proportional to speed
-        let threshold1 = self.mouse_settings.threshold as f64;
-        let threshold2 = self.mouse_settings.threshold2 as f64;
-        let acceleration = self.mouse_settings.acceleration as f64;
-
-        if speed > threshold2 {
-            distance * acceleration
-        } else if speed > threshold1 {
-            let t = (speed - threshold1) / (threshold2 - threshold1);
-            let accel_factor = 1.0 + t * (acceleration - 1.0);
-            distance * accel_factor
-        } else {
-            distance
-        }
-    }
+    // #[cfg(target_os = "windows")]
+    // fn update_distance(&mut self, x: f64, y: f64) {
+    //     if let Some((last_x, last_y)) = self.last_pos {
+    //         let distance_moved = ((last_x - x).powi(2) + (last_y - y).powi(2)).sqrt();
+    //
+    //         let adjusted_distance = if self.mouse_settings.enhanced_pointer_precision {
+    //             self.apply_windows_acceleration(distance_moved)
+    //         } else {
+    //             distance_moved
+    //         };
+    //
+    //         self.pixels_moved += adjusted_distance;
+    //     }
+    //     self.last_pos = Some((x, y));
+    // }
+    //
+    // #[cfg(target_os = "windows")]
+    // fn apply_windows_acceleration(&self, distance: f64) -> f64 {
+    //     let speed = distance; // Assume distance is proportional to speed
+    //     let threshold1 = self.mouse_settings.threshold as f64;
+    //     let threshold2 = self.mouse_settings.threshold2 as f64;
+    //     let acceleration = self.mouse_settings.acceleration as f64;
+    //
+    //     if speed > threshold2 {
+    //         distance * acceleration
+    //     } else if speed > threshold1 {
+    //         let t = (speed - threshold1) / (threshold2 - threshold1);
+    //         let accel_factor = 1.0 + t * (acceleration - 1.0);
+    //         distance * accel_factor
+    //     } else {
+    //         distance
+    //     }
+    // }
 }
 
 /// Spawns a new asynchronous task that sends a message on a channel at a regular interval.

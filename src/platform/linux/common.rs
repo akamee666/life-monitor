@@ -175,3 +175,18 @@ pub fn configure_startup(args: &Cli) -> Result<()> {
 
     Ok(())
 }
+
+pub fn uptime() -> Result<u64> {
+    let content =
+        fs::read_to_string("/proc/uptime").with_context(|| "Failed to read /proc/uptime")?;
+
+    content
+        .split_whitespace()
+        .next()
+        .with_context(|| "Unexpected /proc/uptime format")?
+        .split('.')
+        .next()
+        .ok_or(anyhow!("Failed to parse uptime string"))?
+        .parse()
+        .with_context(|| "Failed to parse uptime string")
+}
