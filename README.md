@@ -2,8 +2,6 @@
 
 `life-monitor` is a cross-platform Rust program for tracking computer activity on Linux and Windows. It counts keyboard and mouse usage, keeps track of which window is focused over time, and saves everything in a SQLite database. It was originally built for personal productivity analysis and blog posts, but the data can also be used for your own scripts, reports, or dashboards.
 
-At the moment, the Linux desktop experience is the most complete part of the project, including Wayland support and optional X11 window tracking.
-
 ## What it tracks
 
 - Keyboard key presses
@@ -12,11 +10,12 @@ At the moment, the Linux desktop experience is the most complete part of the pro
 - Vertical and horizontal scroll input
 - The name of the focused window and the app it belongs to over time
 
-The program does not have a built-in dashboard yet. Instead, it writes the collected information to a SQLite database and a log file. You can inspect the database with tools such as [DB Browser for SQLite](https://sqlitebrowser.org/).
+> [!NOTE]
+> The program does not have a built-in dashboard yet. Instead, it writes the collected information to a SQLite database and a log file. You can inspect the database with tools such as [DB Browser for SQLite](https://sqlitebrowser.org/). I just got back to working in this project and one of my plans is to create a TUI to display the data, so bear with me a bit.
 
-## Current status
+### Current status
 
-The project is usable, but it is still being improved. Saving data locally in SQLite is the most stable and complete workflow right now. Wayland support, remote API storage, and Linux autostart through `systemd --user` are all available, but there are still rough edges, and the remote feature should still be treated as beta.
+The project is usable, but it is still being improved. Saving data locally in SQLite is the most stable and complete workflow right now. Wayland support, remote API storage, and Linux autostart through `systemd --user` are all available, but there are still rough edges, and the remote feature should still be treated as beta since you need to create a API to receive it by yourself.
 
 ## Installing
 
@@ -41,9 +40,18 @@ For Fish:
 fish_add_path ~/.cargo/bin
 ```
 
-## Building from source
+For bash, paste the following code in `~/.bashrc`
 
-### 1. Install Rust
+```bash
+case ":$PATH:" in
+  *":$HOME/.cargo/bin:"*) ;;
+  *) export PATH="$HOME/.cargo/bin:$PATH" ;;
+esac
+```
+
+### Building from source instead
+
+#### 1. Install Rust
 
 Install Rust with [rustup](https://rustup.rs/) and make sure you have a recent stable toolchain:
 
@@ -52,37 +60,40 @@ rustup install stable
 rustup default stable
 ```
 
-### 2. Install system dependencies
+#### 2. Install system dependencies
 
 To build on Linux, you need SQLite, OpenSSL, `pkg-config`, a C compiler toolchain, and `libclang`. `libclang` is needed because this project generates Rust bindings for Linux input headers during the build.
 
 Examples:
 
-#### Arch Linux
+##### Arch Linux
 
 ```bash
 sudo pacman -S --needed base-devel clang sqlite openssl pkgconf wayland libx11 libxi libxtst
 ```
 
-#### Debian / Ubuntu
+##### Debian / Ubuntu
 
 ```bash
 sudo apt update
 sudo apt install -y build-essential clang libclang-dev pkg-config libsqlite3-dev libssl-dev libwayland-dev libx11-dev libxi-dev libxtst-dev
 ```
 
-#### Fedora
+##### Fedora
 
 ```bash
 sudo dnf install -y gcc gcc-c++ clang llvm-devel pkgconf-pkg-config sqlite-devel openssl-devel wayland-devel libX11-devel libXi-devel libXtst-devel
 ```
 
-### 3. Clone and build
+#### 3. Clone and build
 
 ```bash
 git clone https://github.com/akamee666/life-monitor.git
 cd life-monitor
 cargo build --release
+# Or build for windows
+rustup target add x86_64-pc-windows-gnu
+cargo build --target x86_64-pc-windows-gnu
 ```
 
 The compiled binary will be available at:
@@ -117,7 +128,7 @@ groups
 
 You should see `input` in the output.
 
-## Building with Nix
+### Building with Nix
 
 This repository includes a `flake.nix` file that sets up a ready-to-use development environment for Linux and also supports Windows cross-compilation.
 
@@ -125,15 +136,16 @@ Enter the development shell:
 
 ```bash
 nix develop
+cargo build
 ```
 
-Build the Linux package:
+Or build the Linux package:
 
 ```bash
 nix build .#linux
 ```
 
-Cross-build the Windows package:
+Or cross-build the Windows package:
 
 ```bash
 nix build .#windows
@@ -141,53 +153,12 @@ nix build .#windows
 
 The Nix development shell already provides the Rust toolchain, `libclang`, and the extra environment variables needed for bindgen to work correctly.
 
-## Windows cross-compilation without Nix
-
-If you are not using Nix, you will need to add the Windows target and install a MinGW-based toolchain yourself:
-
-```bash
-rustup target add x86_64-pc-windows-gnu
-cargo build --target x86_64-pc-windows-gnu
-```
-
 ## Usage
 
 Basic usage:
 
 ```bash
 life-monitor [OPTIONS]
-```
-
-### Common examples
-
-Run with debug logging and a short update interval:
-
-```bash
-life-monitor --debug --interval 5
-```
-
-Use 1600 DPI when estimating mouse distance:
-
-```bash
-life-monitor --dpi 1600
-```
-
-Store keyboard and mouse totals in one-hour time slots:
-
-```bash
-life-monitor --gran 3
-```
-
-Start with a new, empty database:
-
-```bash
-life-monitor --clear
-```
-
-Enable startup for the current user session:
-
-```bash
-life-monitor --enable-startup
 ```
 
 ### CLI options
@@ -215,22 +186,19 @@ The `--gran` flag controls how keyboard and mouse totals are split across the da
 - `4`: 30-minute buckets
 - `5`: 15-minute buckets
 
-Higher values give you a more detailed picture of when activity happened, but they also create more rows in the database each day.
+Higher values give you a more detailed picture of when activity happened.
 
 ## Remote backend
 
-Remote storage is optional. It is enabled by the `remote` Cargo feature.
+> [!WARNING]
+> This part of the project is such a bad solution to a simple problem that I don't know how do I came with this bullshit time ago. I'll write a proper feature that will allow a user with multiple systems/computers to merge the data and avoid duplicate or splitted analytics.
+
+It is enabled by the `remote` Cargo feature. You need a `.json` file that defines the url where the data will be changed and endpoints which will receive the data batch of the keys and process table. ~It's specially useful when you use more than one operational system on your computer.~
 
 Build with remote support:
 
 ```bash
 cargo build --features remote
-```
-
-Or, if `remote` is already in the default feature set for your local branch, simply run:
-
-```bash
-cargo build
 ```
 
 Then start the program with a JSON config file:
@@ -245,11 +213,12 @@ Example config:
 {
   "base_url": "https://api.example.com",
   "keys_endpoint": "/v1/keys",
-  "proc_endpoint": "/v1/proc"
+  "proc_endpoint": "/v1/proc",
+  "API_KEY": ""
 }
 ```
 
-If `api_key` is not included in the file, the program will try to read it from the `API_KEY` environment variable instead.
+If `api_key` is not included in the file, the program will try to read it from the `API_KEY` environment variable instead and if not found as well, the program will try to send the data anyway.
 
 What the remote mode expects:
 
@@ -257,8 +226,6 @@ What the remote mode expects:
 - Keyboard and mouse data is sent to `keys_endpoint`
 - Window/process data is sent to `proc_endpoint`
 - Responses are expected to be JSON
-
-This part of the project is still being refined. For now, it is best to treat it as beta until the API shape and documentation settle down.
 
 ## Data locations
 
