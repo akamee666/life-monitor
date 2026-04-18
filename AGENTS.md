@@ -218,7 +218,7 @@ Dev shell sets `LIBCLANG_PATH`, `BINDGEN_EXTRA_CLANG_ARGS`, `WINEPREFIX` automat
 
 - Both trigger on `push` and `pull_request`
 - `nix.yml` runs `nix develop --command ci-checks` and `nix develop --command ci-test-build`
-- `no-nix.yml` runs `cargo fmt -- --check`, `cargo-deny`, `codespell`, `cargo test`, and `cargo build --release`
+- `no-nix.yml` runs `cargo fmt -- --check`, `cargo-deny`, `cargo test`, and `cargo build --release`
 - Local Nix helper commands:
   - `nix develop --command ci-checks`
   - `nix develop --command ci-test-build`

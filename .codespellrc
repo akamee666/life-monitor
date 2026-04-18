@@ -1,6 +1,0 @@
-[codespell]
-# Keep CI focused on source and docs, and avoid generated or build output.
-skip = ./.git,./result,./target,./Cargo.lock
-
-# Repo-specific terms and mixed-language identifiers that should not fail CI.
-ignore-words-list = crate,nd

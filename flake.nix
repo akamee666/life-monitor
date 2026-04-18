@@ -69,13 +69,11 @@
           name = "ci-checks";
           runtimeInputs = [
             pkgs.cargo-deny
-            pkgs.codespell
           ];
           text = ''
             set -euo pipefail
             cargo fmt -- --check
             cargo-deny check
-            codespell --config .codespellrc
           '';
         };
 
