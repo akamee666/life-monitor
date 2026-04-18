@@ -188,6 +188,15 @@ Ticker pattern: `spawn_ticker(tx, Duration, Signals::DbUpdate)` sends signals to
 
 ---
 
+## Unresolved Product Gaps
+
+- There is still no built-in visual representation of the collected data. The project stores metrics in SQLite, but users must inspect the database manually or use external tools. A TUI is planned but does not exist yet.
+- Data is still installation-local by default. If one person uses `life-monitor` across multiple operating systems or multiple computers, each installation keeps its own database and the activity data remains split.
+- The current remote backend is optional and does not yet provide a complete, reliable sync story for merging one user's history across different machines or dual-boot setups.
+- There is no built-in import/export or merge workflow for combining data gathered from separate installations into one canonical dataset.
+
+---
+
 ## Build System
 
 **`build.rs`:**
@@ -258,6 +267,9 @@ cargo test                           # Run tests (storage/localdb has unit tests
 cargo clippy -- -D warnings          # Lint
 cargo fmt -- --check                 # Format check
 ./lint.sh                            # All three above
+nix develop --command ci-checks
+nix develop --command ci-test-build
+nix develop --command ci-local
 nix develop -c cargo test --features x11
 nix build .#linux
 nix build .#windows
