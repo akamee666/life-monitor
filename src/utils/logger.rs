@@ -2,6 +2,7 @@ use std::env;
 use std::fs;
 use std::fs::File;
 use std::io;
+use std::panic;
 use std::path::*;
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -165,4 +166,13 @@ fn create_file() -> Result<(File, PathBuf)> {
     };
 
     Ok(file)
+}
+
+pub fn setup_panic_hook() {
+    panic::set_hook(Box::new(|panic_info| {
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        error!("Application panicked!");
+        error!("Panic info: {:?}", panic_info);
+        error!("Backtrace: {:?}", backtrace);
+    }));
 }

@@ -40,6 +40,24 @@ fish_add_path /home/your-username/.cargo/bin/
 
 The compiled binary will be available at `./target/release/life-monitor`
 
+### Linux permissions
+
+On Linux, life-monitor reads raw keyboard and mouse events directly from `/dev/input`. Those devices are usually restricted, so your user normally needs to be in the `input` group or the program will fail to read inputs.
+
+Quick setup:
+
+```bash
+sudo usermod -aG input $USER
+```
+
+Then log out and log back in so your new group membership is applied. After that, confirm it worked with:
+
+```bash
+groups
+```
+
+You should see `input` in the list before running `life-monitor` again.
+
 <a id="compiling-windows"></a>
 Note: To cross compile, you may need to install additional packages. cross-compile with `cargo build --target x86_64-pc-windows-gnu` (assuming you've already added the `windows` toolchain via `rustup target add x86_64-pc-windows-gnu`).
 

@@ -42,6 +42,7 @@ mod utils;
 async fn main() {
     let args = Cli::parse();
     logger::init(args.debug);
+    logger::setup_panic_hook();
 
     if let Err(err) = run(args).await {
         error!("Fatal Error: {err:?}");
@@ -79,12 +80,6 @@ async fn run(mut args: Cli) -> Result<()> {
 
     let db_update_interval = args.interval.unwrap_or(300);
 
-    #[cfg(not(feature = "remote"))]
-    let storage_backend = StorageBackend::Local(
-        LocalDb::new(args.gran, args.clear)
-            .with_context(|| "Failed to initialize SQLite backend")?,
-    );
-
     // We choose the API backend if user provide a path of the config with remote flag
     #[cfg(feature = "remote")]
     let storage_backend = if let Some(ref config_path) = args.remote {
@@ -97,6 +92,12 @@ async fn run(mut args: Cli) -> Result<()> {
             .with_context(|| "Failed to initialize SQLite backend")?;
         StorageBackend::Local(db)
     };
+
+    #[cfg(not(feature = "remote"))]
+    let storage_backend = StorageBackend::Local(
+        LocalDb::new(args.gran, args.clear)
+            .with_context(|| "Failed to initialize SQLite backend")?,
+    );
 
     let mut tasks_set = JoinSet::new();
     #[cfg(target_os = "linux")]
