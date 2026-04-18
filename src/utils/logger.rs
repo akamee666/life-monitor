@@ -35,7 +35,7 @@ impl FormatTime for CustomTime {
 // called spy.log in different paths depending on the platform.
 pub fn init(enable_debug: bool) {
     if enable_debug {
-        // We disable logs from other crates that also use tracing so we don't polute the log file/stdout
+        // We disable logs from other crates that also use tracing so we don't pollute the log file/stdout
         // These unwraps are fine too
         let env_filter_std = EnvFilter::new("debug")
             .add_directive("hyper=off".parse().unwrap())

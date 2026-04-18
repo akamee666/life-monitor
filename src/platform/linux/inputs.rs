@@ -43,7 +43,7 @@ enum InputEvent {
 
 struct DiscoveredDevices {
     keyboards: Vec<File>,
-    mices: Vec<File>,
+    mice: Vec<File>,
 }
 
 // ioctl defs
@@ -66,7 +66,7 @@ ioctl_read_buf!(eviocgbit_rep, b'E', 0x20 + EV_REP, u8); // repeat
 fn discover_devices() -> Result<DiscoveredDevices> {
     info!("Scanning /dev/input for devices...");
     let entries = fs::read_dir("/dev/input")?;
-    let mut mices = Vec::new();
+    let mut mice = Vec::new();
     let mut keyboards = Vec::new();
 
     for entry in entries.flatten() {
@@ -92,18 +92,18 @@ fn discover_devices() -> Result<DiscoveredDevices> {
                 path.display(),
                 get_device_name(&current_device).unwrap_or("N/A".to_string())
             );
-            mices.push(current_device);
+            mice.push(current_device);
         }
     }
 
     if keyboards.is_empty() {
         anyhow::bail!("No keyboard devices found. This is required to run.");
     }
-    if mices.is_empty() {
+    if mice.is_empty() {
         anyhow::bail!("No mouse devices found. This is required to run.");
     }
 
-    Ok(DiscoveredDevices { keyboards, mices })
+    Ok(DiscoveredDevices { keyboards, mice })
 }
 
 // Returns the device name of a fd from: /dev/input/event*
@@ -298,7 +298,7 @@ async fn spawn_input_listeners(tx: mpsc::Sender<InputEvent>) -> Result<()> {
         });
     }
 
-    for file in devices.mices {
+    for file in devices.mice {
         nix::fcntl::fcntl(
             &file,
             nix::fcntl::FcntlArg::F_SETFL(nix::fcntl::OFlag::O_NONBLOCK),

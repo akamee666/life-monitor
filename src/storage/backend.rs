@@ -38,7 +38,7 @@ impl LocalDb {
         setup_database(&conn, req_gran_level)
             .context("Failed to properly setup sqlite database")?;
 
-        info!("Backend using SQLite sucessfully initialized.");
+        info!("Backend using SQLite successfully initialized.");
         Ok(Self {
             con: Arc::new(Mutex::new(conn)),
         })
@@ -124,7 +124,7 @@ impl DataStore for StorageBackend {
         }
     }
 
-    //TODO: Error handling in the ohter functosndfaobndasoi;hj
+    // TODO: Improve error handling in the other backend methods.
     async fn get_proc_data(&self) -> Result<Vec<ProcessInfo>> {
         match self {
             StorageBackend::Local(db) => db

@@ -38,7 +38,7 @@ pub struct Cli {
     )]
     pub no_systray: bool,
 
-    // WARN: Windows subsytem may fuck this.
+    // WARN: Windows subsystem may affect this.
     //https://stackoverflow.com/questions/43744379/can-i-conditionally-compile-my-rust-program-for-a-windows-subsystem
     #[arg(
         short = 'd',

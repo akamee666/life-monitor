@@ -173,7 +173,7 @@ pub async fn run(dpi: Option<u32>, update_interval: u32, backend: StorageBackend
             }
         }
     }
-    anyhow::bail!("Message Loop finished unexpectly!")
+    anyhow::bail!("Message Loop finished unexpectedly!")
 }
 
 // https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-rawmouse#remarks
@@ -182,7 +182,7 @@ fn process_event(inputs: &mut InputLogger, event: RawInputEvent) {
         RawInputEvent::Keyboard(event) => {
             let vkey = event.VKey;
 
-            // This is needed to not couting auto repeat.
+            // This is needed to avoid counting auto repeat.
             if (event.Flags & RI_KEY_BREAK as u16) == 0 {
                 // key down
                 if inputs.w.pressed_keys_state.insert(vkey) {

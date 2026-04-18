@@ -27,7 +27,7 @@ pub fn setup_database(conn: &Connection, requested_gran: Option<u32>) -> Result<
         // TODO: magic number
         let gran_level = requested_gran.unwrap_or(0);
         setup_keys_table(conn, gran_level).with_context(|| {
-            format!("Failed to initiliaze keys table with granularity level: {gran_level}")
+            format!("Failed to initialize keys table with granularity level: {gran_level}")
         })?;
         return Ok(());
     }

@@ -31,7 +31,7 @@ impl RemoteDb {
 
         let config = ApiConfig::from_file(config_path)?;
         let client = Client::builder().build()?;
-        info!("Backend using API sucessfully initialized.");
+        info!("Backend using API successfully initialized.");
         Ok(Self { client, config })
     }
 }
