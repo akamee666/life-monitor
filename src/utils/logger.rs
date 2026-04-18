@@ -2,6 +2,7 @@ use std::env;
 use std::fs;
 use std::fs::File;
 use std::io;
+use std::panic;
 use std::path::*;
 use std::sync::Arc;
 use std::time::SystemTime;

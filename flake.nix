@@ -31,7 +31,12 @@
     flake-utils.lib.eachDefaultSystem (
       system:
       let
-        pkgs = nixpkgs.legacyPackages.${system};
+        pkgs = import nixpkgs {
+          inherit system;
+          config.allowUnfree = true;
+        };
+
+        llvmPackages = pkgs.llvmPackages_21;
 
         buildToolchain =
           with fenix.packages.${system};
@@ -63,6 +68,7 @@
         unixBuildDeps = with pkgs; [
           sqlite
           gcc
+          linuxHeaders
           openssl
           pkg-config
           xorg.libX11
@@ -72,12 +78,27 @@
           # We need to be able to cross compile it inside a shell to have LSP capabilities
           pkgsCross.mingwW64.stdenv.cc
         ];
+
+        bindgenClangArgs = pkgs.lib.concatStringsSep " " [
+          (builtins.readFile "${pkgs.stdenv.cc}/nix-support/libc-crt1-cflags")
+          (builtins.readFile "${pkgs.stdenv.cc}/nix-support/libc-cflags")
+          (builtins.readFile "${pkgs.stdenv.cc}/nix-support/cc-cflags")
+          (builtins.readFile "${pkgs.stdenv.cc}/nix-support/libcxx-cxxflags")
+          "-isystem ${pkgs.linuxHeaders}/include"
+          (pkgs.lib.optionalString pkgs.stdenv.cc.isClang "-idirafter ${pkgs.stdenv.cc.cc}/lib/clang/${pkgs.lib.getVersion pkgs.stdenv.cc.cc}/include")
+          (pkgs.lib.optionalString pkgs.stdenv.cc.isGNU "-isystem ${pkgs.stdenv.cc.cc}/include/c++/${pkgs.lib.getVersion pkgs.stdenv.cc.cc} -isystem ${pkgs.stdenv.cc.cc}/include/c++/${pkgs.lib.getVersion pkgs.stdenv.cc.cc}/${pkgs.stdenv.hostPlatform.config} -idirafter ${pkgs.stdenv.cc.cc}/lib/gcc/${pkgs.stdenv.hostPlatform.config}/${pkgs.lib.getVersion pkgs.stdenv.cc.cc}/include")
+        ];
       in
       rec {
         packages = {
           linux = naerskLib.buildPackage {
             src = ./.;
-            nativeBuildInputs = unixBuildDeps;
+            nativeBuildInputs = unixBuildDeps ++ [
+              llvmPackages.libclang
+              llvmPackages.clang
+            ];
+            LIBCLANG_PATH = "${llvmPackages.libclang.lib}/lib";
+            BINDGEN_EXTRA_CLANG_ARGS = bindgenClangArgs;
           };
 
           windows = naerskLib.buildPackage {
@@ -116,8 +137,8 @@
           buildInputs = [
             # Required
             devToolchain
-            pkgs.llvmPackages_21.libclang
-            pkgs.llvmPackages_21.clang
+            llvmPackages.libclang
+            llvmPackages.clang
             pkgs.pkgsCross.mingwW64.sqlite
             pkgs.pkgsCross.mingwW64.windows.pthreads
             # Optional
@@ -126,10 +147,11 @@
             pkgs.cargo-watch
             pkgs.sqlitebrowser
             pkgs.wine64
+            pkgs.crush
           ];
 
           # Used by bindgen
-          LIBCLANG_PATH = "${pkgs.llvmPackages_21.libclang.lib}/lib";
+          LIBCLANG_PATH = "${llvmPackages.libclang.lib}/lib";
 
           # From: https://github.com/NixOS/nixpkgs/blob/1fab95f5190d087e66a3502481e34e15d62090aa/pkgs/applications/networking/browsers/firefox/common.nix#L247-L253
           # Set C flags for Rust's bindgen program. Unlike ordinary C
@@ -143,13 +165,7 @@
             [ ! -d "$WINEPREFIX" ] && wineboot
             export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${pkgs.lib.makeLibraryPath unixBuildDeps}";
             export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER="${pkgs.pkgsCross.mingwW64.stdenv.cc}/bin/x86_64-w64-mingw32-gcc"
-            export BINDGEN_EXTRA_CLANG_ARGS="$(< ${pkgs.stdenv.cc}/nix-support/libc-crt1-cflags) \
-              $(< ${pkgs.stdenv.cc}/nix-support/libc-cflags) \
-              $(< ${pkgs.stdenv.cc}/nix-support/cc-cflags) \
-              $(< ${pkgs.stdenv.cc}/nix-support/libcxx-cxxflags) \
-              ${pkgs.lib.optionalString pkgs.stdenv.cc.isClang "-idirafter ${pkgs.stdenv.cc.cc}/lib/clang/${pkgs.lib.getVersion pkgs.stdenv.cc.cc}/include"} \
-              ${pkgs.lib.optionalString pkgs.stdenv.cc.isGNU "-isystem ${pkgs.stdenv.cc.cc}/include/c++/${pkgs.lib.getVersion pkgs.stdenv.cc.cc} -isystem ${pkgs.stdenv.cc.cc}/include/c++/${pkgs.lib.getVersion pkgs.stdenv.cc.cc}/${pkgs.stdenv.hostPlatform.config} -idirafter ${pkgs.stdenv.cc.cc}/lib/gcc/${pkgs.stdenv.hostPlatform.config}/${pkgs.lib.getVersion pkgs.stdenv.cc.cc}/include"} \
-            "
+            export BINDGEN_EXTRA_CLANG_ARGS="${bindgenClangArgs}"
           '';
         };
       }

@@ -1,5 +1,6 @@
 use crate::common::*;
 use crate::platform::common::*;
+use crate::platform::linux::common::*;
 use crate::platform::linux::inputs::*;
 use crate::storage::backend::{DataStore, StorageBackend};
 
@@ -136,21 +137,52 @@ pub async fn run_wayland(
 
 pub async fn run(update_interval: u32, backend: StorageBackend) -> Result<()> {
     let proc_data = ProcessTracker::new(&backend).await?;
-    let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok();
+    match detect_display_server() {
+        DisplayServer::Wayland => {
+            info!(
+                "Wayland detected via environment. WAYLAND_DISPLAY={:?}, XDG_SESSION_TYPE={:?}, HYPRLAND_INSTANCE_SIGNATURE={:?}, DISPLAY={:?}",
+                std::env::var("WAYLAND_DISPLAY").ok(),
+                std::env::var("XDG_SESSION_TYPE").ok(),
+                std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok(),
+                std::env::var("DISPLAY").ok(),
+            );
+            #[cfg(feature = "wayland")]
+            run_wayland(proc_data, update_interval, backend).await?;
 
-    if is_wayland {
-        info!("Wayland detected!");
-        #[cfg(feature = "wayland")]
-        run_wayland(proc_data, update_interval, backend).await?;
-    } else {
-        info!("X11 detected!");
-        #[cfg(feature = "x11")]
-        run_x11(proc_data, update_interval, backend).await?;
+            #[cfg(not(feature = "wayland"))]
+            {
+                error!("Running under Wayland but binary was built without `wayland` feature");
+                return Err(anyhow!("Wayland feature not enabled"));
+            }
+        }
+        DisplayServer::X11 => {
+            info!(
+                "X11 detected via environment. DISPLAY={:?}, XDG_SESSION_TYPE={:?}, WAYLAND_DISPLAY={:?}",
+                std::env::var("DISPLAY").ok(),
+                std::env::var("XDG_SESSION_TYPE").ok(),
+                std::env::var("WAYLAND_DISPLAY").ok(),
+            );
+            #[cfg(feature = "x11")]
+            run_x11(proc_data, update_interval, backend).await?;
 
-        #[cfg(not(feature = "x11"))]
-        {
-            error!("Running under X11 but binary was built without `x11` feature, rebuild it with: `cargo build --features x11`");
-            return Err(anyhow!("X11 feature not enabled"));
+            #[cfg(not(feature = "x11"))]
+            {
+                error!("Running under X11 but binary was built without `x11` feature, rebuild it with: `cargo build --features x11`");
+                return Err(anyhow!("X11 feature not enabled"));
+            }
+        }
+        DisplayServer::Unknown => {
+            error!(
+                "Could not determine graphical session type from environment. WAYLAND_DISPLAY={:?}, WAYLAND_SOCKET={:?}, XDG_SESSION_TYPE={:?}, HYPRLAND_INSTANCE_SIGNATURE={:?}, DISPLAY={:?}",
+                std::env::var("WAYLAND_DISPLAY").ok(),
+                std::env::var("WAYLAND_SOCKET").ok(),
+                std::env::var("XDG_SESSION_TYPE").ok(),
+                std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok(),
+                std::env::var("DISPLAY").ok(),
+            );
+            return Err(anyhow!(
+                "Failed to detect whether the session is Wayland or X11"
+            ));
         }
     }
 

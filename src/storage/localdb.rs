@@ -584,79 +584,204 @@ pub fn open_con() -> Result<Connection> {
 #[allow(dead_code)]
 mod tests {
     use super::*;
-    use rusqlite::Result as SqlResult;
+    use anyhow::Result;
 
-    fn setup_database(data: &[&str]) -> SqlResult<Connection> {
-        let conn = Connection::open_in_memory()?;
-        insert_data(&conn, data)?;
-        Ok(conn)
+    fn in_memory_connection() -> rusqlite::Result<Connection> {
+        Connection::open_in_memory()
     }
 
-    fn insert_data(conn: &Connection, data: &[&str]) -> SqlResult<()> {
-        conn.execute(
-            "CREATE TABLE keys (id INTEGER PRIMARY KEY, timestamp TEXT)",
-            [],
-        )?;
-        let mut stmt = conn.prepare("INSERT INTO keys (timestamp) VALUES (?)")?;
-        for &timestamp in data {
-            stmt.execute([timestamp])?;
+    fn key_timestamps(conn: &Connection) -> rusqlite::Result<Vec<String>> {
+        let mut stmt = conn.prepare("SELECT timestamp FROM keys ORDER BY id")?;
+        let rows = stmt.query_map([], |row| row.get(0))?;
+        rows.collect()
+    }
+
+    /// Verifies that each supported granularity level maps to the expected row count
+    /// and bucket interval, because most key-table behavior depends on this mapping.
+    #[test]
+    fn match_gran_level_returns_expected_values() {
+        let cases = [
+            (0, (1, 1440)),
+            (1, (6, 240)),
+            (2, (12, 120)),
+            (3, (24, 60)),
+            (4, (48, 30)),
+            (5, (96, 15)),
+        ];
+
+        for (granularity, expected) in cases {
+            assert_eq!(match_gran_level(granularity), expected);
         }
+    }
+
+    /// Verifies that `setup_database` creates the correct number of buckets and timestamps
+    /// for a non-default granularity level.
+    #[test]
+    fn setup_database_creates_expected_key_buckets() -> Result<()> {
+        let conn = in_memory_connection()?;
+
+        setup_database(&conn, Some(2))?;
+
+        assert_eq!(find_granlevel(&conn)?, (12, 120, 2));
+        let timestamps = key_timestamps(&conn)?;
+        assert_eq!(timestamps.len(), 12);
+        assert_eq!(timestamps.first().unwrap(), "00:00");
+        assert_eq!(timestamps.last().unwrap(), "22:00");
+
         Ok(())
     }
 
-    // #[test]
-    // fn test_exact_match() -> SqlResult<()> {
-    //     let conn = setup_database(&["08:00", "12:00", "16:00", "20:00"])?;
-    //     let nearest = find_nearest_time(&conn, "12:00")?;
-    //     assert_eq!(nearest, Some("12:00".to_string()));
-    //     Ok(())
-    // }
-    //
-    // #[test]
-    // fn test_closer_to_future_timestamp() -> SqlResult<()> {
-    //     let conn = setup_database(&["08:00", "12:00", "16:00", "20:00"])?;
-    //     let nearest = find_nearest_time(&conn, "11:55")?;
-    //     assert_eq!(nearest, Some("12:00".to_string()));
-    //     Ok(())
-    // }
-    //
-    // #[test]
-    // fn test_closer_to_past_timestamp() -> SqlResult<()> {
-    //     let conn = setup_database(&["08:00", "12:00", "16:00", "20:00"])?;
-    //     let nearest = find_nearest_time(&conn, "13:05")?;
-    //     assert_eq!(nearest, Some("12:00".to_string()));
-    //     Ok(())
-    // }
-    //
-    // #[test]
-    // fn test_15_minute_intervals() -> SqlResult<()> {
-    //     let conn = setup_database(&[
-    //         "00:00", "00:15", "00:30", "00:45", "01:00", "01:15", "01:30", "01:45",
-    //     ])?;
-    //     let nearest = find_nearest_time(&conn, "00:10")?;
-    //     assert_eq!(nearest, Some("00:15".to_string()));
-    //
-    //     let nearest = find_nearest_time(&conn, "00:25")?;
-    //     assert_eq!(nearest, Some("00:30".to_string()));
-    //
-    //     let nearest = find_nearest_time(&conn, "01:50")?;
-    //     assert_eq!(nearest, Some("01:45".to_string()));
-    //
-    //     Ok(())
-    // }
-    //
-    // #[test]
-    // fn test_minute_intervals() -> SqlResult<()> {
-    //     let conn = setup_database(&["12:00", "12:01", "12:02", "12:03", "12:04", "12:05"])?;
-    //     let nearest = find_nearest_time(&conn, "12:02")?;
-    //     assert_eq!(nearest, Some("12:02".to_string()));
-    //
-    //     let nearest = find_nearest_time(&conn, "12:02:30")?;
-    //     assert_eq!(nearest, Some("12:03".to_string()));
-    //
-    //     let nearest = find_nearest_time(&conn, "12:00:30")?;
-    //     assert_eq!(nearest, Some("12:01".to_string()));
-    //
-    //     Ok(())
-    // }
+    /// Verifies that `find_bucket` floors arbitrary timestamps into the start of the
+    /// current interval, including exact boundaries and end-of-day values.
+    #[test]
+    fn find_bucket_floors_times_into_expected_intervals() {
+        assert_eq!(find_bucket("10:30", 30), Some("10:30".to_string()));
+        assert_eq!(find_bucket("10:59", 30), Some("10:30".to_string()));
+        assert_eq!(find_bucket("23:59", 15), Some("23:45".to_string()));
+        assert_eq!(find_bucket("00:00", 240), Some("00:00".to_string()));
+    }
+
+    /// Verifies that the stored row count is translated back into the correct granularity
+    /// metadata, because writes rely on this to choose the target key bucket.
+    #[test]
+    fn find_granlevel_detects_existing_table_shape() -> Result<()> {
+        let conn = in_memory_connection()?;
+        setup_keys_table(&conn, 4)?;
+
+        assert_eq!(find_granlevel(&conn)?, (48, 30, 4));
+
+        Ok(())
+    }
+
+    /// Verifies that `update_keyst` writes the latest cumulative metrics into the matching
+    /// database bucket instead of touching unrelated rows.
+    #[test]
+    fn update_keyst_updates_the_current_bucket() -> Result<()> {
+        let conn = in_memory_connection()?;
+        setup_keys_table(&conn, 0)?;
+
+        let logger = InputLogger {
+            left_clicks: 3,
+            right_clicks: 2,
+            middle_clicks: 1,
+            key_presses: 42,
+            cm_traveled: 12.5,
+            ..Default::default()
+        };
+
+        update_keyst(&conn, &logger)?;
+
+        let stored = get_keyst(&conn)?;
+        assert_eq!(stored.left_clicks, 3);
+        assert_eq!(stored.right_clicks, 2);
+        assert_eq!(stored.middle_clicks, 1);
+        assert_eq!(stored.key_presses, 42);
+        assert_eq!(stored.cm_traveled, 12.5);
+
+        Ok(())
+    }
+
+    /// Verifies that `get_keyst` returns persisted metrics for the first bucket so the
+    /// in-memory logger can restore its previous totals on startup.
+    #[test]
+    fn get_keyst_returns_persisted_metrics() -> Result<()> {
+        let conn = in_memory_connection()?;
+        setup_keys_table(&conn, 0)?;
+
+        conn.execute(
+            "UPDATE keys
+             SET left_clicks = 9,
+                 right_clicks = 8,
+                 middle_clicks = 7,
+                 key_presses = 6,
+                 cm_traveled = 5.5
+             WHERE timestamp = '00:00';",
+            [],
+        )?;
+
+        let stored = get_keyst(&conn)?;
+        assert_eq!(stored.left_clicks, 9);
+        assert_eq!(stored.right_clicks, 8);
+        assert_eq!(stored.middle_clicks, 7);
+        assert_eq!(stored.key_presses, 6);
+        assert_eq!(stored.cm_traveled, 5.5);
+
+        Ok(())
+    }
+
+    /// Verifies that process records are inserted on first write and updated on later writes,
+    /// which protects the main upsert behavior for focused-window tracking.
+    #[test]
+    fn update_proct_upserts_process_entries() -> Result<()> {
+        let conn = in_memory_connection()?;
+        conn.execute(
+            "CREATE TABLE procs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                window_name TEXT NOT NULL,
+                time_focused INTEGER NOT NULL,
+                window_class TEXT NOT NULL
+            );",
+            [],
+        )?;
+
+        update_proct(
+            &conn,
+            &[ProcessInfo {
+                w_name: "Editor".to_string(),
+                w_time: 10,
+                w_class: "nvim".to_string(),
+            }],
+        )?;
+
+        update_proct(
+            &conn,
+            &[ProcessInfo {
+                w_name: "Editor".to_string(),
+                w_time: 25,
+                w_class: "nvim".to_string(),
+            }],
+        )?;
+
+        let rows = get_proct(&conn)?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].w_name, "Editor");
+        assert_eq!(rows[0].w_time, 25);
+        assert_eq!(rows[0].w_class, "nvim");
+
+        Ok(())
+    }
+
+    /// Verifies that multiple persisted process rows can be read back without losing order
+    /// or field values, because startup restores the tracked process list from this query.
+    #[test]
+    fn get_proct_returns_all_persisted_processes() -> Result<()> {
+        let conn = in_memory_connection()?;
+        conn.execute(
+            "CREATE TABLE procs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                window_name TEXT NOT NULL,
+                time_focused INTEGER NOT NULL,
+                window_class TEXT NOT NULL
+            );",
+            [],
+        )?;
+
+        conn.execute(
+            "INSERT INTO procs (window_name, time_focused, window_class) VALUES ('Browser', 15, 'firefox');",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO procs (window_name, time_focused, window_class) VALUES ('Editor', 30, 'nvim');",
+            [],
+        )?;
+
+        let rows = get_proct(&conn)?;
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].w_name, "Browser");
+        assert_eq!(rows[0].w_time, 15);
+        assert_eq!(rows[1].w_name, "Editor");
+        assert_eq!(rows[1].w_class, "nvim");
+
+        Ok(())
+    }
 }

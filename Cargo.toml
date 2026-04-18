@@ -15,7 +15,7 @@ name = "life-monitor"
 path = "src/main.rs"
 
 [features]
-default = ["wayland"]
+default = ["wayland", "remote"]
 x11 = ["x11rb"]
 wayland = ["wayland-client", "wayland-protocols-wlr"]
 remote = ["reqwest", "serde_json", "serde"]
@@ -67,5 +67,3 @@ embed-resource = "2.3"
 
 [target.'cfg(target_os = "linux")'.build-dependencies]
 bindgen = "0.72.1"
-
-

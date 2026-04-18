@@ -67,6 +67,7 @@ pub struct InputLogger {
 
 #[derive(Debug, Default, Clone, PartialEq)]
 #[cfg_attr(feature = "remote", derive(serde::Deserialize))]
+#[allow(dead_code)]
 pub struct WindowsSpecific {
     pub pressed_keys_state: HashSet<u16>,
     pub screen_width_mm: f64,
@@ -75,6 +76,7 @@ pub struct WindowsSpecific {
     pub last_abs_y: Option<i32>,
 }
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct ProcessTracker {
     pub time: u64,
     pub last_wname: String,
