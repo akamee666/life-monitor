@@ -163,8 +163,8 @@ where
 
 /// Returns a platform-specific path for storing program-related files and ensures the directory exists.
 ///
-/// On Windows: `%LOCALAPPDATA%\akame_monitor`  
-/// On Linux: `$HOME/.local/share/akame_monitor`  
+/// On Windows: `%LOCALAPPDATA%\akame_monitor`
+/// On Linux: `$HOME/.local/share/akame_monitor`
 ///
 /// # Errors
 /// Returns an error if the required environment variable is not set, if the OS is unsupported,

@@ -1,16 +1,15 @@
-name: CI
+name: nix
 
 on:
   push:
   pull_request:
 
 jobs:
-  quality:
-    name: Quality Checks
+  checks:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Check out repository
         uses: actions/checkout@v4
 
       - name: Install Nix
@@ -19,19 +18,18 @@ jobs:
           extra_nix_config: |
             experimental-features = nix-command flakes
 
-      - name: Run format, clippy and tests
-        run: |
-          nix develop -c cargo fmt -- --check
-          nix develop -c cargo clippy -- -D warnings
-          nix develop -c cargo test
-          nix develop -c cargo test --features x11
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
 
-  package-build:
-    name: Linux Package Build
+      - name: Run Nix-based checks
+        run: nix develop --command ci-checks
+
+  test-and-build:
     runs-on: ubuntu-latest
+    needs: checks
 
     steps:
-      - name: Checkout repository
+      - name: Check out repository
         uses: actions/checkout@v4
 
       - name: Install Nix
@@ -40,5 +38,8 @@ jobs:
           extra_nix_config: |
             experimental-features = nix-command flakes
 
-      - name: Build Linux package
-        run: nix build .#linux
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run tests and release build inside Nix shell
+        run: nix develop --command ci-test-build

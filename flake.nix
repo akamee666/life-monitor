@@ -65,6 +65,39 @@
           rustc = buildToolchain;
         };
 
+        ciChecks = pkgs.writeShellApplication {
+          name = "ci-checks";
+          runtimeInputs = [
+            pkgs.cargo-deny
+            pkgs.codespell
+          ];
+          text = ''
+            set -euo pipefail
+            cargo fmt -- --check
+            cargo-deny check
+            codespell --config .codespellrc
+          '';
+        };
+
+        ciTestBuild = pkgs.writeShellApplication {
+          name = "ci-test-build";
+          text = ''
+            set -euo pipefail
+            cargo test
+            cargo build --release
+          '';
+        };
+
+        ciLocal = pkgs.writeShellApplication {
+          name = "ci-local";
+          runtimeInputs = [ ciChecks ciTestBuild ];
+          text = ''
+            set -euo pipefail
+            ci-checks
+            ci-test-build
+          '';
+        };
+
         unixBuildDeps = with pkgs; [
           sqlite
           gcc
@@ -139,8 +172,13 @@
             devToolchain
             llvmPackages.libclang
             llvmPackages.clang
+            pkgs.cargo-deny
+            pkgs.codespell
             pkgs.pkgsCross.mingwW64.sqlite
             pkgs.pkgsCross.mingwW64.windows.pthreads
+            ciChecks
+            ciTestBuild
+            ciLocal
             # Optional
             pkgs.evtest
             pkgs.rust-analyzer

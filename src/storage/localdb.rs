@@ -121,7 +121,7 @@ fn setup_keys_table(conn: &Connection, g_level: u32) -> Result<()> {
     let mut current_time = today.and_hms_opt(0, 0, 0).unwrap();
     let mut stmt = conn
         .prepare_cached(
-            "INSERT INTO keys (left_clicks, right_clicks, middle_clicks, key_presses, cm_traveled, timestamp) 
+            "INSERT INTO keys (left_clicks, right_clicks, middle_clicks, key_presses, cm_traveled, timestamp)
          VALUES (0, 0, 0, 0, 0, ?)",
         )
         .with_context(|| "Failed to prepare cached query to insert rows in keys table")?;
@@ -356,7 +356,7 @@ fn parse_to_lower_gran(conn: &Connection, new_gran: u32, rows_to_merge: u32) -> 
         format!("Failed to create new keys table with granularity level: {new_gran}")
     })?;
 
-    let q = "INSERT INTO keys (left_clicks, right_clicks, middle_clicks, key_presses, cm_traveled,  timestamp) 
+    let q = "INSERT INTO keys (left_clicks, right_clicks, middle_clicks, key_presses, cm_traveled,  timestamp)
          VALUES (0, 0, 0, 0,  0, ?)";
 
     for row in aggregated_rows {

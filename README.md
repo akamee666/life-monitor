@@ -1,151 +1,317 @@
-# Life Monitor in Rust
+# Life Monitor
 
-The main goal of this project is to create a mini spyware on my own to monitor what I'm doing daily and create some graphs about it to use in a personal blog. This idea comes from this post that I found interesting on Twitter: [Vin Twitter post](https://x.com/vin_acct/status/1807973375014506597)
+`life-monitor` is a cross-platform Rust program for tracking computer activity on Linux and Windows. It counts keyboard and mouse usage, keeps track of which window is focused over time, and saves everything in a SQLite database. It was originally built for personal productivity analysis and blog posts, but the data can also be used for your own scripts, reports, or dashboards.
 
-[Here](https://x.com/vin_acct/status/1876088761664385346) is a new thread from her explaining a little more about her tool.
+At the moment, the Linux desktop experience is the most complete part of the project, including Wayland support and optional X11 window tracking.
 
-### Installing
+## What it tracks
 
-You can install life-monitor easily by using cargo install or using github releases, although i am not sure how up to date it is compared to current commits so i recommend you to build from source :3
+- Keyboard key presses
+- Mouse clicks
+- Mouse travel distance in pixels and estimated centimeters
+- Vertical and horizontal scroll input
+- The name of the focused window and the app it belongs to over time
 
-1. Installing and running.
+The program does not have a built-in dashboard yet. Instead, it writes the collected information to a SQLite database and a log file. You can inspect the database with tools such as [DB Browser for SQLite](https://sqlitebrowser.org/).
+
+## Current status
+
+The project is usable, but it is still being improved. Saving data locally in SQLite is the most stable and complete workflow right now. Wayland support, remote API storage, and Linux autostart through `systemd --user` are all available, but there are still rough edges, and the remote feature should still be treated as beta.
+
+## Installing
+
+You can install `life-monitor` with Cargo:
 
 ```bash
 cargo install life-monitor
 life-monitor
 ```
 
-Binary will be available at `~/.cargo/bin/life-monitor` 
-
-If you tried to run and received `unknow command`, mostly likely you don't have Cargo variable in your path, you can add it running the following command.
-
-1. Fish Shell
+The binary is typically installed to:
 
 ```bash
-fish_add_path /home/your-username/.cargo/bin/
+~/.cargo/bin/life-monitor
 ```
 
-### Building from source
+If `life-monitor` is not found after installation, make sure Cargo's bin directory is in your `PATH`.
+
+For Fish:
 
 ```bash
-    sudo pacman -S sqlite
-    sudo pacman -S openssl
+fish_add_path ~/.cargo/bin
 ```
 
-- Install [rustup](https://rustup.rs/) and [cargo](https://github.com/rust-lang/cargo/)
-- Install and configure the default toolchain with `rustup install stable` and `rustup default stable`
-- Install the equivalent of the `libssl-dev` package using your package manager
-- Clone this repository and enter it
-- Run `cargo build --release` or `cargo run`
+## Building from source
 
-The compiled binary will be available at `./target/release/life-monitor`
+### 1. Install Rust
 
-### Linux permissions
+Install Rust with [rustup](https://rustup.rs/) and make sure you have a recent stable toolchain:
 
-On Linux, life-monitor reads raw keyboard and mouse events directly from `/dev/input`. Those devices are usually restricted, so your user normally needs to be in the `input` group or the program will fail to read inputs.
+```bash
+rustup install stable
+rustup default stable
+```
 
-Quick setup:
+### 2. Install system dependencies
+
+To build on Linux, you need SQLite, OpenSSL, `pkg-config`, a C compiler toolchain, and `libclang`. `libclang` is needed because this project generates Rust bindings for Linux input headers during the build.
+
+Examples:
+
+#### Arch Linux
+
+```bash
+sudo pacman -S --needed base-devel clang sqlite openssl pkgconf wayland libx11 libxi libxtst
+```
+
+#### Debian / Ubuntu
+
+```bash
+sudo apt update
+sudo apt install -y build-essential clang libclang-dev pkg-config libsqlite3-dev libssl-dev libwayland-dev libx11-dev libxi-dev libxtst-dev
+```
+
+#### Fedora
+
+```bash
+sudo dnf install -y gcc gcc-c++ clang llvm-devel pkgconf-pkg-config sqlite-devel openssl-devel wayland-devel libX11-devel libXi-devel libXtst-devel
+```
+
+### 3. Clone and build
+
+```bash
+git clone https://github.com/akamee666/life-monitor.git
+cd life-monitor
+cargo build --release
+```
+
+The compiled binary will be available at:
+
+```bash
+./target/release/life-monitor
+```
+
+For a quick local run:
+
+```bash
+cargo run -- --debug
+```
+
+## Linux permissions
+
+On Linux, `life-monitor` reads keyboard and mouse events directly from `/dev/input`. Those device files are usually protected, so your user account normally needs to be in the `input` group.
+
+Without that permission, the program may start but still fail to read your input devices.
+
+Add your user to the group:
 
 ```bash
 sudo usermod -aG input $USER
 ```
 
-Then log out and log back in so your new group membership is applied. After that, confirm it worked with:
+Then log out and log back in so the new group membership is applied. After that, verify it with:
 
 ```bash
 groups
 ```
 
-You should see `input` in the list before running `life-monitor` again.
+You should see `input` in the output.
 
-<a id="compiling-windows"></a>
-Note: To cross compile, you may need to install additional packages. cross-compile with `cargo build --target x86_64-pc-windows-gnu` (assuming you've already added the `windows` toolchain via `rustup target add x86_64-pc-windows-gnu`).
+## Building with Nix
 
-### Building using Nix
+This repository includes a `flake.nix` file that sets up a ready-to-use development environment for Linux and also supports Windows cross-compilation.
 
-This project provides a `flake.nix` which should allow you to build it for linux and cross compile it for windows.
+Enter the development shell:
 
 ```bash
-cd life-monitor
-nix build .#windows
-nix build .#default
+nix develop
 ```
 
-### Usage
+Build the Linux package:
 
-Usage: life-monitor [OPTIONS]
+```bash
+nix build .#linux
+```
 
-| Flag | Long Form | Description |
-| --- | --- | --- |
-| `-t` | `--interval` [SECS] | Set interval for data sending (secs) |
-| `-k` | `--no-keys `| Disable key/mouse tracking |
-| `-w` | `--no-window`  | Disable window-based tracking |
-| `-d` | `--debug` | Enable debug mode |
-| `-p` | `--dpi` [DPI] | Specify mouse DPI for tracking |
-| `-c` | `--clear`  | Clear existing data, start new |
-| `-g` | `--gran` [0-6]| Divide the entries for keys based on hour. |
-| `-r` | `--remote` [FILE] | Send collected data through remote defined by json file. |
-| `-h` | `--help` | Show help information |
+Cross-build the Windows package:
 
-More detailed descriptions can be found running with --help flag.
+```bash
+nix build .#windows
+```
 
-For the remote and the `-g` flag check the section below.
+The Nix development shell already provides the Rust toolchain, `libclang`, and the extra environment variables needed for bindgen to work correctly.
 
-`--gran`:
+## Windows cross-compilation without Nix
 
-This flag helps decide how detailed the data tracking will be for your activity, like keyboard and mouse use, across different times of the day. You can think of it as setting how “zoomed in” you want the time tracking to be:
+If you are not using Nix, you will need to add the Windows target and install a MinGW-based toolchain yourself:
 
-    Level 5: Groups activity data into 15-minute intervals.
-    Level 4: Groups activity data into 30-minute intervals.
-    Level 3: Groups activity data into 1-hour intervals.
-    Level 2: Groups activity data into 2-hour intervals.
-    Level 1: Groups activity data into 4-hour intervals.
-    Level 0: A single summary of your activity, with no breakdown by time.
+```bash
+rustup target add x86_64-pc-windows-gnu
+cargo build --target x86_64-pc-windows-gnu
+```
 
-This way, you can choose how detailed or summarized you want the information to be!
+## Usage
 
-`--remote`:
+Basic usage:
 
-TODO:
+```bash
+life-monitor [OPTIONS]
+```
 
+### Common examples
 
-### Contribute
+Run with debug logging and a short update interval:
 
-The main functionalities of this program is finished, not entirely because i keep finding new things to add to it though. I'll continue working on it and adding features if requested, of course. Go ahead if you want to try it, the worst that can happen is incorrect data being sent to the database or the program crashing. Also, if you think you've found a bug, I would be happy if you report it to me so I can fix it as soon as possible. If you want some kind of feature, you can fork and open a PR, and I will accept it as soon as possible, or just clone and do whatever you want. One people ask me if it was okay to clone the repo to learning purpose, so I did add some comments to help. If you want some kind of feature but don't want to code it, contact me or open an issue, and I'll try to add it as soon as possible.
+```bash
+life-monitor --debug --interval 5
+```
 
-### What life-monitor does
+Use 1600 DPI when estimating mouse distance:
 
-Life-monitor will start listening for inputs and requesting for the current active window, it will save how many keys and buttons you press in your keyboard and mouse, it also tries to measure how much you are moving your mouse in real measures. For the active window, it saves its `name` and `class` using `X11` or `WINAPI` and keep increasing a timer while the window is active. Life-monitor will save all data it has collected to different paths depending if you are on Windows or Linux using `SQLITE`. A log file will also be found at these paths with the name `spy.log`.
+```bash
+life-monitor --dpi 1600
+```
 
-For Windows it will be saved at: `%LOCALAPPDATA%\akame_monitor\data.db`
+Store keyboard and mouse totals in one-hour time slots:
 
-For Linux it will be saved at: `/home/user/.local/share/akame_monitor/`
+```bash
+life-monitor --gran 3
+```
 
-You can visualize the collected data using [SQLite Browser](https://sqlitebrowser.org/).
+Start with a new, empty database:
 
-After that, it's all up to you to use the data collected however you want. I planning to create a tui or gui to it though, so it can be more user-friendly. You can stop its process by using the system tray if you are on Windows or using kill command if you are on Linux. If you have the feeling that the data isn't accurate, which it probably will be for mouse distance, please open an issue or contact me somewhere, and I'll try to fix it as soon as possible. Your AV will most likely flag it as a malware(which is reasonable) due to its functionalities, but will NOT steal or send your data to somewhere else. You can read the code and confirm it yourself or debug it, but I do not recommend trying to debug it though, you can check this [issue](https://github.com/Narsil/rdev/issues/128) from the library that it's used to listen to inputs, most likely the "problem" is with the `SetWindowsHookEx` as you can see [here](https://developercommunity.visualstudio.com/t/debugging-with-keyboard-very-slow/42018).
+```bash
+life-monitor --clear
+```
 
-If you are struggling to understand the code, contact me somewhere, and I will do my best to explain it to you.
+Enable startup for the current user session:
 
-### To do
+```bash
+life-monitor --enable-startup
+```
 
-- [x]  Auto start argument.
-- [x]  Check and print to Stdout if startup is enabled.
-- [x]  Create option to save input based on time.
-  - [x]  Create flag and descriptions.
-  - [x]  Change how database is structured based on the level.
-- [x] Space one or two seconds the interval for updates in one of the two tasks.
-- [x] I have publish a broken version to both cargo install and github, need to fix that. Omg i am just so dumb, keys table does not have the row when created using default i guess.
-- [x] Change API flag to remote instead, bc make more sense.
-- [x]  Error handling when using remote instead of just panic.
-- [x] I am dumb, startup on Linux is failing and i need to fix.
-- [x] Organize project tree.
-- [x] Check weird shit on startup and i totally forgot about windows lol(I do not know what i needed to do but it seems to be done so.).
-- [x] Should not start again if life-monitor is already running.
-- [x] Wayland support.
-  - [x] Read directly from /dev/input
-- [x] Separate better blocking and non-blocking code.
-- [ ] remote doc and rework.
-- [ ] Check CPU load with the new features. Now that i have more data in both table to go through it may impact the performance a little bit.
-- [ ] Maybe create a cool tui to display the collected data in a cool way to the user i guess, how would i do it on windows though?.
-  - [ ] Percentages of the most used apps would be cool.
+### CLI options
+
+| Flag                      | Description                                                                                            |
+| ------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `-i`, `--interval <SECS>` | How often the program writes its in-memory data to storage, in seconds. Default is `300`. Debug mode uses `5` if you do not set an interval yourself. |
+| `-g`, `--gran <0-5>`      | How finely keyboard and mouse totals are split across the day. Higher values create smaller time blocks. |
+| `-d`, `--debug`           | Turn on more detailed logs and use a shorter default write interval. |
+| `-p`, `--dpi <DPI>`       | Mouse DPI used when estimating cursor distance in centimeters. Default is `800`. |
+| `-c`, `--clear`           | Delete the current database and start again with an empty one. |
+| `-r`, `--remote <FILE>`   | Send data to a remote HTTP service using a JSON config file. Requires the `remote` feature. |
+| `--enable-startup`        | Set the program to start automatically for the current user session. |
+| `--disable-startup`       | Remove the automatic startup configuration for the current user session. |
+| `-s`, `--no-systray`      | Windows only: do not show the tray icon. |
+
+### Granularity levels
+
+The `--gran` flag controls how keyboard and mouse totals are split across the day:
+
+- `0`: one row for the entire day
+- `1`: 4-hour buckets
+- `2`: 2-hour buckets
+- `3`: 1-hour buckets
+- `4`: 30-minute buckets
+- `5`: 15-minute buckets
+
+Higher values give you a more detailed picture of when activity happened, but they also create more rows in the database each day.
+
+## Remote backend
+
+Remote storage is optional. It is enabled by the `remote` Cargo feature.
+
+Build with remote support:
+
+```bash
+cargo build --features remote
+```
+
+Or, if `remote` is already in the default feature set for your local branch, simply run:
+
+```bash
+cargo build
+```
+
+Then start the program with a JSON config file:
+
+```bash
+life-monitor --remote api-examples/example_config.json
+```
+
+Example config:
+
+```json
+{
+  "base_url": "https://api.example.com",
+  "keys_endpoint": "/v1/keys",
+  "proc_endpoint": "/v1/proc"
+}
+```
+
+If `api_key` is not included in the file, the program will try to read it from the `API_KEY` environment variable instead.
+
+What the remote mode expects:
+
+- It uses `GET` and `POST` requests
+- Keyboard and mouse data is sent to `keys_endpoint`
+- Window/process data is sent to `proc_endpoint`
+- Responses are expected to be JSON
+
+This part of the project is still being refined. For now, it is best to treat it as beta until the API shape and documentation settle down.
+
+## Data locations
+
+### Linux
+
+- Database: `~/.local/share/life_monitor/data.db`
+- Log file: `~/.local/share/life_monitor/spy.log`
+
+### Windows
+
+- Database: `%LOCALAPPDATA%\life_monitor\data.db`
+- Log file: `%LOCALAPPDATA%\life_monitor\spy.log`
+
+## Desktop session support
+
+On Linux, the program chooses how to track the active window based on the graphical session it is running inside:
+
+- Wayland if the process sees Wayland session indicators
+- X11 if the process is running in an X11 session
+
+Many Wayland desktops also provide a `DISPLAY` variable through Xwayland, so the detection logic is written to prefer Wayland whenever clear Wayland session variables are present.
+
+## Autostart
+
+On Linux, `--enable-startup` creates a `systemd --user` service for the current user. It is meant for starting with your desktop session, not for running as a system-wide service in the background.
+
+Because active-window tracking depends on the graphical session, the safest way to enable startup is to run:
+
+```bash
+life-monitor --enable-startup
+```
+
+from the same graphical session where you normally use the program.
+
+To disable it later:
+
+```bash
+life-monitor --disable-startup
+```
+
+## Notes and limitations
+
+- Mouse distance is still an estimate based on DPI and raw pointer movement.
+- Some Windows-specific parts of the project are still less polished than the Linux side.
+- Security software may flag the program because it reads input and active-window information. The project does not try to hide this behavior, and the source code is available for inspection.
+
+## Contributing
+
+Issues and pull requests are welcome. If you report a bug, especially one related to platform-specific behavior, it helps a lot if you include:
+
+- your operating system
+- desktop session type (`Wayland` or `X11`)
+- how you launched the program
+- relevant log output
+
+That information is especially useful when the problem is related to Linux permissions, session detection, or startup behavior.

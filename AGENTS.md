@@ -59,7 +59,8 @@ src/
     └── logger.rs              # tracing_subscriber setup, dual output (file + stdout), spy.log
 .github/
 └── workflows/
-    └── ci.yml                 # GitHub Actions CI for fmt, clippy, tests, and nix package builds
+    ├── nix.yml                # GitHub Actions CI using the repo's nix develop shell
+    └── no-nix.yml             # GitHub Actions CI using standard Ubuntu + Rust setup
 ```
 
 ---
@@ -204,13 +205,15 @@ nix develop           # Dev shell with full toolchain + wine64 for testing Windo
 
 Dev shell sets `LIBCLANG_PATH`, `BINDGEN_EXTRA_CLANG_ARGS`, `WINEPREFIX` automatically.
 
-**GitHub Actions CI** (`.github/workflows/ci.yml`):
+**GitHub Actions CI** (`.github/workflows/nix.yml`, `.github/workflows/no-nix.yml`):
 
-- Triggers on `push` and `pull_request`
-- Uses Nix on `ubuntu-latest` runners to reuse the repo's build environment
-- Runs `cargo fmt -- --check`, `cargo clippy -- -D warnings`, `cargo test`, and `cargo test --features x11`
-- Builds the Linux flake output `.#linux`
-- Windows cross-builds still exist in the flake, but are not part of CI yet because the current package path runs tests under Wine
+- Both trigger on `push` and `pull_request`
+- `nix.yml` runs `nix develop --command ci-checks` and `nix develop --command ci-test-build`
+- `no-nix.yml` runs `cargo fmt -- --check`, `cargo-deny`, `codespell`, `cargo test`, and `cargo build --release`
+- Local Nix helper commands:
+  - `nix develop --command ci-checks`
+  - `nix develop --command ci-test-build`
+  - `nix develop --command ci-local`
 
 ---
 
