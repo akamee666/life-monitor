@@ -1742,7 +1742,7 @@ mod tests {
         let source_path = unique_temp_db("duplicate-export-uuid-source");
         let export_path = unique_temp_db("duplicate-export-uuid-export");
 
-        let _destination = build_test_db(&destination_path)?;
+        let destination = build_test_db(&destination_path)?;
         let source = build_test_db(&source_path)?;
         insert_input_buckets(&source, &[sample_input_row()])?;
         export_database(&source_path, &export_path)?;
@@ -1763,6 +1763,7 @@ mod tests {
 
         drop(export_conn);
         drop(source);
+        drop(destination);
         fs::remove_file(destination_path)?;
         fs::remove_file(source_path)?;
         fs::remove_file(export_path)?;
