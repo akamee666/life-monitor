@@ -1,5 +1,5 @@
-[build]
-target = "x86_64-pc-windows-gnu"
+# [build]
+# target = "x86_64-pc-windows-gnu"
 
 # .cargo/config.toml
 [target.x86_64-pc-windows-gnu]
