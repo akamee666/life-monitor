@@ -167,7 +167,7 @@ fn acquire_windows_lock(lock_f_path: &Path, blocking: bool) -> Result<File> {
         };
 
         match result {
-            Ok(()) => return Ok(file),
+            std::result::Result::Ok(()) => return Ok(file),
             Err(err) if blocking => {
                 let _ = err;
                 thread::sleep(Duration::from_millis(250));

@@ -13,9 +13,6 @@ use crate::platform::linux::common::*;
 #[cfg(target_os = "linux")]
 use crate::platform::linux::process;
 
-#[cfg(target_os = "windows")]
-use crate::platform::windows::inputs::*;
-
 use crate::storage::backend::*;
 use crate::storage::localdb::{export_database, import_snapshot, plan_import, DbConfig};
 use crate::utils::args::Cli;
