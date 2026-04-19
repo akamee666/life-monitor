@@ -1,5 +1,4 @@
 use crate::common::*;
-use crate::platform::common::*;
 use crate::platform::linux::common::*;
 use crate::platform::linux::inputs::*;
 use crate::storage::backend::{DataStore, StorageBackend};
@@ -29,11 +28,15 @@ pub async fn run_x11(
                 // is_idle should be under common.rs since it can be used no matter if user is x11 or wayland
                 if !is_idle() {
                     handle_active_window(&x11_ctx, &mut proc_data).await?;
+                } else {
+                    proc_data.pause(chrono::Utc::now());
                 }
             }
 
             _ = database_update.tick() => {
-                if let Err(err) = backend.store_proc_data(&proc_data.procs).await {
+                proc_data.record_active_until(chrono::Utc::now());
+                let rows = proc_data.drain_pending();
+                if let Err(err) = backend.store_proc_data(&rows).await {
                     error!("Error sending data to procs table: {err:?}");
                 }
 
@@ -46,7 +49,7 @@ enum TrackingState {
     /// No window is being tracked at the moment
     NoFocus,
     /// A window is focused and the user isn't idle
-    Active(Window, Instant),
+    Active(Window),
     /// A window is focused, but the user is idle (timer now is paused)
     Idle(Window),
 }
@@ -77,22 +80,20 @@ pub async fn run_wayland(
             Some(event) = events_rx.recv() => match event {
                 FocusEvent::FocusGained(new_window) => {
                     // if a previous window was active, record its time before switching
-                    if let TrackingState::Active(old_window, start_time) = state {
-                        record_window_time(&mut proc_data.procs, old_window, start_time.elapsed());
-                    }
+                    let now = chrono::Utc::now();
+                    proc_data.switch_window(new_window.clone(), now);
                     // set the new window as being active to start its time
-                    state = TrackingState::Active(new_window, Instant::now());
+                    state = TrackingState::Active(new_window);
                 }
                 FocusEvent::FocusLost(lost_window) => {
                     // we only care about this event if the window that lost focus
                     // is the one we are currently tracking as active.
-                    if let TrackingState::Active(ref active_window, _) = state {
+                    if let TrackingState::Active(ref active_window) = state {
                         if active_window.name == lost_window.name {
                             // The currently tracked window is the one that lost focus.
                             // We take the state, record its time, and set the new state to NoFocus.
-                            if let TrackingState::Active(old_window, start_time) = std::mem::replace(&mut state, TrackingState::NoFocus) {
-                                record_window_time(&mut proc_data.procs, old_window, start_time.elapsed());
-                            }
+                            proc_data.clear_focus(chrono::Utc::now());
+                            state = TrackingState::NoFocus;
                         }
                         // if the windows do NOT match, we do nothing. This means a FocusGained
                         // event for another window has already occurred and the state is correct.
@@ -103,12 +104,10 @@ pub async fn run_wayland(
             _ = idle_check.tick() => {
                 match state {
                     // the user was active, check if they've now become idle.
-                    TrackingState::Active(ref window, start_time) => {
+                    TrackingState::Active(ref window) => {
                         if is_idle() {
                             info!("User is now idle, pausing timer for {:?}", window.class);
-                            // record the time accumulated before becoming idle.
-                            record_window_time(&mut proc_data.procs, window.clone(), start_time.elapsed());
-                            // transition to the Idle state, preserving the window info.
+                            proc_data.pause(chrono::Utc::now());
                             state = TrackingState::Idle(window.clone());
                         }
                     }
@@ -116,8 +115,9 @@ pub async fn run_wayland(
                     TrackingState::Idle(ref window) => {
                         if !is_idle() {
                             info!("User is active again, resuming timer for {:?}", window.class);
-                            // Transition back to Active, restarting the timer from now.
-                            state = TrackingState::Active(window.clone(), Instant::now());
+                            let now = chrono::Utc::now();
+                            proc_data.resume(now);
+                            state = TrackingState::Active(window.clone());
                         }
                     }
                     // if no window is in focus, do nothing.
@@ -126,7 +126,9 @@ pub async fn run_wayland(
             }
 
             _ = database_update.tick() => {
-                if let Err(err) = backend.store_proc_data(&proc_data.procs).await {
+                proc_data.record_active_until(chrono::Utc::now());
+                let rows = proc_data.drain_pending();
+                if let Err(err) = backend.store_proc_data(&rows).await {
                     error!("Error sending data to procs table: {err:?}");
                 }
             }
@@ -136,7 +138,7 @@ pub async fn run_wayland(
 }
 
 pub async fn run(update_interval: u32, backend: StorageBackend) -> Result<()> {
-    let proc_data = ProcessTracker::new(&backend).await?;
+    let proc_data = ProcessTracker::new(backend.source_id(), backend.bucket_granularity_minutes());
     match detect_display_server() {
         DisplayServer::Wayland => {
             info!(

@@ -5,7 +5,8 @@ use tokio::time::*;
 use tracing::*;
 
 pub async fn run(update_interval: u32, backend: StorageBackend) -> Result<()> {
-    let mut procs_data = ProcessTracker::new(&backend).await?;
+    let mut procs_data =
+        ProcessTracker::new(backend.source_id(), backend.bucket_granularity_minutes());
 
     let mut tick = interval(Duration::from_secs(1));
     let mut database_update = interval(Duration::from_secs(update_interval as u64));
@@ -13,62 +14,22 @@ pub async fn run(update_interval: u32, backend: StorageBackend) -> Result<()> {
     loop {
         tokio::select! {
             _ = tick.tick() => {
-                if !is_idle() {
+                let now = chrono::Utc::now();
+                let idle = is_idle();
+                let focused_window = if idle {
+                    None
+                } else {
                     let (w_name, w_class) = get_focused_window().with_context(|| "Failed to find foreground window")?;
-                    let now = uptime();
+                    Some(Window { name: w_name, class: w_class })
+                };
 
-                    if procs_data.last_wname.is_empty() {
-                        debug!("First run, recording initial window: '{w_name}'");
-                        procs_data.procs.push(ProcessInfo {
-                            w_name: w_name.clone(),
-                            w_time: 0,
-                            w_class: w_class.clone(),
-                        });
-                        procs_data.last_wname = w_name;
-                        procs_data.last_wclass = w_class;
-                        procs_data.time = now;
-                    } else if procs_data.last_wname != w_name {
-                        let elapsed = now - procs_data.time;
-                        debug!(
-                            "Focus changed, Window: '{}' was active for: {}s",
-                            procs_data.last_wclass, elapsed
-                        );
-                        debug!("Starting counting time for the new window: '{w_name}'");
-
-                        // Update time for the *previous* window
-                        if let Some(prev) = procs_data
-                            .procs
-                                .iter_mut()
-                                .find(|p| p.w_name == procs_data.last_wname)
-                        {
-                            prev.w_time += elapsed;
-                        } else {
-                            procs_data.procs.push(ProcessInfo {
-                                w_name: procs_data.last_wname.clone(),
-                                w_time: elapsed,
-                                w_class: procs_data.last_wclass.clone(),
-                            });
-                        }
-
-                        // Record the new window
-                        if procs_data.procs.iter().all(|p| p.w_name != w_name) {
-                            procs_data.procs.push(ProcessInfo {
-                                w_name: w_name.clone(),
-                                w_time: 0,
-                                w_class: w_class.clone(),
-                            });
-                        }
-
-                        procs_data.last_wname = w_name;
-                        procs_data.last_wclass = w_class;
-                        procs_data.time = now;
-
-                    }
-                }
+                sync_focus_tracker(&mut procs_data, focused_window, now, idle);
             }
 
             _ = database_update.tick() => {
-                if let Err(err) = backend.store_proc_data(&procs_data.procs).await {
+                procs_data.record_active_until(chrono::Utc::now());
+                let rows = procs_data.drain_pending();
+                if let Err(err) = backend.store_proc_data(&rows).await {
                     error!("Error sending data to procs table: {err:?}");
                 }
 

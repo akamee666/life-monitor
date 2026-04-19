@@ -1,13 +1,11 @@
-//! This file is responsible to make it easier change between using an API or a SQLite as database
-//! storage.
+//! Storage backend abstraction.
 use crate::common::*;
 use crate::storage::localdb::*;
-
-#[cfg(feature = "remote")]
-use crate::RemoteDb;
+use crate::utils::lock::acquire_db_operation_lock;
 
 use rusqlite::Connection;
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use anyhow::*;
@@ -16,126 +14,126 @@ use tracing::*;
 
 #[allow(async_fn_in_trait)]
 pub trait DataStore {
-    async fn store_keys_data(&self, keylogger: &InputLogger) -> Result<()>;
-    async fn store_proc_data(&self, proc_info: &[ProcessInfo]) -> Result<()>;
-    async fn get_keys_data(&self) -> Result<InputLogger>;
-    async fn get_proc_data(&self) -> Result<Vec<ProcessInfo>>;
+    async fn store_keys_data(&self, rows: &[InputBucketRecord]) -> Result<()>;
+    async fn store_proc_data(&self, rows: &[FocusBucketRecord]) -> Result<()>;
 }
 
 #[derive(Debug, Clone)]
 pub struct LocalDb {
     con: Arc<Mutex<Connection>>,
+    source_id: i64,
+    db_path: PathBuf,
 }
 
 impl LocalDb {
-    pub fn new(req_gran_level: Option<u32>, should_clear: bool) -> Result<Self> {
+    pub fn new(config: DbConfig, should_clear: bool) -> Result<Self> {
         if should_clear {
             info!("Clean argument provided, cleaning database!");
-            clear_database().context("Failed to clear database")?;
+            clear_database(&config.db_path).context("Failed to clear database")?;
         };
 
-        let conn = open_con().context("Failed to open connection with sqlite database")?;
-        setup_database(&conn, req_gran_level)
-            .context("Failed to properly setup sqlite database")?;
+        let conn = open_con_at(&config.db_path).with_context(|| {
+            if config.source == DbPathSource::Remembered {
+                format_remembered_db_open_error(&config.db_path)
+            } else {
+                format!(
+                    "Failed to open connection with sqlite database at '{}'",
+                    config.db_path.display()
+                )
+            }
+        })?;
+        setup_database(&conn).context("Failed to properly setup sqlite database")?;
 
-        info!("Backend using SQLite successfully initialized.");
+        info!(
+            "Backend using SQLite successfully initialized at {}.",
+            config.db_path.display()
+        );
         Ok(Self {
             con: Arc::new(Mutex::new(conn)),
+            source_id: DEFAULT_SOURCE_ID,
+            db_path: config.db_path,
         })
+    }
+
+    pub fn source_id(&self) -> i64 {
+        self.source_id
+    }
+
+    pub fn bucket_granularity_minutes(&self) -> u32 {
+        DEFAULT_BUCKET_MINUTES as u32
     }
 }
 
+fn format_remembered_db_open_error(path: &std::path::Path) -> String {
+    format!(
+        "Failed to open the remembered database path '{}'.\nThis usually means the path is no longer available, such as an unmounted or disconnected network share.\nWhat you can do:\n- mount or reconnect the share again so Life Monitor can access it\n- run Life Monitor with --db-path <NEW_PATH> to switch to another database now\n- later, import the old database or a snapshot once it is available again",
+        path.display()
+    )
+}
+
 impl DataStore for LocalDb {
-    async fn store_keys_data(&self, keylogger: &InputLogger) -> Result<()> {
-        let k: InputLogger = keylogger.clone();
+    async fn store_keys_data(&self, rows: &[InputBucketRecord]) -> Result<()> {
+        let rows = rows.to_vec();
         let con = self.con.clone();
+        let db_path = self.db_path.clone();
 
         tokio::task::spawn_blocking(move || {
-            let con = con.lock().unwrap();
-            update_keyst(&con, &k).context("Failed to update keystroke data in the sqlite database")
+            let _op_lock = acquire_db_operation_lock(&db_path)?;
+            let mut con = con.lock().unwrap();
+            let tx = con.transaction()?;
+            insert_input_buckets(&tx, &rows)
+                .context("Failed to insert input bucket rows into sqlite database")?;
+            tx.commit().context("Failed to commit input bucket rows")
         })
         .await?
     }
 
-    async fn get_keys_data(&self) -> Result<InputLogger> {
+    async fn store_proc_data(&self, rows: &[FocusBucketRecord]) -> Result<()> {
+        let rows = rows.to_vec();
         let con = self.con.clone();
-
-        let input_logger_res = tokio::task::spawn_blocking(move || {
-            let con = con.lock().unwrap();
-            get_keyst(&con).with_context(|| "Failed to get keys data from the database")
-        })
-        .await??; // <- first ? on JoinError, second ? on anyhow::Error
-
-        Ok(input_logger_res)
-    }
-
-    async fn store_proc_data(&self, proc_info: &[ProcessInfo]) -> Result<()> {
-        let con = self.con.clone();
-        let procs = proc_info.to_vec();
+        let db_path = self.db_path.clone();
 
         tokio::task::spawn_blocking(move || {
-            let con = con.lock().unwrap();
-            update_proct(&con, &procs).context("Failed to update process data in the database")
+            let _op_lock = acquire_db_operation_lock(&db_path)?;
+            let mut con = con.lock().unwrap();
+            let tx = con.transaction()?;
+            insert_focus_buckets(&tx, &rows)
+                .context("Failed to insert focus bucket rows into sqlite database")?;
+            tx.commit().context("Failed to commit focus bucket rows")
         })
         .await?
-    }
-
-    async fn get_proc_data(&self) -> Result<Vec<ProcessInfo>> {
-        let con = self.con.clone();
-
-        let res = tokio::task::spawn_blocking(move || {
-            let con = con.lock().unwrap();
-            get_proct(&con)
-        })
-        .await??;
-        Ok(res)
     }
 }
 
 #[derive(Debug, Clone)]
 pub enum StorageBackend {
     Local(LocalDb),
-    #[cfg(feature = "remote")]
-    Api(RemoteDb),
+}
+
+impl StorageBackend {
+    pub fn source_id(&self) -> i64 {
+        match self {
+            StorageBackend::Local(db) => db.source_id(),
+        }
+    }
+
+    pub fn bucket_granularity_minutes(&self) -> u32 {
+        match self {
+            StorageBackend::Local(db) => db.bucket_granularity_minutes(),
+        }
+    }
 }
 
 impl DataStore for StorageBackend {
-    async fn store_keys_data(&self, keylogger: &InputLogger) -> Result<()> {
+    async fn store_keys_data(&self, rows: &[InputBucketRecord]) -> Result<()> {
         match self {
-            StorageBackend::Local(db) => db.store_keys_data(keylogger).await,
-            #[cfg(feature = "remote")]
-            StorageBackend::Api(api) => api.store_keys_data(keylogger).await,
+            StorageBackend::Local(db) => db.store_keys_data(rows).await,
         }
     }
 
-    async fn store_proc_data(&self, proc_info: &[ProcessInfo]) -> Result<()> {
+    async fn store_proc_data(&self, rows: &[FocusBucketRecord]) -> Result<()> {
         match self {
-            StorageBackend::Local(db) => db.store_proc_data(proc_info).await,
-            #[cfg(feature = "remote")]
-            StorageBackend::Api(api) => api.store_proc_data(proc_info).await,
-        }
-    }
-
-    async fn get_keys_data(&self) -> Result<InputLogger> {
-        match self {
-            StorageBackend::Local(db) => db.get_keys_data().await,
-            #[cfg(feature = "remote")]
-            StorageBackend::Api(api) => api.get_keys_data().await,
-        }
-    }
-
-    // TODO: Improve error handling in the other backend methods.
-    async fn get_proc_data(&self) -> Result<Vec<ProcessInfo>> {
-        match self {
-            StorageBackend::Local(db) => db
-                .get_proc_data()
-                .await
-                .with_context(|| "Failed to retrieve process data from local storage"),
-            #[cfg(feature = "remote")]
-            StorageBackend::Api(api) => api
-                .get_proc_data()
-                .await
-                .with_context(|| "Failed to retrieve process data from API"),
+            StorageBackend::Local(db) => db.store_proc_data(rows).await,
         }
     }
 }

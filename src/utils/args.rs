@@ -1,40 +1,38 @@
 use clap::{value_parser, Parser};
+use std::path::PathBuf;
 
 use tracing::info;
 
+use crate::common::DEFAULT_MOUSE_DPI;
+
 #[derive(Parser, Debug)]
 #[command(name = "Life Monitor")]
-#[command(about = "A program to monitor daily activity, see help for default behavior")]
+#[command(about = "Track keyboard, mouse, and focused-window activity into a SQLite database.")]
 #[command(
-    long_about = "Life Monitor is a comprehensive tool designed to track and analyze your daily computer usage. It monitors various aspects of your activity, including keyboard and mouse input, active windows, and overall process usage (No, i am not a spyware i swear). This data can be used to gain insights into your productivity, work patterns, and computer usage habits. The program does not provide any overview for the collected data, it just collect and save them to the database file in your respective path, use them as you wish."
+    long_about = "Life Monitor records keyboard, mouse, scroll, and focused-window activity into a local SQLite database. It is designed for people who want to inspect, merge, export, or analyze their own activity data later.\n\nThe default workflow is simple: run the program, let it collect data in the background, and inspect or export the database whenever you need.\n\nUse --db-path to store the database somewhere else, such as another disk or a mounted network share. When you provide --db-path, Life Monitor remembers that location and reuses it on later runs until you choose another path."
+)]
+#[command(
+    after_long_help = "Examples:\n  life-monitor\n  life-monitor --debug --interval 10\n  life-monitor --db-path /mnt/shared/life-monitor/data.db\n  life-monitor --export-db ./snapshot.sqlite\n  life-monitor --import-db ./snapshot.sqlite --dry-run\n  life-monitor --import-db ./snapshot.sqlite --import-notes \"desktop sync\""
 )]
 pub struct Cli {
     #[arg(
         short = 'i',
         long,
-        help = "Set the interval (in seconds) for sending stored data to the database. [default: 300]",
-        long_help = "This option allows you to specify how often the program should send the collected data to the database. The default is every 300 seconds (5 minutes). Shorter intervals will update the database more frequently but may increase system load, while longer intervals will reduce database updates but may delay data availability. Choose an interval that balances your need for up-to-date information with system performance considerations. This option overwrite the interval used by the debug flag, if you want debug information and does not want to change interval, use both.",
-        // I guess it's not needed to conflict
-        conflicts_with = "gran"
+        help_heading = "Collection",
+        value_name = "SECS",
+        help = "How often buffered activity is flushed to the database.",
+        long_help = "Choose how often Life Monitor writes buffered activity buckets to SQLite.\n\nDefault: 300 seconds.\nDebug mode uses 5 seconds if you do not set an interval yourself.\n\nShorter intervals reduce the amount of data waiting in memory. Longer intervals reduce database writes."
     )]
     pub interval: Option<u32>,
-
-    #[arg(
-        short = 'g',
-        long,
-        help = "Divide the entries when logging keys, making it possible to see which part of the day you are most active. [default: 0]",
-        value_parser = value_parser!(u32).range(0..6),
-        long_help = "Default value is 0, meaning the database will only store the raw total of all your activity. Use higher levels to split the data into specific intervals."
-    )]
-    pub gran: Option<u32>,
 
     #[cfg(target_os = "windows")]
     #[arg(
         short = 's',
         long,
+        help_heading = "Collection",
         default_value_t = false,
-        help = "If true, disables the system tray icon. [default: false]",
-        long_help = "This option is only available on Windows systems. When enabled, it prevents the program from creating an icon in the system tray. The system tray icon provides quick access to the program's status and controls, so disabling it may make the program less convenient to interact with. However, it can be useful if you prefer to run the program without any visible interface. On non-Windows systems, this option is not available, and no system tray icon will be created."
+        help = "Windows only: disable the tray icon.",
+        long_help = "Windows only.\n\nDisables the system tray icon and runs the program without that UI entry point."
     )]
     pub no_systray: bool,
 
@@ -43,26 +41,66 @@ pub struct Cli {
     #[arg(
         short = 'd',
         long,
+        help_heading = "Collection",
         default_value_t = false,
-        help = "If true, enables debug mode with more frequent updates and additional logging. [default: false]",
-        long_help = "Enabling debug mode does two things: First, it increases the frequency of database updates, allowing for more real-time data analysis. Second, it enables debug output to both a log file and stdout. This mode is useful for troubleshooting issues or for developers working on extending the program's functionality. Interval option WILL overwrite the interval defined by this option."
+        help = "Enable verbose logging and a shorter default flush interval.",
+        long_help = "Turns on more verbose logs and uses a 5-second flush interval if --interval is not provided.\n\nUseful for troubleshooting or when validating that collection is working."
     )]
     pub debug: bool,
 
     #[arg(
-        short = 'r',
         long,
-        value_name = "config.json",
-        help = "If true, enables updates to database through an remote database using routes determined by a json config file passed to this flag. [default: config.json]",
-        long_help = "This flag enable updates to a remote database instead of the local database, see in README.md to how use it. This can be useful for centralized data collection or for accessing your data from multiple devices. However, as this is a beta feature, it may not be as stable or secure as the local database option. It's usable but only for a specific case see the explanation in github page if you still want to use it anyway"
+        help_heading = "Database",
+        value_name = "PATH",
+        help = "Store or read the SQLite database from a custom path.",
+        long_help = "Use a specific SQLite database file instead of the default location.\n\nThis can point to:\n- a local file\n- another disk or partition\n- a mounted network share such as Samba or NFS\n\nWhen you provide this option, Life Monitor remembers the path and uses it again on later runs until you provide a different one.\n\nLife Monitor only uses paths that the operating system can already access. It does not mount remote shares or prompt for share credentials."
     )]
-    pub remote: Option<String>,
+    pub db_path: Option<PathBuf>,
+
+    #[arg(
+        long,
+        help_heading = "Import / Export",
+        value_name = "FILE",
+        help = "Export the current database into a consistent SQLite snapshot and exit.",
+        long_help = "Creates a consistent snapshot of the current database at the given file path and then exits.\n\nThis uses SQLite backup primitives instead of copying the raw file directly."
+    )]
+    pub export_db: Option<PathBuf>,
+
+    #[arg(
+        long,
+        help_heading = "Import / Export",
+        value_name = "FILE",
+        help = "Import a previously exported SQLite snapshot into the current database and exit.",
+        long_help = "Imports a snapshot created by --export-db into the current database.\n\nThe import process validates both databases, creates a backup of the destination, merges the data, and records import metadata to prevent duplicate imports."
+    )]
+    pub import_db: Option<PathBuf>,
+
+    #[arg(
+        long,
+        help_heading = "Import / Export",
+        requires = "import_db",
+        help = "Preview import changes without modifying the destination database.",
+        long_help = "Shows what --import-db would add or update, without writing anything to the destination database."
+    )]
+    pub dry_run: bool,
+
+    #[arg(
+        long,
+        help_heading = "Import / Export",
+        value_name = "TEXT",
+        requires = "import_db",
+        help = "Attach optional notes to the recorded import metadata.",
+        long_help = "Stores a free-form note alongside the import record. Useful for remembering where a snapshot came from or why it was imported."
+    )]
+    pub import_notes: Option<String>,
 
     #[arg(
         short = 'p',
         long,
-        help = "Specify the DPI setting of your mouse for accurate movement tracking. [default: 800]",
-        long_help = "This option allows you to specify the DPI (dots per inch) setting of your mouse. Providing the correct DPI value helps the program accurately measure how much you're moving your mouse. The default value is 800 DPI, which is common for many mice. Check your mouse settings or manufacturer specifications to find the correct DPI value. This option conflicts with --no-keys, as mouse tracking is part of the key and mouse input tracking feature.",
+        help_heading = "Collection",
+        value_name = "DPI",
+        help = "Mouse DPI/CPI used for estimating physical mouse distance in centimeters.",
+        long_help = "Sets the mouse DPI/CPI used when converting raw mouse counts into estimated real-world distance.\n\nIf you provide this once, Life Monitor remembers it and reuses it on later runs until you provide a new value.\n\nIf you do not provide it and no remembered value exists, Life Monitor will ask for it on interactive runs.\n\nStart with 800 if you do not know your mouse DPI yet, then adjust later if needed.",
         value_parser = value_parser!(u32).range(1..),
     )]
     pub dpi: Option<u32>,
@@ -70,24 +108,27 @@ pub struct Cli {
     #[arg(
         short = 'c',
         long,
-        help = "If true, deletes all previously collected data and starts a new database. [default: false]",
-        conflicts_with = "remote",
-        long_help = "This option, when enabled, will delete all data collected in previous sessions of the program and start with a clean state. This can be useful if you want to reset your tracking, perhaps after a significant change in your work habits or if you suspect there are issues with the existing data. Be very careful when using this option, as it will permanently delete all existing data. It's recommended to backup your data before using this option."
+        help_heading = "Database",
+        help = "Delete the current database file and start from an empty one.",
+        conflicts_with = "import_db",
+        long_help = "Deletes the current database file before starting collection.\n\nUse this only if you really want to reset your data. The deletion is permanent."
     )]
     pub clear: bool,
 
     #[arg(
         long,
-        help = "Enable automatic startup for the current user session. [default: false]",
-        long_help = "This option configures automatic startup for the current user. On Windows, it creates a shortcut in the user's Startup folder. On Linux, it creates and enables a systemd --user service so the program starts with the graphical user session. This is session startup, not a system-wide boot service.",
+        help_heading = "Startup",
+        help = "Enable automatic startup for the current user session.",
+        long_help = "Configures Life Monitor to start automatically for the current user.\n\nOn Windows, this creates a shortcut in the Startup folder.\nOn Linux, this creates and enables a systemd --user service.\n\nThis is user-session startup, not a system-wide boot service.",
         conflicts_with = "disable_startup"
     )]
     pub enable_startup: bool,
 
     #[arg(
         long,
+        help_heading = "Startup",
         help = "Disable automatic startup for the current user session.",
-        long_help = "This option removes the current user's automatic startup configuration. On Windows, it deletes the shortcut from the user's Startup folder. On Linux, it stops and disables the systemd --user service and removes the user unit file.",
+        long_help = "Removes Life Monitor from automatic startup for the current user.\n\nOn Windows, this removes the Startup shortcut.\nOn Linux, this stops and disables the systemd --user service and removes the unit file.",
         conflicts_with = "enable_startup"
     )]
     pub disable_startup: bool,
@@ -101,12 +142,11 @@ impl Cli {
         #[cfg(target_os = "windows")]
         info!("No systray: {:?}", self.no_systray);
         info!("Debug mode: {:?}", self.debug);
-        info!(
-            "API config: {:?}",
-            self.remote.as_deref().unwrap_or("Not used")
-        );
-        info!("Mouse DPI: {:?}", self.dpi.unwrap_or(800));
-        info!("Granularity Level: {:?}", self.gran);
+        info!("Database path: {:?}", self.db_path);
+        info!("Export database: {:?}", self.export_db);
+        info!("Import database: {:?}", self.import_db);
+        info!("Dry-run import: {:?}", self.dry_run);
+        info!("Mouse DPI: {:?}", self.dpi.unwrap_or(DEFAULT_MOUSE_DPI));
         info!("Clear database: {:?}", self.clear);
         println!();
     }

@@ -15,7 +15,7 @@
 
 ### Current status
 
-The project is usable, but it is still being improved. Saving data locally in SQLite is the most stable and complete workflow right now. Wayland support, remote API storage, and Linux autostart through `systemd --user` are all available, but there are still rough edges, and the remote feature should still be treated as beta since you need to create a API to receive it by yourself.
+The project is usable, but it is still being improved. The main workflow is local SQLite storage with historical time buckets. Wayland support and Linux autostart through `systemd --user` are available, and snapshot import/export plus custom database paths are now the intended way to move or combine data between systems.
 
 ## Installing
 
@@ -166,66 +166,29 @@ life-monitor [OPTIONS]
 | Flag                      | Description                                                                                            |
 | ------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `-i`, `--interval <SECS>` | How often the program writes its in-memory data to storage, in seconds. Default is `300`. Debug mode uses `5` if you do not set an interval yourself. |
-| `-g`, `--gran <0-5>`      | How finely keyboard and mouse totals are split across the day. Higher values create smaller time blocks. |
 | `-d`, `--debug`           | Turn on more detailed logs and use a shorter default write interval. |
 | `-p`, `--dpi <DPI>`       | Mouse DPI used when estimating cursor distance in centimeters. Default is `800`. |
 | `-c`, `--clear`           | Delete the current database and start again with an empty one. |
-| `-r`, `--remote <FILE>`   | Send data to a remote HTTP service using a JSON config file. Requires the `remote` feature. |
+| `--db-path <PATH>`        | Use a specific SQLite database path, including a mounted network share path such as Samba or NFS. |
+| `--export-db <FILE>`      | Export a consistent SQLite snapshot into another file and exit. |
+| `--import-db <FILE>`      | Import a previously exported SQLite snapshot into the current database and exit. |
+| `--dry-run`               | Show the planned import changes without modifying the database. Requires `--import-db`. |
+| `--import-notes <TEXT>`   | Record optional notes alongside the import metadata. Requires `--import-db`. |
 | `--enable-startup`        | Set the program to start automatically for the current user session. |
 | `--disable-startup`       | Remove the automatic startup configuration for the current user session. |
 | `-s`, `--no-systray`      | Windows only: do not show the tray icon. |
 
-### Granularity levels
+## Snapshot workflow
 
-The `--gran` flag controls how keyboard and mouse totals are split across the day:
-
-- `0`: one row for the entire day
-- `1`: 4-hour buckets
-- `2`: 2-hour buckets
-- `3`: 1-hour buckets
-- `4`: 30-minute buckets
-- `5`: 15-minute buckets
-
-Higher values give you a more detailed picture of when activity happened.
-
-## Remote backend
-
-> [!WARNING]
-> This part of the project is such a bad solution to a simple problem that I don't know how do I came with this bullshit time ago. I'll write a proper feature that will allow a user with multiple systems/computers to merge the data and avoid duplicate or splitted analytics.
-
-It is enabled by the `remote` Cargo feature. You need a `.json` file that defines the url where the data will be changed and endpoints which will receive the data batch of the keys and process table. ~It's specially useful when you use more than one operational system on your computer.~
-
-Build with remote support:
+To move data between machines or operating systems, export a SQLite snapshot from one machine and import it into another:
 
 ```bash
-cargo build --features remote
+life-monitor --export-db ./life-monitor-snapshot.sqlite
+life-monitor --import-db ./life-monitor-snapshot.sqlite --dry-run
+life-monitor --import-db ./life-monitor-snapshot.sqlite
 ```
 
-Then start the program with a JSON config file:
-
-```bash
-life-monitor --remote api-examples/example_config.json
-```
-
-Example config:
-
-```json
-{
-  "base_url": "https://api.example.com",
-  "keys_endpoint": "/v1/keys",
-  "proc_endpoint": "/v1/proc",
-  "API_KEY": ""
-}
-```
-
-If `api_key` is not included in the file, the program will try to read it from the `API_KEY` environment variable instead and if not found as well, the program will try to send the data anyway.
-
-What the remote mode expects:
-
-- It uses `GET` and `POST` requests
-- Keyboard and mouse data is sent to `keys_endpoint`
-- Window/process data is sent to `proc_endpoint`
-- Responses are expected to be JSON
+The import command validates both databases, creates an automatic backup of the destination, and records metadata so the same snapshot is not imported twice by accident.
 
 ## Data locations
 
@@ -238,6 +201,8 @@ What the remote mode expects:
 
 - Database: `%LOCALAPPDATA%\life_monitor\data.db`
 - Log file: `%LOCALAPPDATA%\life_monitor\spy.log`
+
+If you use `--db-path`, the database and its operation lock file are created at the path you provide instead of the default location.
 
 ## Desktop session support
 

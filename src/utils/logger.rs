@@ -1,7 +1,5 @@
-use std::env;
 use std::fs;
 use std::fs::File;
-use std::io;
 use std::panic;
 use std::path::*;
 use std::sync::Arc;
@@ -13,6 +11,8 @@ use tracing::*;
 use tracing_subscriber::fmt::time::FormatTime;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::{fmt, prelude::*};
+
+use crate::common::program_data_dir;
 
 // Custom time formatter to display only hour, minute, and second
 struct CustomTime;
@@ -39,14 +39,12 @@ pub fn init(enable_debug: bool) {
         // These unwraps are fine too
         let env_filter_std = EnvFilter::new("debug")
             .add_directive("hyper=off".parse().unwrap())
-            .add_directive("hyper_util=off".parse().unwrap())
-            .add_directive("reqwest=off".parse().unwrap());
+            .add_directive("hyper_util=off".parse().unwrap());
 
         // if debug is enable we should log everything. info, warn, error, debug.
         let env_filter_file = EnvFilter::new("debug")
             .add_directive("hyper=off".parse().unwrap())
-            .add_directive("hyper_util=off".parse().unwrap())
-            .add_directive("reqwest=off".parse().unwrap());
+            .add_directive("hyper_util=off".parse().unwrap());
 
         registry(env_filter_file, env_filter_std, enable_debug);
     } else {
@@ -54,14 +52,12 @@ pub fn init(enable_debug: bool) {
         let env_filter_std = EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| EnvFilter::new("info"))
             .add_directive("hyper=off".parse().unwrap())
-            .add_directive("hyper_util=off".parse().unwrap())
-            .add_directive("reqwest=off".parse().unwrap());
+            .add_directive("hyper_util=off".parse().unwrap());
 
         // Display only error, info, and warns to file.
         let env_filter_file = EnvFilter::new("info")
             .add_directive("hyper=off".parse().unwrap())
-            .add_directive("hyper_util=off".parse().unwrap())
-            .add_directive("reqwest=off".parse().unwrap());
+            .add_directive("hyper_util=off".parse().unwrap());
 
         registry(env_filter_file, env_filter_std, enable_debug);
     }
@@ -123,49 +119,16 @@ fn registry(env_filter_file: EnvFilter, env_filter_std: EnvFilter, enable_debug:
 }
 
 fn create_file() -> Result<(File, PathBuf)> {
-    // Find a proper file to store the database in both os, create if already not exist
-    let file = if cfg!(target_os = "windows") {
-        let local_app_data = env::var("LOCALAPPDATA").map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                "LOCALAPPDATA environment variable not set",
-            )
-        })?;
-        let mut path = PathBuf::from(local_app_data);
-        path.push("life-monitor");
-        path.push("spy.log");
+    let path = program_data_dir()?.join("spy.log");
+    if let Some(parent_dir) = path.parent() {
+        fs::create_dir_all(parent_dir)?;
+    }
+    let f = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path.clone())?;
 
-        if let Some(parent_dir) = path.parent() {
-            fs::create_dir_all(parent_dir)?;
-        }
-        let f = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path.clone())?;
-
-        (f, path)
-    } else {
-        let home_dir = env::var("HOME").map_err(|_| {
-            io::Error::new(io::ErrorKind::NotFound, "HOME environment variable not set")
-        })?;
-        let mut path = PathBuf::from(home_dir);
-        path.push(".local");
-        path.push("share");
-        path.push("life-monitor");
-        path.push("spy.log");
-
-        if let Some(parent_dir) = path.parent() {
-            fs::create_dir_all(parent_dir)?;
-        }
-        let f = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path.clone())?;
-
-        (f, path)
-    };
-
-    Ok(file)
+    Ok((f, path))
 }
 
 pub fn setup_panic_hook() {

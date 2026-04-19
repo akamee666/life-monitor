@@ -25,58 +25,27 @@ impl X11Ctx {
 /// overload by not going through the vector every second.
 pub async fn handle_active_window(x11: &X11Ctx, procs_data: &mut ProcessTracker) -> Result<()> {
     let (w_name, w_class) = get_focused_window(x11)?;
-    let now = uptime()?;
+    let now = chrono::Utc::now();
+    let window = Window {
+        name: w_name,
+        class: w_class,
+    };
 
-    // First run: no last window recorded
-    if procs_data.last_wname.is_empty() {
-        debug!("First run, recording initial window: '{w_name}'");
-        procs_data.procs.push(ProcessInfo {
-            w_name: w_name.clone(),
-            w_time: 0,
-            w_class: w_class.clone(),
-        });
-        procs_data.last_wname = w_name;
-        procs_data.last_wclass = w_class;
-        procs_data.time = now;
+    if procs_data.current_window_name().is_none() {
+        debug!("First run, recording initial window: '{}'", window.name);
+        procs_data.switch_window(window, now);
         return Ok(());
     }
 
-    // Window changed
-    if procs_data.last_wname != w_name {
-        let elapsed = now - procs_data.time;
+    if procs_data.current_window_name() != Some(window.name.as_str()) {
         debug!(
-            "Focus changed, Window: '{}' was active for: {}s",
-            procs_data.last_wclass, elapsed
+            "Focus changed from '{}' to '{}'",
+            procs_data.current_window_class().unwrap_or("unknown"),
+            window.name
         );
-        debug!("Starting counting time for the new window: '{w_name}'");
-
-        // Update time for the *previous* window
-        if let Some(prev) = procs_data
-            .procs
-            .iter_mut()
-            .find(|p| p.w_name == procs_data.last_wname)
-        {
-            prev.w_time += elapsed;
-        } else {
-            procs_data.procs.push(ProcessInfo {
-                w_name: procs_data.last_wname.clone(),
-                w_time: elapsed,
-                w_class: procs_data.last_wclass.clone(),
-            });
-        }
-
-        // Record the new window
-        if procs_data.procs.iter().all(|p| p.w_name != w_name) {
-            procs_data.procs.push(ProcessInfo {
-                w_name: w_name.clone(),
-                w_time: 0,
-                w_class: w_class.clone(),
-            });
-        }
-
-        procs_data.last_wname = w_name;
-        procs_data.last_wclass = w_class;
-        procs_data.time = now;
+        procs_data.switch_window(window, now);
+    } else {
+        procs_data.resume(now);
     }
 
     Ok(())
