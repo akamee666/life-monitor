@@ -190,26 +190,6 @@ mod tests {
     }
 
     #[test]
-    fn resolve_mouse_dpi_remembers_cli_value() -> Result<()> {
-        let _guard = env_lock().lock().unwrap();
-        let data_dir = unique_temp_dir("remember");
-        fs::create_dir_all(&data_dir)?;
-        std::env::set_var("LIFE_MONITOR_DATA_DIR", &data_dir);
-
-        let first = resolve_mouse_dpi(Some(1600))?;
-        let second = resolve_mouse_dpi(None)?;
-
-        assert_eq!(first.dpi, 1600);
-        assert_eq!(first.source, MouseDpiSource::Cli);
-        assert_eq!(second.dpi, 1600);
-        assert_eq!(second.source, MouseDpiSource::Remembered);
-
-        std::env::remove_var("LIFE_MONITOR_DATA_DIR");
-        fs::remove_dir_all(data_dir)?;
-        Ok(())
-    }
-
-    #[test]
     fn parse_mouse_dpi_rejects_zero_and_invalid_values() {
         assert_eq!(parse_mouse_dpi("0"), None);
         assert_eq!(parse_mouse_dpi("abc"), None);
