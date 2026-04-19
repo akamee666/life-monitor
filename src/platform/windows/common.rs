@@ -240,10 +240,16 @@ mod tests {
 
         let rows = tracker.drain_pending();
         assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].window_class, "notepad.exe");
-        assert_eq!(rows[0].focus_seconds, 30);
-        assert_eq!(rows[1].window_class, "firefox.exe");
-        assert_eq!(rows[1].focus_seconds, 30);
+        let editor = rows
+            .iter()
+            .find(|row| row.window_class == "notepad.exe")
+            .unwrap();
+        let browser = rows
+            .iter()
+            .find(|row| row.window_class == "firefox.exe")
+            .unwrap();
+        assert_eq!(editor.focus_seconds, 30);
+        assert_eq!(browser.focus_seconds, 30);
     }
 
     #[test]
@@ -300,7 +306,12 @@ mod tests {
 
         let rows = tracker.drain_pending();
         assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].focus_seconds, 30);
-        assert_eq!(rows[1].focus_seconds, 15);
+        let editor = rows.iter().find(|row| row.window_class == "nvim").unwrap();
+        let browser = rows
+            .iter()
+            .find(|row| row.window_class == "firefox")
+            .unwrap();
+        assert_eq!(editor.focus_seconds, 30);
+        assert_eq!(browser.focus_seconds, 15);
     }
 }

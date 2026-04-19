@@ -254,6 +254,8 @@ mod tests {
             snapshot.query_row("SELECT COUNT(*) FROM input_buckets", [], |row| row.get(0))?;
         assert_eq!(count, 1);
 
+        drop(snapshot);
+        drop(conn);
         std::fs::remove_file(db_path)?;
         std::fs::remove_file(export_path)?;
         std::env::remove_var("LIFE_MONITOR_SKIP_INSTANCE_LOCK");
@@ -304,6 +306,9 @@ mod tests {
         assert_eq!(imports_count, 0);
         assert_eq!(key_presses, 5);
 
+        drop(after);
+        drop(source);
+        drop(dest);
         std::fs::remove_file(dest_path)?;
         std::fs::remove_file(source_path)?;
         std::fs::remove_file(export_path)?;
@@ -363,6 +368,9 @@ mod tests {
         assert_eq!(imports_count, 1);
         assert_eq!(focus_count, 1);
 
+        drop(after);
+        drop(source);
+        drop(dest);
         std::fs::remove_file(dest_path)?;
         std::fs::remove_file(source_path)?;
         std::fs::remove_file(export_path)?;

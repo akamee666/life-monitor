@@ -1481,6 +1481,7 @@ mod tests {
         let source = get_source(&conn, DEFAULT_SOURCE_ID)?;
         assert_eq!(source.id, DEFAULT_SOURCE_ID);
         assert!(!source.source_uuid.is_empty());
+        drop(conn);
         fs::remove_file(path)?;
         Ok(())
     }
@@ -1502,6 +1503,8 @@ mod tests {
             1
         );
 
+        drop(snapshot);
+        drop(conn);
         fs::remove_file(source_path)?;
         fs::remove_file(export_path)?;
         Ok(())
@@ -1545,6 +1548,8 @@ mod tests {
         let plan = plan_import(&destination_path, &export_path)?;
         assert!(plan.duplicate_import);
 
+        drop(source);
+        drop(destination);
         fs::remove_file(destination_path)?;
         fs::remove_file(source_path)?;
         fs::remove_file(export_path)?;
@@ -1596,6 +1601,9 @@ mod tests {
         assert_eq!(focus_count, 1);
         assert!(result.destination_backup_path.exists());
 
+        drop(merged);
+        drop(source);
+        drop(destination);
         fs::remove_file(destination_path)?;
         fs::remove_file(source_path)?;
         fs::remove_file(export_path)?;
@@ -1624,6 +1632,9 @@ mod tests {
         assert_eq!(source_count, 2);
         assert_eq!(input_count, 2);
 
+        drop(merged);
+        drop(source);
+        drop(destination);
         fs::remove_file(destination_path)?;
         fs::remove_file(source_path)?;
         fs::remove_file(export_path)?;
@@ -1668,6 +1679,8 @@ mod tests {
         let err = plan_import(&destination_path, &export_path).unwrap_err();
         assert!(err.to_string().contains("schema version"));
 
+        drop(export_conn);
+        drop(source);
         fs::remove_file(destination_path)?;
         fs::remove_file(source_path)?;
         fs::remove_file(export_path)?;
@@ -1714,6 +1727,9 @@ mod tests {
         assert_eq!(focus_rows, 2);
         assert_eq!(overlapping, 10);
 
+        drop(merged);
+        drop(source);
+        drop(destination);
         fs::remove_file(destination_path)?;
         fs::remove_file(source_path)?;
         fs::remove_file(export_path)?;
@@ -1745,6 +1761,8 @@ mod tests {
             .unwrap_or_default()
             .contains("export UUID"));
 
+        drop(export_conn);
+        drop(source);
         fs::remove_file(destination_path)?;
         fs::remove_file(source_path)?;
         fs::remove_file(export_path)?;
