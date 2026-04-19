@@ -78,8 +78,20 @@ jobs:
       - name: Build release binary
         run: cargo build --release --locked
 
+      - name: Package Linux binary
+        run: |
+          mkdir -p dist
+          cp target/release/life-monitor dist/life-monitor
+          tar -C dist -czf "life-monitor-${{ needs.validate-tag.outputs.crate_version }}-linux-x86_64.tar.gz" life-monitor
+
       - name: Verify crate can be packaged
         run: cargo package --locked
+
+      - name: Upload Linux release asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-release-asset
+          path: life-monitor-${{ needs.validate-tag.outputs.crate_version }}-linux-x86_64.tar.gz
 
   test-windows:
     runs-on: windows-latest
@@ -100,6 +112,19 @@ jobs:
 
       - name: Build release binary
         run: cargo build --release --locked
+
+      - name: Package Windows binary
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item target/release/life-monitor.exe dist/life-monitor.exe
+          Compress-Archive -Path dist/life-monitor.exe -DestinationPath "life-monitor-${{ needs.validate-tag.outputs.crate_version }}-windows-x86_64.zip" -Force
+
+      - name: Upload Windows release asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release-asset
+          path: life-monitor-${{ needs.validate-tag.outputs.crate_version }}-windows-x86_64.zip
 
   publish-crate:
     runs-on: ubuntu-latest
@@ -136,12 +161,29 @@ jobs:
     needs:
       - validate-tag
       - publish-crate
+      - test-linux
+      - test-windows
 
     steps:
+      - name: Download Linux release asset
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-release-asset
+          path: release-assets
+
+      - name: Download Windows release asset
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-release-asset
+          path: release-assets
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           generate_release_notes: true
+          files: |
+            release-assets/life-monitor-${{ needs.validate-tag.outputs.crate_version }}-linux-x86_64.tar.gz
+            release-assets/life-monitor-${{ needs.validate-tag.outputs.crate_version }}-windows-x86_64.zip
           body: |
             Published `${{ needs.validate-tag.outputs.package_name }}` `${{ needs.validate-tag.outputs.crate_version }}` to crates.io.

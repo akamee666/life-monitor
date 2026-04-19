@@ -2,281 +2,348 @@
 
 ## Project Overview
 
-Cross-platform (Linux/Windows) Rust activity tracker that collects keyboard/mouse input metrics and active window data, persisting to SQLite. Built for personal productivity analytics and blog content.
+Cross-platform (Linux/Windows) Rust activity tracker that collects keyboard, mouse, scroll, and focused-window activity and stores it in a local SQLite database.
 
-**Current version:** 0.1.5 | **License:** MIT | **Repo:** github.com/akamee666/life-monitor
+The project is now intentionally local-first:
+- local SQLite is the only storage backend
+- consistent snapshot export/import is the supported cross-machine workflow
+- custom database paths can point to local disks or already-mounted network shares
+
+**Current version:** 0.1.6  
+**License:** MIT  
+**Repo:** `github.com/akamee666/life-monitor`
 
 ---
 
 ## Technology Stack
 
-| Component     | Crate/Tool                                                                               |
-| ------------- | ---------------------------------------------------------------------------------------- |
-| Async runtime | `tokio` (multi-thread, features: rt-multi-thread, time, macros, sync, net)               |
-| Database      | `rusqlite` (bundled on Windows, system lib on Linux)                                     |
-| Linux input   | `nix`, `wayland-client`, `wayland-protocols-wlr`, `x11rb`                                |
-| Windows input | `windows` crate (Win32 Raw Input API)                                                    |
-| CLI           | `clap` (derive)                                                                          |
-| HTTP (remote) | `reqwest` (optional feature)                                                             |
-| Serialization | `serde` + `serde_json` (optional, tied to `remote` feature)                              |
-| Logging       | `tracing` + `tracing-subscriber`                                                         |
-| Build         | `bindgen` (Linux only, generates `/dev/input` bindings), `embed-resource` (Windows icon) |
+| Component     | Crate/Tool |
+| ------------- | ---------- |
+| Async runtime | `tokio` |
+| Database      | `rusqlite` |
+| Linux input   | `nix`, `wayland-client`, `wayland-protocols-wlr`, `x11rb` |
+| Windows input | `windows` crate (Raw Input / Win32 APIs) |
+| CLI           | `clap` |
+| Logging       | `tracing` + `tracing-subscriber` |
+| Build         | `bindgen` (Linux input bindings), `embed-resource` (Windows icon) |
+| Metadata      | `uuid`, `sha2`, `chrono` |
+
+Notable removals:
+- the remote HTTP backend is gone
+- `reqwest`, `serde`, and `serde_json` are no longer part of the main storage story
 
 ---
 
 ## Directory Structure
 
-```
+```text
 src/
-├── main.rs                    # Entry point, task orchestration via JoinSet
-├── common.rs                  # Shared structs: InputLogger, ProcessInfo, ProcessTracker, Signals, spawn_ticker(), program_data_dir()
-├── input_bindings.rs          # Auto-generated Linux input event bindings (OUT_DIR/input_bindings.rs)
+├── main.rs                    # CLI entry point and import/export short-circuit logic
+├── common.rs                  # Shared activity records, bucket buffers, path helpers, shared math
+├── input_bindings.rs          # Generated Linux input bindings
 ├── platform/
 │   ├── mod.rs
-│   ├── common.rs              # Window struct, record_window_time()
+│   ├── common.rs              # Shared platform helpers
 │   ├── linux/
 │   │   ├── mod.rs
-│   │   ├── common.rs          # systemd startup config, uptime() via /proc/uptime
-│   │   ├── inputs.rs          # /dev/input reader, ioctl device detection, async event loop
-│   │   ├── process.rs         # Window tracker: X11 polling loop + Wayland event-driven loop (TrackingState FSM)
-│   │   ├── wayland.rs         # zwlr_foreign_toplevel_manager_v1 Wayland protocol impl
-│   │   └── x11.rs             # X11 active window via _NET_ACTIVE_WINDOW
+│   │   ├── common.rs          # Linux startup/systemd helpers
+│   │   ├── inputs.rs          # /dev/input reader and raw event aggregation
+│   │   ├── process.rs         # Wayland/X11 focus tracking runtime
+│   │   ├── wayland.rs         # zwlr_foreign_toplevel_manager_v1 integration
+│   │   └── x11.rs             # X11 active window polling
 │   └── windows/
 │       ├── mod.rs
-│       ├── common.rs          # GetForegroundWindow, GetLastInputInfo, MouseSettings, uptime()
-│       ├── inputs.rs          # Win32 Raw Input API (WM_INPUT), message-only window
-│       ├── process.rs         # Window polling loop (1s tick)
-│       └── systray.rs         # NOTIFYICONDATAW tray icon, context menu
+│       ├── common.rs          # Win32 window/idle helpers
+│       ├── inputs.rs          # Raw Input collection and bucket writes
+│       ├── process.rs         # Focus tracking runtime
+│       └── systray.rs         # Windows tray integration
 ├── storage/
 │   ├── mod.rs
-│   ├── backend.rs             # StorageBackend enum, LocalDb, DataStore trait
-│   ├── localdb.rs             # SQLite schema, granularity logic, bucket-based time updates
-│   └── remote.rs              # HTTP API backend (feature = "remote")
+│   ├── backend.rs             # StorageBackend enum and LocalDb runtime wrapper
+│   └── localdb.rs             # SQLite schema, import/export, merge, path resolution
 └── utils/
     ├── mod.rs
-    ├── args.rs                # Clap CLI struct
-    ├── lock.rs                # Single-instance enforcement via flock (Linux) / LockFile (Windows)
-    └── logger.rs              # tracing_subscriber setup, dual output (file + stdout), spy.log
+    ├── args.rs                # Clap CLI definition and help text
+    ├── dpi.rs                 # DPI persistence and fallback prompting
+    ├── lock.rs                # Instance lock and per-database operation lock
+    └── logger.rs              # tracing setup and log file creation
+
 .github/
 └── workflows/
-    ├── nix.yml                # GitHub Actions CI using the repo's nix develop shell
-    └── no-nix.yml             # GitHub Actions CI using standard Ubuntu + Rust setup
+    ├── nix.yml                # Nix-based CI
+    ├── no-nix.yml             # Linux + Windows CI for pushes and PRs
+    └── release.yml            # Tag-driven release/publish workflow
 ```
 
 ---
 
 ## Cargo Features
 
-| Feature   | Default | What it enables                                                            |
-| --------- | ------- | -------------------------------------------------------------------------- |
-| `wayland` | ✅      | `wayland-client`, `wayland-protocols-wlr`                                  |
-| `x11`     | ❌      | `x11rb` window tracking                                                    |
-| `remote`  | ✅      | `reqwest`, `serde`, `serde_json`; activates `RemoteDb` and `--remote` flag |
+| Feature   | Default | What it enables |
+| --------- | ------- | ----------------|
+| `wayland` | ✅      | Wayland focused-window tracking |
+| `x11`     | ❌      | X11 focused-window tracking |
 
 Build variants:
 
 ```bash
-cargo build                          # Linux, Wayland (default)
-cargo build --features x11           # Linux, X11
-cargo build --features remote        # Adds remote API support
-cargo build --target x86_64-pc-windows-gnu  # Windows cross-compile
+cargo build
+cargo build --features x11
+cargo build --target x86_64-pc-windows-gnu
 ```
 
 ---
 
-## Core Data Structures
+## Core Runtime Model
 
-### `InputLogger` (`src/common.rs`)
+### Input data model
 
-Tracks cumulative input metrics per session. Loaded from DB on startup, updated in memory, flushed on interval.
+Keyboard and mouse data are accumulated into time buckets before being flushed to SQLite.
 
-- `left_clicks`, `right_clicks`, `middle_clicks`, `key_presses`
-- `pixels_traveled`, `cm_traveled` (computed from DPI), `mouse_dpi`
-- `vertical_scroll_clicks/cm`, `horizontal_scroll_clicks/cm`
-- `w: WindowsSpecific` (Windows-only: pressed key state, screen dimensions, last abs position)
+Important shared types in `src/common.rs`:
+- `InputBucketRecord`
+- `InputBucketBuffer`
+- `BucketMetadata`
 
-### `ProcessInfo` (`src/common.rs`)
+Input buckets record:
+- `source_id`
+- `bucket_start_utc`
+- `bucket_end_utc`
+- `local_date`
+- `local_hour`
+- `timezone_offset_minutes`
+- `granularity_minutes`
+- `left_clicks`
+- `right_clicks`
+- `middle_clicks`
+- `key_presses`
+- `mouse_distance_cm`
+- `scroll_vertical_cm`
+- `scroll_horizontal_cm`
 
-- `w_name: String` — window title
-- `w_class: String` — process/app name
-- `w_time: u64` — seconds focused
+### Focus data model
 
-### `ProcessTracker` (`src/common.rs`)
+Focused-window time is also bucketed instead of stored as a single cumulative total.
 
-Wraps `Vec<ProcessInfo>` with last-seen window state and uptime timestamp.
+Important shared types:
+- `FocusBucketRecord`
+- `FocusBucketBuffer`
+- `ProcessTracker`
+- `Window`
 
-### `StorageBackend` (`src/storage/backend.rs`)
+Focus buckets record:
+- source and time bucket boundaries
+- normalized app identifier
+- window title
+- window class
+- focus seconds
 
-Enum: `Local(LocalDb)` | `Api(RemoteDb)`. Both implement `DataStore` trait:
+### Storage backend
 
-- `store_keys_data`, `get_keys_data`
-- `store_proc_data`, `get_proc_data`
+`StorageBackend` only has one implementation now:
+- `StorageBackend::Local(LocalDb)`
+
+The old API/remote backend no longer exists.
 
 ---
 
 ## SQLite Schema
 
-**`procs` table** — always 1 row per unique `window_name`:
+Main tables created in `src/storage/localdb.rs`:
 
-```sql
-id INTEGER PK, window_name TEXT, time_focused INTEGER, window_class TEXT
-```
+- `schema_meta`
+- `sources`
+- `input_buckets`
+- `focus_buckets`
+- `exports`
+- `imports`
+- `sessions`
 
-**`keys` table** — rows depend on granularity level:
+Purpose of the metadata tables:
+- `exports` records snapshot exports so imports can identify snapshot origin
+- `imports` prevents duplicate imports of the same snapshot
+- `sessions` keeps session-oriented metadata for later reporting and overlap analysis
 
-| Level       | Rows/day | Interval |
-| ----------- | -------- | -------- |
-| 0 (default) | 1        | 24h      |
-| 1           | 6        | 4h       |
-| 2           | 12       | 2h       |
-| 3           | 24       | 1h       |
-| 4           | 48       | 30min    |
-| 5           | 96       | 15min    |
+### Default data locations
 
-```sql
-id INTEGER PK, left_clicks, right_clicks, middle_clicks, key_presses, cm_traveled INTEGER, timestamp TEXT (HH:MM)
-```
+- Linux DB: `~/.local/share/life_monitor/data.db`
+- Linux log: `~/.local/share/life_monitor/spy.log`
+- Windows DB: `%LOCALAPPDATA%\life_monitor\data.db`
+- Windows log: `%LOCALAPPDATA%\life_monitor\spy.log`
 
-Updates use `find_bucket()` to floor current time to the nearest interval and `UPDATE WHERE timestamp = ?`.
+### Custom database paths
 
-**Data paths:**
+The program accepts `--db-path` pointing to:
+- a SQLite file
+- a directory, in which case `data.db` is created or reused inside it
+- a mounted network share path such as Samba or NFS
 
-- Linux: `~/.local/share/life_monitor/data.db`
-- Windows: `%LOCALAPPDATA%\life_monitor\data.db`
-- Log file: same dir, `spy.log`
+When `--db-path` is provided:
+- the path is remembered for later runs
+- the remembered path is reused until another `--db-path` is provided
+- if the remembered path becomes unavailable, the program returns a user-facing recovery message
+
+### Snapshot workflow
+
+Supported movement between machines is file-based:
+- `--export-db` creates a consistent SQLite snapshot
+- `--import-db` merges a prior snapshot
+- `--dry-run` previews the import plan without modifying the destination
+
+Import flow:
+1. open destination DB
+2. integrity-check source and destination
+3. create automatic pre-import backup
+4. attach source DB read-only
+5. validate schema version
+6. merge inside a transaction
+7. record import metadata to prevent duplicate imports
 
 ---
 
 ## Task Architecture
 
-`main()` spawns tasks into a `JoinSet`, any task returning = fatal error:
+`main()` either:
+- handles import/export commands and exits
+- or initializes the local DB backend and starts runtime tasks
 
-1. **Input task** — `platform::{linux,windows}::inputs::run()` — reads raw input events, accumulates to `InputLogger`, flushes on `DbUpdate` signal
-2. **Process task** — `platform::{linux,windows}::process::run()` — tracks active window time, flushes on interval
-3. **Systray task** (Windows only) — `platform::windows::systray::init_tray()`
+Runtime tasks:
+1. input task
+2. process/focus task
+3. systray task on Windows only
 
-Ticker pattern: `spawn_ticker(tx, Duration, Signals::DbUpdate)` sends signals to tasks.
-
-### Linux Input Architecture
-
-- `discover_devices()` scans `/dev/input`, classifies via ioctl bitmask checks (`is_keyboard`, `is_mouse`)
-- Each device gets its own `AsyncFd<File>` task
-- Events sent over `mpsc::channel::<InputEvent>` to main loop
-- Idle detection: `static mut IDLE_TIME: u64` updated by 20s ticker comparing `event.time` to `SystemTime::now()`
-
-### Linux Window Tracking (Wayland)
-
-`TrackingState` FSM: `NoFocus` → `Active(Window, Instant)` ↔ `Idle(Window)`
-
-- `FocusEvent::FocusGained/FocusLost` from `zwlr_foreign_toplevel_handle_v1`
-- Idle check pauses timer, resumes on activity
-
-### Windows Input Architecture
-
-- Message-only `HWND` window with `RIDEV_INPUTSINK` for keyboard + mouse
-- `WM_INPUT` → `handle_raw_input()` → `mpsc::Sender<RawInputEvent>`
-- Runs in `spawn_blocking` thread (Win32 message loop is blocking)
+Ticker pattern:
+- `spawn_ticker()` sends `Signals::DbUpdate`
+- input and focus buffers are flushed periodically
 
 ---
 
-## Known Issues / TODOs in Code
+## Platform Notes
 
-- `is_idle()` on Windows still returns `true` based on uptime instead of real idle duration
-- `configure_startup()` on Windows is still `unimplemented!()`
-- Scroll tracking on Windows (`RI_MOUSE_WHEEL`) reads `usButtonData` but still does not use it
-- The remote backend still needs docs and more error-handling cleanup
+### Linux input path
 
----
+- reads raw events from `/dev/input/event*`
+- classifies devices with ioctl capability checks
+- aggregates relative mouse motion per report before converting to centimeters
+- uses raw evdev events, so desktop pointer acceleration is not part of the measurement path
 
-## Unresolved Product Gaps
+### Windows input path
 
-- There is still no built-in visual representation of the collected data. The project stores metrics in SQLite, but users must inspect the database manually or use external tools. A TUI is planned but does not exist yet.
-- Data is still installation-local by default. If one person uses `life-monitor` across multiple operating systems or multiple computers, each installation keeps its own database and the activity data remains split.
-- The current remote backend is optional and does not yet provide a complete, reliable sync story for merging one user's history across different machines or dual-boot setups.
-- There is no built-in import/export or merge workflow for combining data gathered from separate installations into one canonical dataset.
+- uses Raw Input through a message-only window
+- keeps absolute and relative motion handling separate
+- shares the same core motion math where possible
+- uses real `GetLastInputInfo()`-based idle timing now
 
----
+### DPI handling
 
-## Build System
-
-**`build.rs`:**
-
-- Linux: runs `bindgen` on `linux/input.h` + `linux/input-event-codes.h` → `$OUT_DIR/input_bindings.rs`
-- All platforms: `embed-resource::compile("icon-resource.rc")` for Windows icon embedding
-
-**`flake.nix`** (NixOS):
-
-```bash
-nix build .#linux     # Linux build
-nix build .#windows   # Cross-compile to x86_64-pc-windows-gnu via mingwW64
-nix develop           # Dev shell with full toolchain + wine64 for testing Windows binary
-```
-
-Dev shell sets `LIBCLANG_PATH`, `BINDGEN_EXTRA_CLANG_ARGS`, `WINEPREFIX` automatically.
-
-**GitHub Actions CI** (`.github/workflows/nix.yml`, `.github/workflows/no-nix.yml`):
-
-- Both trigger on `push` and `pull_request`
-- `nix.yml` runs `nix develop --command ci-checks` and `nix develop --command ci-test-build`
-- `no-nix.yml` runs `cargo fmt -- --check`, `cargo-deny`, `cargo test`, and `cargo build --release`
-- Local Nix helper commands:
-  - `nix develop --command ci-checks`
-  - `nix develop --command ci-test-build`
-  - `nix develop --command ci-local`
+The project now treats DPI/CPI as persistent configuration:
+- `--dpi` overrides and remembers the value
+- remembered DPI is reused on later runs
+- if no DPI is known, interactive runs prompt once and then persist the value
+- generic OS-wide automatic CPI detection is not relied on because it is not portable or trustworthy enough
 
 ---
 
-## CLI Reference
+## Tests and CI
 
-```
--i/--interval <SECS>    DB update interval [default: 300]; debug mode uses 5
--g/--gran <0-5>         Granularity level for keys table [default: 0]
--d/--debug              Verbose logging + 5s interval
--p/--dpi <DPI>          Mouse DPI for cm calculation [default: 800]
--c/--clear              Delete data.db and start fresh
--r/--remote <FILE>      JSON config for remote API (requires `remote` feature)
---enable-startup        Install systemd user service (Linux) / Startup shortcut (Windows, unimplemented)
---disable-startup       Remove startup config
--s/--no-systray         Disable tray icon (Windows only)
-```
+Current CI:
+- `.github/workflows/no-nix.yml`
+  - Ubuntu format/check/test/build
+  - Windows test/build
+- `.github/workflows/nix.yml`
+  - Nix-based validation
+- `.github/workflows/release.yml`
+  - tag-driven release validation and crates.io publish
+
+Current release workflow:
+- triggers on tags like `v0.1.6`
+- verifies tag version matches `Cargo.toml`
+- reruns Linux and Windows validation
+- runs `cargo package`
+- publishes to crates.io
+- creates a GitHub release entry
+- attaches Linux and Windows release archives to the GitHub release
+
+Current limitation:
+- changelog generation is still not wired into CI automatically; `git-cliff` config exists but the release notes/changelog update step is still manual
 
 ---
 
-## Environment Variables
+## Today’s Changes
 
-| Variable                | Purpose                                          |
-| ----------------------- | ------------------------------------------------ |
-| `WAYLAND_DISPLAY`             | Wayland session detection                        |
-| `WAYLAND_SOCKET`              | Additional Wayland session detection             |
-| `XDG_SESSION_TYPE`            | Session type fallback for Wayland/X11 detection  |
-| `HYPRLAND_INSTANCE_SIGNATURE` | Hyprland-specific Wayland session hint           |
-| `DISPLAY`                     | X11 session detection / Xwayland compatibility   |
-| `RUST_LOG`                    | Standard tracing filter override                 |
-| `API_KEY`                     | Remote API auth (fallback if not in config JSON) |
-| `HOME` / `LOCALAPPDATA`       | Data directory resolution                        |
+This session introduced or finalized:
+- removal of the remote backend
+- local-first import/export workflow
+- remembered DB paths
+- mounted-share-friendly DB path handling
+- operation locking around DB writes/import/export
+- new bucket-oriented schema and merge logic
+- improved Clap help output
+- DPI persistence and interactive fallback
+- more explicit user-facing logging around storage and share failures
+- Linux raw-motion accuracy fix by aggregating `REL_X` and `REL_Y` per report
+- reduced Windows input boilerplate and added Windows CI coverage
+- tag-driven release workflow for crates.io publishing
+
+---
+
+## Places To Improve
+
+### Code that can be refactored
+
+- `src/storage/localdb.rs`
+  - still holds too many responsibilities: schema creation, path resolution, import planning, merge execution, hashing, backups, and tests
+  - a future split could separate:
+    - schema/setup
+    - import/export
+    - DB path/config
+    - query helpers
+
+- `src/common.rs`
+  - central and useful, but now broad
+  - bucket records, path helpers, and math helpers may eventually deserve smaller modules
+
+- platform focus runtimes
+  - Linux and Windows now share the storage model, but focus-loop control flow is still structured differently
+  - there is room to unify higher-level flush behavior while keeping platform-specific discovery logic separate
+
+### Code that still needs work
+
+- Windows startup support is still `unimplemented!()`
+- there is no built-in UI/TUI/dashboard yet
+- release workflow does not yet upload platform binaries as downloadable assets
+- changelog generation is still manual unless an external tool is added
+- DB locking across remote shares is still best-effort and depends on share/filesystem semantics
+
+---
+
+## Missing Product Features
+
+- import conflict visualization beyond the current dry-run summary
+- richer analytics and built-in summaries
+- session-level reports built on the `sessions` table
+- better calibration workflow for mouse DPI/CPI
+- optional release artifacts for users who do not install via Cargo
 
 ---
 
 ## Common Commands
 
 ```bash
-cargo check                          # Fast type-check
-cargo build                          # Debug build
-cargo build --release                # Release build
-cargo test                           # Run tests (storage/localdb has unit tests)
-cargo clippy -- -D warnings          # Lint
-cargo fmt -- --check                 # Format check
-./lint.sh                            # All three above
+cargo check
+cargo build
+cargo build --release
+cargo test
+cargo clippy -- -D warnings
+cargo fmt -- --check
+
 nix develop --command ci-checks
 nix develop --command ci-test-build
-nix develop --command ci-local
-nix develop -c cargo test --features x11
 nix build .#linux
 nix build .#windows
 
-# Run with debug output
-cargo run -- --debug --interval 5
-
-# Cross-compile for Windows (inside nix devShell or with mingw toolchain)
-cargo build --target x86_64-pc-windows-gnu
+cargo run -- --debug
+cargo run -- --db-path /mnt/shared/life-monitor
+cargo run -- --export-db ./snapshot.sqlite
+cargo run -- --import-db ./snapshot.sqlite --dry-run
 ```

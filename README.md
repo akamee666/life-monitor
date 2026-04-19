@@ -1,186 +1,190 @@
 # Life Monitor
 
-`life-monitor` is a cross-platform Rust program for tracking computer activity on Linux and Windows. It counts keyboard and mouse usage, keeps track of which window is focused over time, and saves everything in a SQLite database. It was originally built for personal productivity analysis and blog posts, but the data can also be used for your own scripts, reports, or dashboards.
+`life-monitor` is a cross-platform Rust activity tracker for Linux and Windows. It collects raw keyboard and mouse activity, tracks which window is focused over time, and stores the data in SQLite for later analysis.
+
+The project is now local-first:
+- activity is written to a local SQLite database
+- you can move or merge history between machines with snapshot export/import
+- you can place the database on another disk or an already-mounted network share
+
+There is no built-in dashboard yet. The output is a SQLite database plus a log file, so the current workflow is to inspect the data with SQL, scripts, or external tools.
 
 ## What it tracks
 
-- Keyboard key presses
-- Mouse clicks
-- Mouse travel distance in pixels and estimated centimeters
-- Vertical and horizontal scroll input
-- The name of the focused window and the app it belongs to over time
+- keyboard key presses
+- left, right, and middle mouse clicks
+- estimated mouse travel distance in centimeters
+- vertical and horizontal scroll activity
+- focused window title, app identifier, and focus time
 
-> [!NOTE]
-> The program does not have a built-in dashboard yet. Instead, it writes the collected information to a SQLite database and a log file. You can inspect the database with tools such as [DB Browser for SQLite](https://sqlitebrowser.org/). I just got back to working in this project and one of my plans is to create a TUI to display the data, so bear with me a bit.
+## Current Status
 
-### Current status
+The main workflow is stable enough for local use:
+- local SQLite storage is the supported default
+- import/export snapshots are the intended cross-machine sync mechanism
+- custom database paths are supported
+- remembered DB paths and remembered DPI reduce repetitive setup
 
-The project is usable, but it is still being improved. The main workflow is local SQLite storage with historical time buckets. Wayland support and Linux autostart through `systemd --user` are available, and snapshot import/export plus custom database paths are now the intended way to move or combine data between systems.
+Still missing:
+- built-in charts or TUI
+- Windows startup implementation
+- release binaries attached to GitHub releases
 
-## Installing
+## Install
 
-You can install `life-monitor` with Cargo:
+### From crates.io
 
 ```bash
 cargo install life-monitor
+```
+
+Then run:
+
+```bash
 life-monitor
 ```
 
-The binary is typically installed to:
+### From source
 
 ```bash
-~/.cargo/bin/life-monitor
+git clone https://github.com/akamee666/life-monitor.git
+cd life-monitor
+cargo build --release
 ```
 
-If `life-monitor` is not found after installation, make sure Cargo's bin directory is in your `PATH`.
-
-For Fish:
+Binary location:
 
 ```bash
-fish_add_path ~/.cargo/bin
+./target/release/life-monitor
 ```
 
-For bash, paste the following code in `~/.bashrc`
+## Build Requirements
 
-```bash
-case ":$PATH:" in
-  *":$HOME/.cargo/bin:"*) ;;
-  *) export PATH="$HOME/.cargo/bin:$PATH" ;;
-esac
-```
+### Linux
 
-### Building from source instead
-
-#### 1. Install Rust
-
-Install Rust with [rustup](https://rustup.rs/) and make sure you have a recent stable toolchain:
-
-```bash
-rustup install stable
-rustup default stable
-```
-
-#### 2. Install system dependencies
-
-To build on Linux, you need SQLite, OpenSSL, `pkg-config`, a C compiler toolchain, and `libclang`. `libclang` is needed because this project generates Rust bindings for Linux input headers during the build.
+You need:
+- a recent Rust toolchain
+- `clang`
+- `libclang`
+- SQLite development libraries
+- OpenSSL development libraries
+- `pkg-config`
+- Wayland/X11 development libraries
 
 Examples:
 
-##### Arch Linux
+#### Arch Linux
 
 ```bash
 sudo pacman -S --needed base-devel clang sqlite openssl pkgconf wayland libx11 libxi libxtst
 ```
 
-##### Debian / Ubuntu
+#### Debian / Ubuntu
 
 ```bash
 sudo apt update
 sudo apt install -y build-essential clang libclang-dev pkg-config libsqlite3-dev libssl-dev libwayland-dev libx11-dev libxi-dev libxtst-dev
 ```
 
-##### Fedora
+#### Fedora
 
 ```bash
 sudo dnf install -y gcc gcc-c++ clang llvm-devel pkgconf-pkg-config sqlite-devel openssl-devel wayland-devel libX11-devel libXi-devel libXtst-devel
 ```
 
-#### 3. Clone and build
+### Nix
+
+This repository ships a `flake.nix` with a development shell and build targets:
 
 ```bash
-git clone https://github.com/akamee666/life-monitor.git
-cd life-monitor
-cargo build --release
-# Or build for windows
-rustup target add x86_64-pc-windows-gnu
-cargo build --target x86_64-pc-windows-gnu
+nix develop
+nix build .#linux
+nix build .#windows
 ```
 
-The compiled binary will be available at:
+## Linux Permissions
 
-```bash
-./target/release/life-monitor
-```
+On Linux, `life-monitor` reads raw input events from `/dev/input`. Your user usually needs permission to access those devices.
 
-For a quick local run:
-
-```bash
-cargo run -- --debug
-```
-
-## Linux permissions
-
-On Linux, `life-monitor` reads keyboard and mouse events directly from `/dev/input`. Those device files are usually protected, so your user account normally needs to be in the `input` group.
-
-Without that permission, the program may start but still fail to read your input devices.
-
-Add your user to the group:
+Typical setup:
 
 ```bash
 sudo usermod -aG input $USER
 ```
 
-Then log out and log back in so the new group membership is applied. After that, verify it with:
-
-```bash
-groups
-```
-
-You should see `input` in the output.
-
-### Building with Nix
-
-This repository includes a `flake.nix` file that sets up a ready-to-use development environment for Linux and also supports Windows cross-compilation.
-
-Enter the development shell:
-
-```bash
-nix develop
-cargo build
-```
-
-Or build the Linux package:
-
-```bash
-nix build .#linux
-```
-
-Or cross-build the Windows package:
-
-```bash
-nix build .#windows
-```
-
-The Nix development shell already provides the Rust toolchain, `libclang`, and the extra environment variables needed for bindgen to work correctly.
+Then log out and back in.
 
 ## Usage
 
-Basic usage:
+Basic form:
 
 ```bash
 life-monitor [OPTIONS]
 ```
 
-### CLI options
+Useful examples:
 
-| Flag                      | Description                                                                                            |
-| ------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `-i`, `--interval <SECS>` | How often the program writes its in-memory data to storage, in seconds. Default is `300`. Debug mode uses `5` if you do not set an interval yourself. |
-| `-d`, `--debug`           | Turn on more detailed logs and use a shorter default write interval. |
-| `-p`, `--dpi <DPI>`       | Mouse DPI used when estimating cursor distance in centimeters. Default is `800`. |
-| `-c`, `--clear`           | Delete the current database and start again with an empty one. |
-| `--db-path <PATH>`        | Use a specific SQLite database path, including a mounted network share path such as Samba or NFS. |
-| `--export-db <FILE>`      | Export a consistent SQLite snapshot into another file and exit. |
-| `--import-db <FILE>`      | Import a previously exported SQLite snapshot into the current database and exit. |
-| `--dry-run`               | Show the planned import changes without modifying the database. Requires `--import-db`. |
-| `--import-notes <TEXT>`   | Record optional notes alongside the import metadata. Requires `--import-db`. |
-| `--enable-startup`        | Set the program to start automatically for the current user session. |
-| `--disable-startup`       | Remove the automatic startup configuration for the current user session. |
-| `-s`, `--no-systray`      | Windows only: do not show the tray icon. |
+```bash
+life-monitor
+life-monitor --debug --interval 10
+life-monitor --db-path /mnt/shared/life-monitor
+life-monitor --export-db ./life-monitor-snapshot.sqlite
+life-monitor --import-db ./life-monitor-snapshot.sqlite --dry-run
+life-monitor --import-db ./life-monitor-snapshot.sqlite --import-notes "desktop sync"
+```
 
-## Snapshot workflow
+## Main CLI Options
 
-To move data between machines or operating systems, export a SQLite snapshot from one machine and import it into another:
+| Flag | Purpose |
+| ---- | ------- |
+| `-i`, `--interval <SECS>` | Flush buffered activity to SQLite every N seconds |
+| `-d`, `--debug` | Enable more verbose logs and a shorter default interval |
+| `-p`, `--dpi <DPI>` | Set mouse DPI/CPI for distance estimation and remember it |
+| `-c`, `--clear` | Delete the current database and start from an empty one |
+| `--db-path <PATH>` | Use a custom SQLite path or directory and remember it |
+| `--export-db <FILE>` | Export the current DB into a consistent SQLite snapshot |
+| `--import-db <FILE>` | Import a previously exported snapshot |
+| `--dry-run` | Preview the import without modifying the destination DB |
+| `--import-notes <TEXT>` | Record notes alongside import metadata |
+| `--enable-startup` | Enable automatic startup for the current user session |
+| `--disable-startup` | Disable automatic startup for the current user session |
+| `-s`, `--no-systray` | Windows only: disable the tray icon |
+
+Run `life-monitor --help` for the full generated help text.
+
+## Database Paths and Mounted Shares
+
+By default the database lives in:
+
+### Linux
+
+- database: `~/.local/share/life_monitor/data.db`
+- log file: `~/.local/share/life_monitor/spy.log`
+
+### Windows
+
+- database: `%LOCALAPPDATA%\life_monitor\data.db`
+- log file: `%LOCALAPPDATA%\life_monitor\spy.log`
+
+You can override that with `--db-path`.
+
+Supported `--db-path` forms:
+- a direct SQLite file path
+- a directory, in which case `life-monitor` uses `data.db` inside it
+- a mounted network share path such as Samba or NFS
+
+Behavior:
+- the path is remembered for future runs
+- supplying `--db-path` again overwrites the remembered path
+- if a remembered share is unavailable later, the program errors with a recovery message telling you to remount the share or provide a new DB path
+
+Important limitation:
+- `life-monitor` does not mount remote shares and does not prompt for share credentials
+- the OS must already have access to the path you provide
+
+## Snapshot Export and Import
+
+To move or merge activity history between machines, use snapshot export/import:
 
 ```bash
 life-monitor --export-db ./life-monitor-snapshot.sqlite
@@ -188,62 +192,130 @@ life-monitor --import-db ./life-monitor-snapshot.sqlite --dry-run
 life-monitor --import-db ./life-monitor-snapshot.sqlite
 ```
 
-The import command validates both databases, creates an automatic backup of the destination, and records metadata so the same snapshot is not imported twice by accident.
+Export behavior:
+- creates a consistent SQLite snapshot
+- does not copy the raw DB file blindly
 
-## Data locations
+Import behavior:
+- validates source and destination integrity
+- creates an automatic pre-import backup
+- merges bucketed activity data
+- records metadata so the same snapshot is not imported twice accidentally
+
+## Data Model Summary
+
+The old cumulative tables have been replaced by bucket-based records.
+
+Main tables:
+- `sources`
+- `input_buckets`
+- `focus_buckets`
+- `exports`
+- `imports`
+- `sessions`
+
+This lets the project support:
+- historical activity by bucket
+- merge/import/export workflows
+- per-source tracking
+- future session-level reporting
+
+## DPI and Mouse Distance
+
+Mouse distance is estimated from raw input counts plus a configured DPI/CPI value.
+
+Current behavior:
+- if you provide `--dpi`, the value is remembered
+- if you do not provide `--dpi`, `life-monitor` reuses the remembered value
+- if no DPI is known yet, interactive runs ask once and persist it
+
+Why this works this way:
+- raw input avoids desktop pointer acceleration in the measurement path
+- but raw counts still need DPI/CPI to estimate real-world distance in centimeters
+- generic automatic CPI detection is not portable enough across Linux and Windows setups to be trusted as the main path
+
+## Desktop Session Tracking
+
+Linux:
+- Wayland is preferred when Wayland session indicators are present
+- X11 is used when running in an X11 session
+
+Windows:
+- input uses Raw Input
+- focus tracking uses Win32 window APIs
+
+## Startup
 
 ### Linux
 
-- Database: `~/.local/share/life_monitor/data.db`
-- Log file: `~/.local/share/life_monitor/spy.log`
+`--enable-startup` creates a `systemd --user` service.
 
-### Windows
-
-- Database: `%LOCALAPPDATA%\life_monitor\data.db`
-- Log file: `%LOCALAPPDATA%\life_monitor\spy.log`
-
-If you use `--db-path`, the database and its operation lock file are created at the path you provide instead of the default location.
-
-## Desktop session support
-
-On Linux, the program chooses how to track the active window based on the graphical session it is running inside:
-
-- Wayland if the process sees Wayland session indicators
-- X11 if the process is running in an X11 session
-
-Many Wayland desktops also provide a `DISPLAY` variable through Xwayland, so the detection logic is written to prefer Wayland whenever clear Wayland session variables are present.
-
-## Autostart
-
-On Linux, `--enable-startup` creates a `systemd --user` service for the current user. It is meant for starting with your desktop session, not for running as a system-wide service in the background.
-
-Because active-window tracking depends on the graphical session, the safest way to enable startup is to run:
+Use it from the graphical session where you normally run the program:
 
 ```bash
 life-monitor --enable-startup
 ```
 
-from the same graphical session where you normally use the program.
-
-To disable it later:
+Disable it with:
 
 ```bash
 life-monitor --disable-startup
 ```
 
-## Notes and limitations
+### Windows
 
-- Mouse distance is still an estimate based on DPI and raw pointer movement.
-- Some Windows-specific parts of the project are still less polished than the Linux side.
-- Security software may flag the program because it reads input and active-window information. The project does not try to hide this behavior, and the source code is available for inspection.
+Windows startup wiring is not finished yet.
+
+## CI and Releases
+
+Current CI:
+- push/PR validation on Linux
+- push/PR validation on Windows
+- tag-driven release workflow for crates.io publishing
+
+Current release workflow:
+- push a tag like `v0.1.6`
+- validate that the tag matches `Cargo.toml`
+- rerun checks
+- publish to crates.io
+- create a GitHub Release entry
+- attach Linux and Windows release archives for download
+
+## Changelog Strategy
+
+This repository now includes a `CHANGELOG.md`. The recommended approach is:
+- keep an `Unreleased` section during normal development
+- move those entries into a versioned section when you tag a release
+- group entries under:
+  - `Added`
+  - `Changed`
+  - `Fixed`
+  - `Removed`
+
+If you want automatic generation later, `git-cliff` is a good fit for Rust projects because it can generate release notes from conventional-style commit messages and tags.
+
+A basic `git-cliff` config is now included as [cliff.toml](/home/ak4m3/programming/life-monitor/cliff.toml). A typical manual flow looks like:
+
+```bash
+git cliff --unreleased --tag v0.1.6 > /tmp/CHANGELOG.new
+git cliff --tag v0.1.6 > CHANGELOG.md
+```
+
+The exact command can be adjusted depending on whether you want to rewrite the full changelog or only preview the next release notes.
+
+## Notes and Limitations
+
+- there is still no built-in dashboard or TUI
+- mouse distance is still an estimate, not a physical measurement guarantee
+- remote-share locking is best-effort and depends on filesystem/share semantics
+- some Windows-specific polish is still missing
 
 ## Contributing
 
-Issues and pull requests are welcome. If you report a bug, especially one related to platform-specific behavior, it helps a lot if you include:
+Bug reports and PRs are welcome.
 
-- your operating system
-- desktop session type (`Wayland` or `X11`)
+If you report a platform-specific issue, include:
+- operating system
+- desktop session type (`Wayland` or `X11`) on Linux
 - how you launched the program
-- relevant log output
-
-That information is especially useful when the problem is related to Linux permissions, session detection, or startup behavior.
+- relevant logs

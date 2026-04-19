@@ -1,0 +1,43 @@
+[changelog]
+header = """
+# Changelog
+
+All notable changes to this project are documented in this file.
+
+The format is based on Keep a Changelog and generated with git-cliff.
+"""
+
+body = """
+{% if version %}## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}{% else %}## [Unreleased]{% endif %}
+
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group }}
+
+{% for commit in commits %}
+- {{ commit.message | upper_first }}{% if commit.remote.username %} by @{{ commit.remote.username }}{% endif %}
+{% endfor %}
+{% endfor %}
+
+"""
+
+footer = ""
+trim = true
+
+[git]
+conventional_commits = true
+filter_unconventional = false
+split_commits = false
+tag_pattern = "v[0-9].*"
+
+commit_parsers = [
+  { message = "^feat", group = "Added" },
+  { message = "^fix", group = "Fixed" },
+  { message = "^refactor", group = "Changed" },
+  { message = "^perf", group = "Changed" },
+  { message = "^docs", group = "Changed" },
+  { message = "^ci", group = "Changed" },
+  { message = "^test", group = "Changed" },
+  { message = "^build", group = "Changed" },
+  { message = "^chore", group = "Changed" },
+  { message = ".*", group = "Changed" },
+]
