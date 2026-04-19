@@ -40,36 +40,9 @@ Current release line:
 
 ---
 
-## What Changed Recently
-
-These recent commits define the current architecture and are worth reading before large changes:
-
-- `6036373` `feat(storage): move to local-first sqlite snapshots`
-- `95b097e` `refactor(input): improve raw motion tracking across platforms`
-- `77fd3d2` `ci(windows): run tests and release builds on windows`
-- `daf8f5a` `ci(release): publish tagged crates after full validation`
-- `971fdbe` `release: prepare v0.1.6 publication flow`
-- `3bbd602` `build: update lockfile for v0.1.6`
-
-Those commits are the reason:
-
-- the remote backend is gone
-- the storage model is bucket-based
-- import/export is now the supported sync story
-- DB paths can be remembered and point at mounted shares
-- DPI is persistent configuration
-- Windows has its own CI job
-- release tags now publish to crates.io and attach release binaries
-
-If a change appears to conflict with those goals, stop and verify whether the change is actually intended.
-
----
-
 ## Core Product Model
 
 ### Storage strategy
-
-Do not reintroduce the old remote/API sync idea casually.
 
 The intended product model is:
 

@@ -6,16 +6,18 @@
 - you can move or merge history between machines with snapshot export/import
 - you can place the database on another disk or an already-mounted network share
 
-There is no built-in dashboard *yet*. The output is a SQLite database plus a log file, so the current workflow is to inspect the data with SQL, scripts, or external tools. 
+There is no built-in dashboard _yet_. The output is a SQLite database plus a log file, so the current workflow is to inspect the data with SQL, scripts, or external tools.
 
 ## Current Status
 
 The main workflow is stable enough for local use:
+
 - local SQLite storage is the supported default.
 - import/export snapshots are the intended cross-machine sync mechanism
 - remote samba/NFS shares are supported.
 
 Still missing:
+
 - built-in charts or TUI
 - Windows startup implementation
 
@@ -52,6 +54,7 @@ Binary location:
 ### Linux
 
 You need:
+
 - a recent Rust toolchain
 - `clang`
 - `libclang`
@@ -115,20 +118,20 @@ life-monitor --import-db ./life-monitor-snapshot.sqlite --import-notes "desktop 
 
 ## Main CLI Options
 
-| Flag | Purpose |
-| ---- | ------- |
-| `-i`, `--interval <SECS>` | Flush buffered activity to SQLite every N seconds |
-| `-d`, `--debug` | Enable more verbose logs and a shorter default interval |
-| `-p`, `--dpi <DPI>` | Set mouse DPI/CPI for distance estimation and remember it |
-| `-c`, `--clear` | Delete the current database and start from an empty one |
-| `--db-path <PATH>` | Use a custom SQLite path or directory and remember it |
-| `--export-db <FILE>` | Export the current DB into a consistent SQLite snapshot |
-| `--import-db <FILE>` | Import a previously exported snapshot |
-| `--dry-run` | Preview the import without modifying the destination DB |
-| `--import-notes <TEXT>` | Record notes alongside import metadata |
-| `--enable-startup` | Enable automatic startup for the current user session |
-| `--disable-startup` | Disable automatic startup for the current user session |
-| `-s`, `--no-systray` | Windows only: disable the tray icon |
+| Flag                      | Purpose                                                   |
+| ------------------------- | --------------------------------------------------------- |
+| `-i`, `--interval <SECS>` | Flush buffered activity to SQLite every N seconds         |
+| `-d`, `--debug`           | Enable more verbose logs and a shorter default interval   |
+| `-p`, `--dpi <DPI>`       | Set mouse DPI/CPI for distance estimation and remember it |
+| `-c`, `--clear`           | Delete the current database and start from an empty one   |
+| `--db-path <PATH>`        | Use a custom SQLite path or directory and remember it     |
+| `--export-db <FILE>`      | Export the current DB into a consistent SQLite snapshot   |
+| `--import-db <FILE>`      | Import a previously exported snapshot                     |
+| `--dry-run`               | Preview the import without modifying the destination DB   |
+| `--import-notes <TEXT>`   | Record notes alongside import metadata                    |
+| `--enable-startup`        | Enable automatic startup for the current user session     |
+| `--disable-startup`       | Disable automatic startup for the current user session    |
+| `-s`, `--no-systray`      | Windows only: disable the tray icon                       |
 
 Run `life-monitor --help` for the full generated help text.
 
@@ -149,16 +152,19 @@ By default the database lives in:
 You can override that with `--db-path`.
 
 Supported `--db-path` forms:
+
 - a direct SQLite file path
 - a directory, in which case `life-monitor` uses `data.db` inside it
 - a mounted network share path such as Samba or NFS
 
 Behavior:
+
 - the path is remembered for future runs
 - supplying `--db-path` again overwrites the remembered path
 - if a remembered share is unavailable later, the program errors with a recovery message telling you to remount the share or provide a new DB path
 
 Important limitation:
+
 - `life-monitor` does not mount remote shares and does not prompt for share credentials
 - the OS must already have access to the path you provide
 
@@ -173,10 +179,12 @@ life-monitor --import-db ./life-monitor-snapshot.sqlite
 ```
 
 Export behavior:
+
 - creates a consistent SQLite snapshot
 - does not copy the raw DB file blindly
 
 Import behavior:
+
 - validates source and destination integrity
 - creates an automatic pre-import backup
 - merges bucketed activity data
@@ -187,11 +195,13 @@ Import behavior:
 Mouse distance is estimated from raw input counts plus a configured DPI/CPI value.
 
 Current behavior:
+
 - if you provide `--dpi`, the value is remembered
 - if you do not provide `--dpi`, `life-monitor` reuses the remembered value
 - if no DPI is known yet, interactive runs ask once and persist it
 
 Why this works this way:
+
 - raw input avoids desktop pointer acceleration in the measurement path
 - but raw counts still need DPI/CPI to estimate real-world distance in centimeters
 - generic automatic CPI detection is not portable enough across Linux and Windows setups to be trusted as the main path
@@ -227,9 +237,10 @@ Windows startup wiring is not finished yet.
 
 ## Contributing
 
-Bug reports and PRs are welcome.
+Bug reports and PRs are welcome. Feel free to reach out to me if you have any questions :).
 
 If you report a platform-specific issue, include:
+
 - operating system
 - desktop session type (`Wayland` or `X11`) on Linux
 - how you launched the program
