@@ -81,8 +81,8 @@
           name = "ci-test-build";
           text = ''
             set -euo pipefail
-            cargo test
-            cargo build --release
+            cargo test --target x86_64-unknown-linux-gnu
+            cargo build --release --target x86_64-unknown-linux-gnu
           '';
         };
 

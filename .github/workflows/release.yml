@@ -73,18 +73,18 @@ jobs:
         run: cargo fmt -- --check
 
       - name: Run tests
-        run: cargo test --locked
+        run: cargo test --locked --target x86_64-unknown-linux-gnu
 
       - name: Verify crate can be packaged
         run: cargo package --locked
 
       - name: Build release binary
-        run: cargo build --release --locked
+        run: cargo build --release --locked --target x86_64-unknown-linux-gnu
 
       - name: Package Linux binary
         run: |
           mkdir -p "${RUNNER_TEMP}/release-assets"
-          zip -j "${RUNNER_TEMP}/release-assets/life-monitor-${{ needs.validate-tag.outputs.crate_version }}-linux-x86_64.zip" target/release/life-monitor
+          zip -j "${RUNNER_TEMP}/release-assets/life-monitor-${{ needs.validate-tag.outputs.crate_version }}-linux-x86_64.zip" target/x86_64-unknown-linux-gnu/release/life-monitor
 
       - name: Upload Linux release asset
         uses: actions/upload-artifact@v4
@@ -107,16 +107,16 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run tests
-        run: cargo test --locked
+        run: cargo test --locked --target x86_64-pc-windows-msvc
 
       - name: Build release binary
-        run: cargo build --release --locked
+        run: cargo build --release --locked --target x86_64-pc-windows-msvc
 
       - name: Package Windows binary
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP/release-assets" | Out-Null
-          Compress-Archive -Path target/release/life-monitor.exe -DestinationPath "$env:RUNNER_TEMP/release-assets/life-monitor-${{ needs.validate-tag.outputs.crate_version }}-windows-x86_64.zip" -Force
+          Compress-Archive -Path target/x86_64-pc-windows-msvc/release/life-monitor.exe -DestinationPath "$env:RUNNER_TEMP/release-assets/life-monitor-${{ needs.validate-tag.outputs.crate_version }}-windows-x86_64.zip" -Force
 
       - name: Upload Windows release asset
         uses: actions/upload-artifact@v4
