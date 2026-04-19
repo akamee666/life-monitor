@@ -132,6 +132,8 @@ mod tests {
     use super::*;
     use chrono::{TimeZone, Utc};
 
+    /// Verifies that the idle threshold uses the intended 20-second cutoff by testing values
+    /// just below, at, and above the boundary with the pure duration helper.
     #[test]
     fn should_be_idle_uses_real_idle_duration_threshold() {
         assert!(!should_be_idle(Duration::from_secs(19)));
@@ -139,6 +141,8 @@ mod tests {
         assert!(should_be_idle(Duration::from_secs(45)));
     }
 
+    /// Verifies that changing only the window class still closes the old focus segment and
+    /// starts a new one, which protects app switching when titles stay the same.
     #[test]
     fn sync_focus_tracker_switches_when_window_class_changes() {
         let mut tracker = ProcessTracker::new(DEFAULT_SOURCE_ID, DEFAULT_BUCKET_MINUTES as u32);
@@ -180,6 +184,8 @@ mod tests {
         assert_eq!(browser.focus_seconds, 30);
     }
 
+    /// Verifies that idle pauses do not create duplicate rows for the same window by toggling
+    /// the idle flag around one window and asserting the final accumulated focus seconds.
     #[test]
     fn sync_focus_tracker_pauses_and_resumes_current_window() {
         let mut tracker = ProcessTracker::new(DEFAULT_SOURCE_ID, DEFAULT_BUCKET_MINUTES as u32);
@@ -201,6 +207,8 @@ mod tests {
         assert_eq!(rows[0].focus_seconds, 20);
     }
 
+    /// Verifies that switching windows and then losing focus records the elapsed time for each
+    /// window separately by stepping the tracker through two windows and a final `None`.
     #[test]
     fn sync_focus_tracker_switches_windows_and_clears_when_missing() {
         let mut tracker = ProcessTracker::new(DEFAULT_SOURCE_ID, DEFAULT_BUCKET_MINUTES as u32);

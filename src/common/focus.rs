@@ -89,6 +89,8 @@ mod tests {
     use crate::common::DEFAULT_SOURCE_ID;
     use chrono::TimeZone;
 
+    /// Verifies that focus intervals are split at bucket boundaries by recording one
+    /// cross-boundary interval and asserting the resulting rows carry only their own slice.
     #[test]
     fn focus_buffer_splits_intervals_across_bucket_boundaries() {
         let mut buffer = FocusBucketBuffer::new(DEFAULT_SOURCE_ID, 15);

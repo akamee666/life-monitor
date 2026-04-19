@@ -501,6 +501,8 @@ mod tests {
     use super::*;
     use chrono::{TimeZone, Utc};
 
+    /// Verifies that one pending mouse packet converts combined X/Y deltas once per report
+    /// by flushing a 3-4 vector and asserting the resulting Euclidean travel distance.
     #[test]
     fn pending_mouse_packet_uses_euclidean_distance_per_report() {
         let now = Utc.with_ymd_and_hms(2026, 4, 18, 12, 0, 0).unwrap();
@@ -516,6 +518,8 @@ mod tests {
         assert!((rows[0].mouse_distance_cm - (5.0 / 800.0 * 2.54)).abs() < 1e-6);
     }
 
+    /// Verifies that vertical and horizontal wheel deltas stay on separate bucket fields by
+    /// recording one value for each axis before flushing the pending mouse packet.
     #[test]
     fn pending_mouse_packet_tracks_scroll_axes_separately() {
         let now = Utc.with_ymd_and_hms(2026, 4, 18, 12, 0, 0).unwrap();

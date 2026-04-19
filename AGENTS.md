@@ -2,16 +2,16 @@
 
 ## Purpose
 
-This file exists to help coding agents become productive in `life-monitor` quickly and avoid breaking the parts of the project that are easy to misunderstand.
+This file helps coding agents work in `life-monitor` without regressing the storage model, platform collectors, or release flow.
 
 Use it as:
 
 - a map of the current architecture
-- a list of invariants and expectations
-- a guide to where changes should go
-- a warning list for the fragile or high-impact parts of the codebase
+- a list of product and runtime invariants
+- a guide for where changes should go
+- a warning list for high-risk parts of the repo
 
-This guide should optimize for correctness and velocity, not for completeness.
+This guide optimizes for correctness and velocity, not completeness.
 
 ---
 
@@ -23,15 +23,22 @@ It collects:
 
 - keyboard activity
 - mouse movement, clicks, and scroll activity
-- active/focused window information over time
+- active or focused window information over time
 
-It stores data in a local SQLite database using a bucket-based schema.
+It stores data in a local SQLite database using bucketed records.
 
-The project is intentionally local-first:
+The project is local-first by default:
 
-- SQLite is the only storage backend
-- cross-machine movement is handled through snapshot export/import
-- custom database paths can point to local disks or already-mounted network shares
+- SQLite is the collector database
+- snapshot export/import is supported for explicit history movement
+- custom database paths can point to local disks or already-mounted shares
+
+There is now an optional, feature-gated multi-device sync mode:
+
+- disabled by default
+- compiled only with `--features multi-sync`
+- keeps local SQLite as the writable collector DB
+- uses a remote `sqld` / libSQL endpoint as the canonical merged store
 
 Current release line:
 
@@ -42,33 +49,41 @@ Current release line:
 
 ## Core Product Model
 
-### Storage strategy
+### Default storage strategy
 
-The intended product model is:
+The default product model is still:
 
 - collect locally
-- export a consistent SQLite snapshot
+- inspect locally
+- export a consistent SQLite snapshot when needed
 - import and merge that snapshot somewhere else
 
-If a user asks for “sync,” assume the preferred path is still local-first plus import/export unless they explicitly want a new design.
+### Optional multi-device sync strategy
+
+When built with `--features multi-sync` and explicitly configured by the user:
+
+- each device keeps its own local SQLite database
+- each device owns exactly one `source_uuid`
+- the remote `sqld` database is the canonical merged store
+- devices push only their own source-owned rows
+- devices pull foreign rows and keep them locally queryable
+- if remote sync fails, local collection must continue
 
 ### Data model
 
-The system no longer stores only one running total for inputs or per-window totals.
-
-The primary truth is now time buckets:
+The primary stored activity model is bucket-based:
 
 - `InputBucketRecord`
 - `FocusBucketRecord`
 
-That enables:
+Those bucket rows are the source of truth for:
 
-- historical activity analysis
-- merging across machines
-- duplicate import detection
-- future session-based reporting
+- totals
+- analytics
+- import/export merging
+- sync convergence
 
-Any change that collapses data back into simple running totals is probably moving in the wrong direction.
+Do not replace bucket storage with ad hoc cumulative counters unless the product model is being deliberately redesigned.
 
 ---
 
@@ -77,8 +92,16 @@ Any change that collapses data back into simple running totals is probably movin
 ```text
 src/
 ├── main.rs
-├── common.rs
 ├── input_bindings.rs
+├── common/
+│   ├── buckets.rs
+│   ├── focus.rs
+│   ├── input.rs
+│   ├── motion.rs
+│   ├── paths.rs
+│   ├── process.rs
+│   ├── ticker.rs
+│   └── types.rs
 ├── platform/
 │   ├── common.rs
 │   ├── linux/
@@ -91,10 +114,29 @@ src/
 │       ├── common.rs
 │       ├── inputs.rs
 │       ├── process.rs
+│       ├── startup.rs
 │       └── systray.rs
 ├── storage/
 │   ├── backend.rs
-│   └── localdb.rs
+│   └── localdb/
+│       ├── analytics.rs
+│       ├── config.rs
+│       ├── export.rs
+│       ├── import.rs
+│       ├── integrity.rs
+│       ├── rows.rs
+│       └── schema.rs
+├── sync/
+│   ├── mod.rs
+│   ├── outbox.rs
+│   ├── pull.rs
+│   ├── push.rs
+│   ├── remote.rs
+│   ├── runtime.rs
+│   ├── state.rs
+│   ├── status.rs
+│   ├── tests.rs
+│   └── types.rs
 └── utils/
     ├── args.rs
     ├── dpi.rs
@@ -107,126 +149,160 @@ src/
 └── release.yml
 ```
 
-### Where to look first
+---
+
+## Where To Look First
 
 If the task is about:
 
-- CLI behavior:
+- CLI behavior or command routing:
   - `src/main.rs`
   - `src/utils/args.rs`
 
-- database schema / import / export / path behavior:
-  - `src/storage/localdb.rs`
+- shared bucket logic, motion math, focus buffering, or path helpers:
+  - `src/common/*`
+
+- database schema, import/export, analytics, or DB path behavior:
+  - `src/storage/localdb/*`
   - `src/storage/backend.rs`
 
-- shared types, bucket logic, paths, or math:
-  - `src/common.rs`
-
-- DPI persistence:
-  - `src/utils/dpi.rs`
+- feature-gated multi-device sync:
+  - `src/sync/*`
+  - `src/main.rs`
+  - `src/utils/args.rs`
 
 - Linux raw input:
   - `src/platform/linux/inputs.rs`
 
-- Windows raw input or idle behavior:
+- Windows raw input, focus, startup, or systray:
   - `src/platform/windows/inputs.rs`
   - `src/platform/windows/common.rs`
-
-- focus tracking:
-  - `src/platform/linux/process.rs`
   - `src/platform/windows/process.rs`
+  - `src/platform/windows/startup.rs`
+
+- DPI persistence:
+  - `src/utils/dpi.rs`
 
 - locking and multi-process coordination:
   - `src/utils/lock.rs`
 
-- CI / release behavior:
+- CI and release flow:
   - `.github/workflows/no-nix.yml`
+  - `.github/workflows/nix.yml`
   - `.github/workflows/release.yml`
-  - `cliff.toml`
 
 ---
 
 ## Main Runtime Flow
 
-`src/main.rs` does two fundamentally different things:
+`src/main.rs` has two major execution modes:
 
 1. short-circuit commands
    - startup enable/disable
    - export
    - import
    - import dry-run
+   - analytics reports
+   - sync push/pull/status when `multi-sync` is enabled
 
 2. long-running collection
    - resolve DB path
    - resolve DPI
    - initialize local DB backend
-   - spawn input task
-   - spawn focus/process task
-   - spawn systray on Windows
+   - spawn input collection
+   - spawn focus/process collection
+   - spawn Windows systray when enabled
+   - spawn background sync loop only when `multi-sync` is compiled and configured
 
-When changing CLI behavior, keep that split clear. Import/export should remain “do the work and exit,” not “start the runtime and then special-case later.”
+Keep that split clear. Commands that do work and exit should not start the long-running collector and then special-case later.
 
 ---
 
 ## Important Invariants
 
-These are the highest-value facts to preserve.
+### 1. Local SQLite remains the collector database
 
-### 1. SQLite is the only backend
+Even with `multi-sync`, local collection still writes to local SQLite first.
 
-`StorageBackend` only has `Local(LocalDb)`.
+Do not turn the collector into a remote-first writer.
 
-If a task suggests adding another backend, treat it as a substantial architectural change, not a small extension.
+### 2. Bucket rows remain the primary truth
 
-### 2. Imports must remain idempotency-aware
+Totals, analytics, imports, and sync convergence should all derive from bucket rows.
 
-The import flow records metadata so the same snapshot is not silently imported twice.
+Do not introduce mutable shared running totals as the primary persisted state.
 
-Do not remove or weaken:
+### 3. Import/export must remain idempotency-aware
+
+Do not weaken:
 
 - `exports`
 - `imports`
 - file hash checks
 - export UUID checks
 
-Those exist to prevent doubled totals.
+Those exist to prevent duplicate imports and doubled totals.
 
-### 3. Bucket records are the primary stored activity model
+### 4. `--db-path` behavior is user-facing
 
-Do not bypass bucket writes with ad-hoc cumulative updates unless there is a strong reason and the schema/model is being deliberately redesigned.
-
-### 4. DB path resolution is user-facing behavior
-
-`--db-path` now accepts:
+`--db-path` accepts:
 
 - a file
 - a directory
-- a directory-like missing path
+- a missing directory-like path
 
-It also persists remembered paths.
+It is remembered for future runs.
 
-Do not change this casually; users may depend on it for mounted shares.
+Do not change this casually. Users may rely on it for removable disks or mounted shares.
 
-### 5. Raw input counts are not physical distance by themselves
+### 5. Multi-sync must stay fully gated
 
-The code intentionally distinguishes:
+When `multi-sync` is disabled:
 
-- raw input collection
-- shared motion math
-- DPI/CPI-based distance estimation
+- no sync code should compile
+- no libSQL / remote dependency should be required
+- the local-only collector flow must keep working unchanged
 
-Do not claim “real distance” without accounting for DPI/CPI.
+### 6. Source ownership is strict in sync mode
 
-### 6. Linux and Windows should share logic where behavior is actually shared
+Each device owns exactly one `source_uuid`.
 
-But do not unify platform code if that reduces measurement accuracy or hides real platform differences.
+A device may push only rows owned by that source.
 
-Good rule:
+Pulled foreign rows:
 
-- share math and buffering
-- keep platform event decoding separate
+- may exist locally
+- must remain queryable locally
+- must never be re-enqueued as local authored changes
 
-### 7. Release tags must match `Cargo.toml`
+### 7. Sync must remain retry-safe
+
+Push and pull must remain idempotent:
+
+- no duplicate canonical rows on retry
+- no cursor advance before successful full apply
+- no marking pending rows as sent before remote acknowledgement
+
+### 8. Sync failure must not stop collection
+
+If the remote is unavailable or a sync attempt fails:
+
+- local collection continues
+- local writes continue
+- pending outbox rows remain queued
+- status records the failure
+
+### 9. Linux and Windows should share logic only where behavior is truly shared
+
+Good places to share:
+
+- motion math
+- bucket buffering
+- tracker state transitions
+
+Keep platform event decoding and OS integration local to each platform.
+
+### 10. Release tags must match `Cargo.toml`
 
 The release workflow enforces this.
 
@@ -234,99 +310,9 @@ Do not change release logic in a way that allows publishing mismatched versions.
 
 ---
 
-## Key Files and Responsibilities
+## Storage And Sync Tables
 
-### `src/common.rs`
-
-Shared home for:
-
-- bucket record structs
-- focus/input buffers
-- process tracker
-- program data directory logic
-- shared motion math helpers
-
-This file is central and high-impact.
-
-If editing it:
-
-- check whether the logic truly belongs here
-- avoid turning it into a generic dumping ground
-- keep tests close to shared logic when practical
-
-### `src/storage/localdb.rs`
-
-This is the heaviest file in the repo.
-
-It currently owns:
-
-- schema creation
-- metadata tables
-- source row management
-- import/export logic
-- duplicate detection
-- DB path resolution
-- remembered DB path behavior
-- SQLite helpers
-- a large amount of tests
-
-Before adding more behavior here, consider whether it belongs in a smaller helper module instead.
-
-### `src/platform/linux/inputs.rs`
-
-Linux input is raw evdev-based.
-
-Important detail:
-
-- relative movement should be aggregated per report before conversion
-
-That was a deliberate fix to avoid overstating diagonal movement.
-
-Do not regress that by summing `REL_X` and `REL_Y` independently as separate physical distances.
-
-### `src/platform/windows/inputs.rs`
-
-Windows input uses Raw Input.
-
-Important distinctions:
-
-- relative motion and absolute motion are handled differently
-- some shared math is reused from `common.rs`
-- platform event interpretation stays local here
-
-### `src/utils/dpi.rs`
-
-Current behavior:
-
-- `--dpi` overrides and persists
-- remembered DPI is reused
-- interactive prompt happens when no DPI is known
-
-This is a product decision as much as a technical one.
-
-Do not replace it with fake “automatic DPI detection” unless the detection is truly reliable.
-
-### `src/utils/lock.rs`
-
-There are two lock concepts:
-
-- single-instance lock
-- per-database operation lock
-
-The per-database lock is important for:
-
-- regular writes
-- export
-- import
-- mounted-share usage
-
-This area is sensitive because filesystem locking semantics vary across environments.
-
----
-
-## Current SQLite Tables
-
-Main tables:
+Main local tables:
 
 - `schema_meta`
 - `sources`
@@ -336,192 +322,94 @@ Main tables:
 - `imports`
 - `sessions`
 
-What they are for:
+Local sync tables when `multi-sync` is enabled:
 
-- `sources`: identify a local source/machine profile
-- `input_buckets`: bucketed keyboard/mouse/scroll metrics
-- `focus_buckets`: bucketed focus data
-- `exports`: identify created snapshots
-- `imports`: prevent duplicate imports and keep merge history
-- `sessions`: foundation for future session-level analytics
+- `sync_state`
+- `sync_outbox_sources`
+- `sync_outbox_input_buckets`
+- `sync_outbox_focus_buckets`
 
-If a migration or schema change is proposed:
+Remote canonical sync tables:
 
-- update the schema version
-- think through import/export consequences
-- think through dry-run reporting
-- think through duplicate detection behavior
+- `sources`
+- `input_buckets`
+- `focus_buckets`
+- `sync_applied_batches`
+- `sync_revisions`
+- `sync_source_changes`
+- `sync_input_changes`
+- `sync_focus_changes`
+
+If you change schema:
+
+- update schema setup and any migrations or bootstrap logic
+- update tests
+- think through import/export behavior
+- think through sync behavior if `multi-sync` is enabled
+
+Compatibility with older schema versions is not a project priority right now. Keep the implementation simple unless the task explicitly requires compatibility handling.
 
 ---
 
-Here's the updated section:
+## Build And Test Expectations
 
----
+### Use flake environments
 
-## Testing Expectations
+Builds and tests should be run from environments provided by `flake.nix`.
 
-The repo already has a good amount of targeted tests.
-
-**Core philosophy**
-
-Tests exist to catch real behavioral regressions. A test that does not break when the program breaks is noise. A test that breaks when the program is correct is worse than no test. When in doubt, skip the test.
-
-Tests may be unit-level or integration-level. The distinction that matters is not the level — it is whether external dependencies are involved. Tests must run fully in-process with no network, no Docker, no subprocesses, no timing dependencies, and no global machine state unless the integration boundary itself is the behavior being verified.
-
-When a test needs real storage, use real SQLite (in-memory or tempfile) and real schema migrations. Do not mock the storage layer — mocking it validates the mock, not the program.
-
-When a test needs a network boundary (e.g. sync), fake it via a trait with an in-memory implementation. Only the concrete HTTP client should be excluded from tests, not the logic that drives it.
-
-**Preferred tests**
-
-- singular tests for real behavioral guarantees
-- import/export edge cases and duplicate protection
-- path resolution where non-trivial policy exists
-- buffer aggregation correctness
-- lock behavior where it matters
-- CLI short-circuit behavior
-- observable behavior, state transitions, side effects, and contracts
-- the lowest stable level that covers the risk without coupling to internals
-
-**Avoid low-value tests**
-
-- asserting exact wording of ordinary static strings
-- tests that pass even when the behavior they claim to cover is broken
-- broad smoke paths that can fail for many unrelated reasons and are hard to diagnose
-- testing OS behavior, shell behavior, environment-variable mechanics, clocks, randomness, or external tool correctness
-- trivial path-joining or wrapper logic unless the program adds real policy around it
-- brittle timing-based tests, sleeps, real subprocess tests, or tests that depend on global machine state unless that integration boundary is the thing being verified
-
-**When adding tests**
-
-- prefer testing helpers or isolated behavior directly
-- choose the lowest level that gives strong confidence without coupling to internals
-- verify what the program is responsible for, not what the OS or dependencies are responsible for
-- inject, fake, or stub OS/process/time/randomness dependencies when possible
-- only use command-spawning or timing-heavy tests when the integration behavior itself is the thing being verified
-- explicitly note which candidate behaviors should not be tested when they add noise instead of confidence
-
-**Sync-specific test guidance**
-
-Sync tests must follow the same in-process rule. Use real SQLite and real schema migrations. Fake only the network boundary.
-
-Required sync coverage:
-
-- outbox: insert a row → verify it appears in the outbox; push it → verify it is marked sent; push again → verify no duplicate is created
-- incremental pull: given rows at known revisions, verify only rows above the stored cursor are applied; verify the cursor advances only after a confirmed successful apply
-- ownership: verify that rows pulled from the remote with a foreign `source_uuid` are never added to the local outbox
-- offline fallback: fake remote returns a connection error; verify local writes still succeed and the outbox accumulates without panic or data loss
-- retry safety: fake remote fails once then succeeds; verify no duplicate rows are written and the cursor advances exactly once
-- convergence: two separate in-memory SQLite DBs with different `source_uuid` values each push to a shared in-memory fake remote, then each pulls from it; assert both DBs contain identical row sets — this is the highest-value sync test because it is the only one that catches push-pull interaction bugs that unit tests with mocks cannot see
-
-Do not test: real sqld connectivity, JWT correctness, network behavior, Docker, or anything that requires a running external process.
-
-**Classification**
-
-Must test:
-
-- bucket aggregation behavior
-- import/export duplicate protection
-- focus/input state transitions
-- CLI short-circuit behavior
-- recovery and error handling that changes persisted state or user-visible behavior
-- sync outbox, cursor, ownership, offline, retry, and convergence behaviors (when the feature is enabled)
-
-Nice to test:
-
-- narrow helpers that encode meaningful domain behavior and are hard to reason about at a glance
-- stable contract or API behavior that would be expensive to debug if broken
-
-Do not test:
-
-- raw OS correctness
-- third-party library correctness
-- simple environment or path plumbing unless the program adds non-trivial policy around it
-- giant smoke paths that can fail for many unrelated reasons
-- sync network transport correctness — that is the HTTP client library's responsibility, not the program's
-
-**Current CI coverage**
-
-- Linux checks/tests/build
-- native Windows tests/build on GitHub Actions
-- release workflow on tags
-
-**Windows test note**
-
-- `cargo test --target x86_64-pc-windows-gnu` can be attempted from the Nix dev shell through Wine
-- this is useful for compile coverage and for a subset of runtime tests
-- it is not full Windows validation; some Windows-target tests still fail under Wine because of missing or incomplete Windows APIs
-- treat real Windows CI or a real Windows machine as the final authority for Windows runtime behavior
-
-**Current release workflow**
-
-- validates tag vs `Cargo.toml`
-- reruns Linux and Windows checks
-- runs `cargo package`
-- publishes to crates.io
-- creates a GitHub release
-- attaches Linux and Windows archives
-
-**Changelog support**
-
-- `CHANGELOG.md` is maintained manually
-- `cliff.toml` exists to support `git-cliff`
-
-## Build and Release Commands
-
-Builds and checks should be run from the environments defined in `flake.nix`.
-
-Use the Nix shell for routine validation instead of assuming host tools are configured correctly.
-
-Common commands:
+Preferred commands:
 
 ```bash
-nix develop --command cargo check
-nix develop --command cargo build
-nix develop --command cargo build --release
-nix develop --command cargo test
-nix develop --command cargo fmt -- --check
-nix develop --command cargo clippy -- -D warnings
-```
-
-Linux + X11 build/testing:
-
-```bash
-nix develop --command cargo test --features x11
-```
-
-Nix-based flows:
-
-```bash
-nix develop --command ci-checks
-nix develop --command ci-test-build
-nix develop --command cargo test --target x86_64-pc-windows-gnu
+nix develop --command cargo fmt --all
+nix develop --command cargo test --target x86_64-unknown-linux-gnu
+nix develop --command cargo check --target x86_64-pc-windows-gnu
 nix build .#linux
 nix build .#windows
 ```
 
-Windows target note:
+Do not assume the repo's current default target. CI explicitly passes `--target`, and local verification should do the same.
 
-- `.cargo/config.toml` points the Windows GNU runner at `wine`
-- that makes Windows-target tests runnable from Linux inside the Nix shell
-- do not treat Wine-backed results as equivalent to native Windows results
+### Windows test reality
 
-Changelog generation:
+Wine is useful for some local validation, but it is not authoritative for full Windows runtime behavior.
 
-```bash
-git cliff --unreleased
-git cliff --tag v0.1.6
-```
+Assume:
+
+- compile checks for Windows are valuable locally
+- some Windows tests may run under Wine
+- native Windows CI remains the authoritative runtime gate
+
+Do not contort production code just to make every Windows behavior test pass under Wine.
+
+### Test philosophy
+
+Prefer tests that verify:
+
+- observable behavior
+- ownership rules
+- state transitions
+- merge/import/export outcomes
+- retry and idempotency behavior
+
+Avoid tests that mostly verify:
+
+- OS behavior itself
+- static message wording
+- broad smoke paths with many unrelated failure points
+- timing-sensitive behavior when a direct helper-level test would be clearer
+
+Use the lowest stable test level that proves the behavior.
 
 ---
 
-## Preferred Change Strategy For Agents
+## Preferred Change Strategy
 
 When working in this repo:
 
-1. Identify whether the task is:
+1. Identify the task area first:
    - runtime collection
    - storage/import/export
+   - sync
    - CLI/config
    - platform-specific behavior
    - CI/release
@@ -531,93 +419,78 @@ When working in this repo:
 3. Preserve the current product direction:
    - local-first
    - bucket-based
-   - explicit import/export
+   - explicit snapshot import/export
+   - optional feature-gated sync
    - user-visible recovery messages
 
 4. Add or update targeted tests when behavior changes.
 
-5. Prefer small coherent commits:
-   - storage/schema/import-export
-   - input/runtime behavior
-   - CI/release
-   - docs
+5. Prefer small coherent commits.
 
-6. Split commits by feature or coherent code-change area, not as one mixed batch.
+Commits should be split by feature or coherent code change, not bundled into one large mixed commit.
 
-For commits:
+Each commit message should have:
 
-- use a helpful title that explains the change area
-- add a real commit body
-- explain what changed
-- explain why it changed
-- explain how it was implemented when that context will help future readers
-- avoid “blog post” commit bodies, but do leave enough detail for release notes and future debugging
+- a helpful title
+- a body that explains what changed
+- how it changed
+- why it changed
 
-This commit structure already fits the recent history and makes release-note generation easier.
+This is important for release notes and for understanding the repo history later.
 
 ---
 
 ## High-Risk Areas
 
-Be extra careful in these areas:
+Be extra careful in:
 
-- `src/storage/localdb.rs`
-  - wide blast radius
-  - easy to break schema, merge behavior, or tests
+- `src/storage/localdb/*`
+  - schema, import/export, analytics, and row merge behavior have wide blast radius
 
-- `src/common.rs`
-  - shared logic used by both platforms
-  - regressions spread quickly
+- `src/sync/*`
+  - ownership, idempotency, and cursor handling can fail subtly
+
+- `src/common/*`
+  - shared logic regressions hit both platforms
 
 - `src/platform/linux/inputs.rs`
   - measurement accuracy can regress silently
 
+- `src/platform/windows/inputs.rs`
+  - raw input and message-loop behavior are easy to break
+
 - `src/utils/lock.rs`
-  - timing and filesystem behavior can fail differently across systems
+  - filesystem semantics vary across environments and mounted paths
 
 - `.github/workflows/release.yml`
-  - mistakes here can break publishing or attach the wrong assets
+  - publishing and asset attachment are easy to break
 
 ---
 
 ## Known Weak Spots
 
-These are good candidates for future cleanup.
+Current likely cleanup targets:
 
-### Structural
-
-- `src/storage/localdb.rs` still owns too many responsibilities
-- `src/common.rs` is becoming too broad
-- platform focus runtimes share the storage model but not enough coordination structure
-
-### Missing or incomplete features
-
-- Windows startup support is still `unimplemented!()`
-- no built-in dashboard or TUI
-- changelog generation is not automated in CI
-- mounted-share locking is still best-effort because filesystems differ
-- session-level analytics are not surfaced yet even though the schema has a `sessions` table
-
-### Documentation/process gaps
-
-- release process depends on repo secrets being configured correctly
-- binary release assets exist now, but there is not yet a documented checksum/signing flow
+- some sync/runtime seams can still be simplified
+- storage and sync responsibilities should continue to stay narrow as features grow
+- Wine cannot replace native Windows validation
+- remote share behavior depends on OS mount semantics and is still best-effort
+- there is still no built-in dashboard or TUI
 
 ---
 
 ## Anti-Patterns To Avoid
 
-- reintroducing a remote backend as a “quick fix”
-- bypassing bucket storage with ad-hoc totals
-- changing import semantics without updating duplicate protection
-- writing tests that only assert static message wording
-- writing tests for OS behavior instead of program behavior
-- trusting Wine-based Windows results as if they were native Windows validation
-- mixing release, runtime, and schema changes into one commit when they can be separate
-- assuming Windows behavior from Linux-only testing
+- reintroducing a general remote backend into the default product path
+- bypassing bucket storage with ad hoc totals
+- enqueueing pulled foreign rows into the sync outbox
+- marking outbox rows sent before remote acknowledgement
+- advancing the pull cursor before a full successful apply
+- mixing unrelated feature, schema, CI, and docs changes into one commit when they can be separate
+- assuming Linux-only validation is enough for Windows behavior
 
 ---
 
 ## One-Sentence Mental Model
 
-`life-monitor` is a local-first, bucket-based activity recorder whose most important guarantees are accurate raw-input collection, safe SQLite persistence, and explicit snapshot-based movement of history across machines.
+`life-monitor` is a local-first, bucket-based activity recorder whose core guarantees are accurate input collection, safe SQLite persistence, explicit snapshot movement of history, and optional feature-gated multi-device convergence without interrupting local collection.

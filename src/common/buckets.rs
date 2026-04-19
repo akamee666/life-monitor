@@ -54,6 +54,8 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
 
+    /// Verifies that bucket metadata snaps timestamps to the correct local bucket edges
+    /// by calling the offset-aware helper with a fixed timezone instead of relying on host time.
     #[test]
     fn bucket_metadata_tracks_local_boundaries() {
         let at = Utc.with_ymd_and_hms(2026, 4, 18, 13, 37, 42).unwrap();

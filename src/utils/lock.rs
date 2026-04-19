@@ -185,6 +185,8 @@ fn acquire_windows_lock(lock_f_path: &Path, blocking: bool) -> Result<File> {
 mod tests {
     use super::*;
 
+    /// Verifies that per-database operation locks live beside the selected database file
+    /// by deriving the lock path from a fixed path instead of touching the real filesystem.
     #[test]
     fn db_operation_lock_path_uses_database_directory() {
         let path = Path::new("/tmp/life-monitor/shared.db");

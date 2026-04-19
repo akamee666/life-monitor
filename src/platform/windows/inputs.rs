@@ -382,6 +382,8 @@ mod tests {
         InputLogger::default()
     }
 
+    /// Verifies that repeated keydown messages without release count once by driving the
+    /// keyboard helper directly through a down-down-up sequence.
     #[test]
     fn keyboard_event_counts_unique_keydown_only_once() {
         let mut inputs = empty_input_logger();
@@ -397,6 +399,8 @@ mod tests {
         assert_eq!(rows[0].key_presses, 1);
     }
 
+    /// Verifies that a fresh keydown after release counts again by exercising the helper with
+    /// a down-up-down sequence and asserting two presses in the bucket.
     #[test]
     fn keyboard_event_counts_a_new_press_after_release() {
         let mut inputs = empty_input_logger();
@@ -412,6 +416,8 @@ mod tests {
         assert_eq!(rows[0].key_presses, 2);
     }
 
+    /// Verifies that relative raw mouse deltas use the shared distance conversion path by
+    /// feeding a 3-4 vector and checking the resulting centimeter estimate.
     #[test]
     fn relative_mouse_move_converts_distance_to_centimeters() {
         let mut buffer = InputBucketBuffer::new(DEFAULT_SOURCE_ID, DEFAULT_BUCKET_MINUTES as u32);
@@ -424,6 +430,8 @@ mod tests {
         assert!((rows[0].mouse_distance_cm - (5.0 / 800.0 * 2.54)).abs() < 1e-6);
     }
 
+    /// Verifies that tiny absolute-position jitter is ignored before a real movement occurs by
+    /// sending one near-stationary update and then a larger absolute jump.
     #[test]
     fn absolute_mouse_move_ignores_small_jitter_and_tracks_real_motion() {
         let mut inputs = empty_input_logger();
@@ -442,6 +450,8 @@ mod tests {
         assert!(rows[0].mouse_distance_cm > 0.0);
     }
 
+    /// Verifies that mouse button masks and wheel deltas are translated into the expected
+    /// bucket metrics by applying one combined event set to a fresh buffer.
     #[test]
     fn button_and_wheel_helpers_record_bucket_metrics() {
         let now = Utc.with_ymd_and_hms(2026, 4, 18, 12, 0, 0).unwrap();
@@ -465,6 +475,8 @@ mod tests {
         assert!((rows[0].scroll_horizontal_cm - 0.4).abs() < 1e-6);
     }
 
+    /// Verifies that raw input device-change notifications are normalized into the internal
+    /// enum by testing arrival, removal, and an unknown message value.
     #[test]
     fn decode_device_change_translates_raw_input_notifications() {
         assert_eq!(

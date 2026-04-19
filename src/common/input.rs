@@ -95,6 +95,8 @@ mod tests {
     use crate::common::DEFAULT_SOURCE_ID;
     use chrono::TimeZone;
 
+    /// Verifies that buffered input events aggregate into one row per time bucket by mixing
+    /// events that stay in the same bucket with one event that crosses into the next bucket.
     #[test]
     fn input_buffer_aggregates_events_into_matching_bucket() {
         let mut buffer = InputBucketBuffer::new(DEFAULT_SOURCE_ID, 15);

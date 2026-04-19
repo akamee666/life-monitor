@@ -29,12 +29,16 @@ pub fn scroll_steps_to_centimeters(steps: f64) -> f64 {
 mod tests {
     use super::*;
 
+    /// Verifies that relative motion conversion uses Euclidean distance by passing a
+    /// 3-4-5 triangle and comparing against the expected hypotenuse-based conversion.
     #[test]
     fn relative_counts_to_centimeters_uses_euclidean_distance() {
         let distance_cm = relative_counts_to_centimeters(3.0, 4.0, 800.0);
         assert!((distance_cm - (5.0 / 800.0 * 2.54)).abs() < 1e-6);
     }
 
+    /// Verifies that scroll conversion uses absolute step count by passing a negative step
+    /// value and asserting the result matches the positive travel distance.
     #[test]
     fn scroll_steps_to_centimeters_uses_absolute_step_count() {
         assert!((scroll_steps_to_centimeters(-2.0) - 0.8).abs() < 1e-6);

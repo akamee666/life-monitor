@@ -178,6 +178,8 @@ pub fn log_mouse_dpi_resolution(config: MouseDpiConfig) {
 mod tests {
     use super::*;
 
+    /// Verifies that DPI parsing accepts only positive integers by exercising invalid text,
+    /// zero, and a valid value without touching any filesystem or OS-specific resolution path.
     #[test]
     fn parse_mouse_dpi_rejects_zero_and_invalid_values() {
         assert_eq!(parse_mouse_dpi("0"), None);

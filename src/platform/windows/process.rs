@@ -68,6 +68,8 @@ mod tests {
     use crate::common::{DEFAULT_BUCKET_MINUTES, DEFAULT_SOURCE_ID};
     use chrono::{TimeZone, Utc};
 
+    /// Verifies that a foreground lookup error clears the active window and closes the current
+    /// interval by simulating one focused window followed by an error and then flushing rows.
     #[test]
     fn update_focus_tracker_clears_focus_after_lookup_error() {
         let mut tracker = ProcessTracker::new(DEFAULT_SOURCE_ID, DEFAULT_BUCKET_MINUTES as u32);
@@ -98,6 +100,8 @@ mod tests {
         assert_eq!(rows[0].window_class, "nvim.exe");
     }
 
+    /// Verifies that lookup errors are ignored while idle because idle handling should pause
+    /// focus tracking before any window query result matters, then resume cleanly afterward.
     #[test]
     fn update_focus_tracker_ignores_lookup_error_while_idle() {
         let mut tracker = ProcessTracker::new(DEFAULT_SOURCE_ID, DEFAULT_BUCKET_MINUTES as u32);

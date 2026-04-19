@@ -13,13 +13,14 @@ There is no built-in dashboard _yet_. The output is a SQLite database plus a log
 The main workflow is stable enough for local use:
 
 - local SQLite storage is the supported default.
-- import/export snapshots are the intended cross-machine sync mechanism
-- remote samba/NFS shares are supported.
+- import/export snapshots are the simplest built-in way to move history between machines
+- remote samba/NFS shares are supported when already mounted by the OS
+- optional multi-device sync is available behind the `multi-sync` cargo feature
 
 Still missing:
 
 - built-in charts or TUI
-- Windows startup implementation
+- deeper reporting and visualization on top of the stored data
 
 ## Install
 
@@ -94,6 +95,13 @@ nix build .#linux
 nix build .#windows
 ```
 
+If you are building or testing from source, prefer the flake environment so the expected toolchain and native dependencies are available:
+
+```bash
+nix develop --command cargo test --target x86_64-unknown-linux-gnu
+nix develop --command cargo check --target x86_64-pc-windows-gnu
+```
+
 > [!WARNING]
 > On Linux, `life-monitor` reads raw input events from `/dev/input`. Your user usually needs permission to access those devices, add yourself to input group using `sudo usermod -aG input $USER` or run the program as `root`
 
@@ -116,6 +124,15 @@ life-monitor --import-db ./life-monitor-snapshot.sqlite --dry-run
 life-monitor --import-db ./life-monitor-snapshot.sqlite --import-notes "desktop sync"
 ```
 
+Optional multi-device sync examples, when built with `--features multi-sync`:
+
+```bash
+life-monitor --sync-enable --sync-remote-url http://homeserver:8080
+life-monitor --sync-remote-url http://homeserver:8080 sync push
+life-monitor --sync-remote-url http://homeserver:8080 sync pull
+life-monitor --sync-remote-url http://homeserver:8080 sync status
+```
+
 ## Main CLI Options
 
 | Flag                      | Purpose                                                   |
@@ -132,6 +149,18 @@ life-monitor --import-db ./life-monitor-snapshot.sqlite --import-notes "desktop 
 | `--enable-startup`        | Enable automatic startup for the current user session     |
 | `--disable-startup`       | Disable automatic startup for the current user session    |
 | `-s`, `--no-systray`      | Windows only: disable the tray icon                       |
+
+When built with `--features multi-sync`, additional sync options and subcommands are available:
+
+| Flag / Command | Purpose |
+| -------------- | ------- |
+| `--sync-enable` | Enable background push/pull sync during normal collection |
+| `--sync-remote-url <URL>` | Point the program at a remote `sqld` / libSQL endpoint |
+| `--sync-auth-token <TOKEN>` | Provide an auth token for the remote endpoint |
+| `--sync-interval <SECS>` | Change how often background sync runs |
+| `sync push` | Send pending local device-owned rows to the remote |
+| `sync pull` | Pull remote changes into the local SQLite database |
+| `sync status` | Show the local sync state, pending work, and last known remote status |
 
 Run `life-monitor --help` for the full generated help text.
 
@@ -190,6 +219,43 @@ Import behavior:
 - merges bucketed activity data
 - records metadata so the same snapshot is not imported twice accidentally
 
+## Optional Multi-Device Sync
+
+`life-monitor` now has an optional sync mode for people who want multiple devices to converge into the same dataset without manually exporting and importing snapshots all the time.
+
+This mode is not enabled in the default build. Build from source with:
+
+```bash
+cargo build --release --features multi-sync
+```
+
+User-facing model:
+
+- each device keeps collecting into its own local SQLite database
+- the local database remains usable even if the remote is down
+- sync push sends only rows authored by that device
+- sync pull brings down rows from other devices
+- `sync status` shows pending changes, last successful sync times, and the last known remote state
+
+What you need:
+
+- a reachable `sqld` / libSQL server
+- the remote URL
+- an auth token if your deployment requires one
+
+Typical setup:
+
+1. build `life-monitor` with `--features multi-sync`
+2. run your `sqld` server somewhere you control
+3. start `life-monitor` with `--sync-enable --sync-remote-url <URL>`
+4. use `sync status` to confirm the local database is catching up
+
+Important behavior:
+
+- if the remote is unavailable, `life-monitor` keeps collecting locally
+- pending sync work stays queued and is retried later
+- local-only mode remains the default if you do not enable sync
+
 ## DPI and Mouse Distance
 
 Mouse distance is estimated from raw input counts plus a configured DPI/CPI value.
@@ -226,14 +292,21 @@ life-monitor --disable-startup
 
 ### Windows
 
-Windows startup wiring is not finished yet.
+`--enable-startup` creates a shortcut in the current user's Startup folder.
+
+Disable it with:
+
+```bash
+life-monitor --disable-startup
+```
 
 ## Notes and Limitations
 
 - there is still no built-in dashboard or TUI
 - mouse distance is still an estimate, not a physical measurement guarantee
 - remote-share locking is best-effort and depends on filesystem/share semantics
-- some Windows-specific polish is still missing
+- local-only mode is the supported default; multi-device sync is optional and requires a remote `sqld` / libSQL server
+- Wine can help with some Windows checks on Linux, but native Windows remains the reliable runtime validation environment
 
 ## Contributing
 
