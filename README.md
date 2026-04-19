@@ -2,33 +2,22 @@
 
 `life-monitor` is a cross-platform Rust activity tracker for Linux and Windows. It collects raw keyboard and mouse activity, tracks which window is focused over time, and stores the data in SQLite for later analysis.
 
-The project is now local-first:
 - activity is written to a local SQLite database
 - you can move or merge history between machines with snapshot export/import
 - you can place the database on another disk or an already-mounted network share
 
-There is no built-in dashboard yet. The output is a SQLite database plus a log file, so the current workflow is to inspect the data with SQL, scripts, or external tools.
-
-## What it tracks
-
-- keyboard key presses
-- left, right, and middle mouse clicks
-- estimated mouse travel distance in centimeters
-- vertical and horizontal scroll activity
-- focused window title, app identifier, and focus time
+There is no built-in dashboard *yet*. The output is a SQLite database plus a log file, so the current workflow is to inspect the data with SQL, scripts, or external tools. 
 
 ## Current Status
 
 The main workflow is stable enough for local use:
-- local SQLite storage is the supported default
+- local SQLite storage is the supported default.
 - import/export snapshots are the intended cross-machine sync mechanism
-- custom database paths are supported
-- remembered DB paths and remembered DPI reduce repetitive setup
+- remote samba/NFS shares are supported.
 
 Still missing:
 - built-in charts or TUI
 - Windows startup implementation
-- release binaries attached to GitHub releases
 
 ## Install
 
@@ -102,17 +91,8 @@ nix build .#linux
 nix build .#windows
 ```
 
-## Linux Permissions
-
-On Linux, `life-monitor` reads raw input events from `/dev/input`. Your user usually needs permission to access those devices.
-
-Typical setup:
-
-```bash
-sudo usermod -aG input $USER
-```
-
-Then log out and back in.
+> [!WARNING]
+> On Linux, `life-monitor` reads raw input events from `/dev/input`. Your user usually needs permission to access those devices, add yourself to input group using `sudo usermod -aG input $USER` or run the program as `root`
 
 ## Usage
 
@@ -202,24 +182,6 @@ Import behavior:
 - merges bucketed activity data
 - records metadata so the same snapshot is not imported twice accidentally
 
-## Data Model Summary
-
-The old cumulative tables have been replaced by bucket-based records.
-
-Main tables:
-- `sources`
-- `input_buckets`
-- `focus_buckets`
-- `exports`
-- `imports`
-- `sessions`
-
-This lets the project support:
-- historical activity by bucket
-- merge/import/export workflows
-- per-source tracking
-- future session-level reporting
-
 ## DPI and Mouse Distance
 
 Mouse distance is estimated from raw input counts plus a configured DPI/CPI value.
@@ -233,16 +195,6 @@ Why this works this way:
 - raw input avoids desktop pointer acceleration in the measurement path
 - but raw counts still need DPI/CPI to estimate real-world distance in centimeters
 - generic automatic CPI detection is not portable enough across Linux and Windows setups to be trusted as the main path
-
-## Desktop Session Tracking
-
-Linux:
-- Wayland is preferred when Wayland session indicators are present
-- X11 is used when running in an X11 session
-
-Windows:
-- input uses Raw Input
-- focus tracking uses Win32 window APIs
 
 ## Startup
 
@@ -265,43 +217,6 @@ life-monitor --disable-startup
 ### Windows
 
 Windows startup wiring is not finished yet.
-
-## CI and Releases
-
-Current CI:
-- push/PR validation on Linux
-- push/PR validation on Windows
-- tag-driven release workflow for crates.io publishing
-
-Current release workflow:
-- push a tag like `v0.1.6`
-- validate that the tag matches `Cargo.toml`
-- rerun checks
-- publish to crates.io
-- create a GitHub Release entry
-- attach Linux and Windows release archives for download
-
-## Changelog Strategy
-
-This repository now includes a `CHANGELOG.md`. The recommended approach is:
-- keep an `Unreleased` section during normal development
-- move those entries into a versioned section when you tag a release
-- group entries under:
-  - `Added`
-  - `Changed`
-  - `Fixed`
-  - `Removed`
-
-If you want automatic generation later, `git-cliff` is a good fit for Rust projects because it can generate release notes from conventional-style commit messages and tags.
-
-A basic `git-cliff` config is now included as [cliff.toml](/home/ak4m3/programming/life-monitor/cliff.toml). A typical manual flow looks like:
-
-```bash
-git cliff --unreleased --tag v0.1.6 > /tmp/CHANGELOG.new
-git cliff --tag v0.1.6 > CHANGELOG.md
-```
-
-The exact command can be adjusted depending on whether you want to rewrite the full changelog or only preview the next release notes.
 
 ## Notes and Limitations
 
