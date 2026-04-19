@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
 use std::mem::MaybeUninit;
@@ -21,10 +22,6 @@ use crate::input_bindings::*;
 use crate::storage::backend::DataStore;
 use crate::storage::backend::StorageBackend;
 
-// This is an ESTIMATE. A common default might be that one scroll click
-// moves about 3 lines of text, which is roughly 0.4 to 0.5 cm.
-// You can make this configurable.
-const ASSUMED_CM_PER_SCROLL_CLICK: f64 = 0.4;
 static mut IDLE_TIME: u64 = 0;
 
 /// Either a relative change for EV_REL, absolute new value for EV_ABS (joysticks ...), or 0 for EV_KEY for release, 1 for keypress and 2 for autorepeat
@@ -37,13 +34,67 @@ enum KeyPressState {
 }
 
 enum InputEvent {
-    Keyboard(input_event),
-    Mouse(input_event),
+    Keyboard {
+        event: input_event,
+    },
+    Mouse {
+        device_id: usize,
+        event: input_event,
+    },
 }
 
 struct DiscoveredDevices {
     keyboards: Vec<File>,
     mice: Vec<File>,
+}
+
+#[derive(Debug, Default)]
+struct PendingMousePacket {
+    dx_counts: f64,
+    dy_counts: f64,
+    vertical_scroll_steps: f64,
+    horizontal_scroll_steps: f64,
+}
+
+impl PendingMousePacket {
+    fn record_relative_event(&mut self, code: u32, value: i32) {
+        match code {
+            REL_X => self.dx_counts += value as f64,
+            REL_Y => self.dy_counts += value as f64,
+            REL_WHEEL => self.vertical_scroll_steps += value as f64,
+            REL_HWHEEL => self.horizontal_scroll_steps += value as f64,
+            _ => {}
+        }
+    }
+
+    fn flush(
+        &mut self,
+        input_buffer: &mut InputBucketBuffer,
+        now: chrono::DateTime<chrono::Utc>,
+        mouse_dpi: f64,
+    ) {
+        if self.dx_counts != 0.0 || self.dy_counts != 0.0 {
+            let distance_cm =
+                relative_counts_to_centimeters(self.dx_counts, self.dy_counts, mouse_dpi);
+            input_buffer.record_mouse_distance_cm(now, distance_cm);
+        }
+
+        if self.vertical_scroll_steps != 0.0 {
+            input_buffer.record_vertical_scroll_cm(
+                now,
+                scroll_steps_to_centimeters(self.vertical_scroll_steps),
+            );
+        }
+
+        if self.horizontal_scroll_steps != 0.0 {
+            input_buffer.record_horizontal_scroll_cm(
+                now,
+                scroll_steps_to_centimeters(self.horizontal_scroll_steps),
+            );
+        }
+
+        *self = Self::default();
+    }
 }
 
 // ioctl defs
@@ -246,7 +297,7 @@ async fn keyboard_device_loop(mut file: AsyncFd<File>, tx: mpsc::Sender<InputEve
         }) {
             Ok(Ok(n)) if n == core::mem::size_of::<input_event>() => {
                 let kbd_event = unsafe { event.assume_init() };
-                let _ = tx.try_send(InputEvent::Keyboard(kbd_event));
+                let _ = tx.try_send(InputEvent::Keyboard { event: kbd_event });
             }
             Ok(Ok(_)) => {} // partial read; ignore
             Ok(Err(err)) => return Err(anyhow::Error::from(err)),
@@ -255,7 +306,11 @@ async fn keyboard_device_loop(mut file: AsyncFd<File>, tx: mpsc::Sender<InputEve
     }
 }
 
-async fn mouse_device_loop(mut file: AsyncFd<File>, tx: mpsc::Sender<InputEvent>) -> Result<()> {
+async fn mouse_device_loop(
+    mut file: AsyncFd<File>,
+    device_id: usize,
+    tx: mpsc::Sender<InputEvent>,
+) -> Result<()> {
     loop {
         let mut guard = file.readable_mut().await?;
         let mut event = MaybeUninit::<input_event>::uninit();
@@ -270,8 +325,11 @@ async fn mouse_device_loop(mut file: AsyncFd<File>, tx: mpsc::Sender<InputEvent>
             read(inner, buf).map_err(|err| std::io::Error::from_raw_os_error(err as i32))
         }) {
             Ok(Ok(n)) if n == core::mem::size_of::<input_event>() => {
-                let kbd_event = unsafe { event.assume_init() };
-                let _ = tx.try_send(InputEvent::Mouse(kbd_event));
+                let mouse_event = unsafe { event.assume_init() };
+                let _ = tx.try_send(InputEvent::Mouse {
+                    device_id,
+                    event: mouse_event,
+                });
             }
             Ok(Ok(_)) => {} // partial read; ignore
             Ok(Err(err)) => return Err(anyhow::Error::from(err)),
@@ -298,7 +356,7 @@ async fn spawn_input_listeners(tx: mpsc::Sender<InputEvent>) -> Result<()> {
         });
     }
 
-    for file in devices.mice {
+    for (device_id, file) in devices.mice.into_iter().enumerate() {
         nix::fcntl::fcntl(
             &file,
             nix::fcntl::FcntlArg::F_SETFL(nix::fcntl::OFlag::O_NONBLOCK),
@@ -306,7 +364,7 @@ async fn spawn_input_listeners(tx: mpsc::Sender<InputEvent>) -> Result<()> {
         let async_file = AsyncFd::new(file)?;
         let tx_clone = tx.clone();
         tokio::spawn(async move {
-            if let Err(e) = mouse_device_loop(async_file, tx_clone).await {
+            if let Err(e) = mouse_device_loop(async_file, device_id, tx_clone).await {
                 error!("Mouse device task failed: {}", e);
             }
         });
@@ -316,11 +374,10 @@ async fn spawn_input_listeners(tx: mpsc::Sender<InputEvent>) -> Result<()> {
 }
 
 pub async fn run(dpi: Option<u32>, update_interval: u32, backend: StorageBackend) -> Result<()> {
-    let mut inputs_data = InputLogger::new(&backend, dpi.unwrap_or(800))
-        .await
-        .with_context(|| {
-            "Failed to initialize Inputs runtime because could not create InputLogger data"
-        })?;
+    let mouse_dpi = dpi.unwrap_or(DEFAULT_MOUSE_DPI).max(1) as f64;
+    let mut input_buffer =
+        InputBucketBuffer::new(backend.source_id(), backend.bucket_granularity_minutes());
+    let mut pending_mouse_packets = HashMap::<usize, PendingMousePacket>::new();
 
     let (tasks_tx, mut tasks_rx) = channel::<Signals>(32);
     let (events_tx, mut events_rx) = channel::<InputEvent>(256);
@@ -366,21 +423,22 @@ pub async fn run(dpi: Option<u32>, update_interval: u32, backend: StorageBackend
             // An input event was received from a device.
             Some(event) = events_rx.recv() => {
                 match event {
-                    InputEvent::Keyboard(event) => {
+                    InputEvent::Keyboard { event } => {
                         last_event = Some(event);
                         if event.value == KeyPressState::Down as i32 {
-                            inputs_data.key_presses += 1;
+                            input_buffer.record_key_press(chrono::Utc::now());
                         }
                     },
-                    InputEvent::Mouse(event) => {
+                    InputEvent::Mouse { device_id, event } => {
                         last_event = Some(event);
+                        let now = chrono::Utc::now();
                         match event.type_ as u32 {
                             EV_KEY => {
                                 if event.value == KeyPressState::Down as i32 {
                                     match event.code as u32 {
-                                        BTN_LEFT => inputs_data.left_clicks += 1,
-                                        BTN_RIGHT => inputs_data.right_clicks += 1,
-                                        BTN_MIDDLE => inputs_data.middle_clicks += 1,
+                                        BTN_LEFT => input_buffer.record_left_click(now),
+                                        BTN_RIGHT => input_buffer.record_right_click(now),
+                                        BTN_MIDDLE => input_buffer.record_middle_click(now),
                                         // BTN_SIDE => logger.side_clicks += 1,
                                         // BTN_EXTRA => logger.extra_clicks +=1,
                                         // BTN_FORWARD => logger.forward_clicks +=1,
@@ -391,21 +449,16 @@ pub async fn run(dpi: Option<u32>, update_interval: u32, backend: StorageBackend
                                 }
                             }
                             EV_REL => {
-                                match event.code as u32 {
-                                    REL_X | REL_Y => {
-                                        inputs_data.pixels_traveled += event.value.unsigned_abs() as u64;
-                                    }
-                                    REL_WHEEL => { // Vertical scroll
-                                        let clicks = event.value.unsigned_abs() as u64;
-                                        inputs_data.vertical_scroll_clicks += clicks;
-                                        inputs_data.vertical_scroll_cm += clicks as f64 * ASSUMED_CM_PER_SCROLL_CLICK;
-                                    }
-                                    REL_HWHEEL => { // Horizontal scroll
-                                        let clicks = event.value.unsigned_abs() as u64;
-                                        inputs_data.horizontal_scroll_clicks += clicks;
-                                        inputs_data.horizontal_scroll_cm += clicks as f64 * ASSUMED_CM_PER_SCROLL_CLICK;
-                                    }                                    _ => {}
-                                }
+                                pending_mouse_packets
+                                    .entry(device_id)
+                                    .or_default()
+                                    .record_relative_event(event.code as u32, event.value);
+                            }
+                            EV_SYN if event.code as u32 == SYN_REPORT => {
+                                pending_mouse_packets
+                                    .entry(device_id)
+                                    .or_default()
+                                    .flush(&mut input_buffer, now, mouse_dpi);
                             }
                             _ => {}
                         }
@@ -416,12 +469,12 @@ pub async fn run(dpi: Option<u32>, update_interval: u32, backend: StorageBackend
             // A signal was received from another task.
             Some(signal) = tasks_rx.recv() => {
                 if matches!(signal, Signals::DbUpdate) {
-                    if inputs_data.mouse_dpi > 0 {
-                        const INCHES_TO_CM: f64 = 2.54;
-                        inputs_data.cm_traveled = inputs_data.pixels_traveled as f64 / inputs_data.mouse_dpi as f64 * INCHES_TO_CM;
+                    let now = chrono::Utc::now();
+                    for packet in pending_mouse_packets.values_mut() {
+                        packet.flush(&mut input_buffer, now, mouse_dpi);
                     }
-
-                    if let Err(e) = backend.store_keys_data(&inputs_data).await {
+                    let pending_rows = input_buffer.drain();
+                    if let Err(e) = backend.store_keys_data(&pending_rows).await {
                         error!("Failed to store keylogger data in backend: {:?}", e);
                     }
                 }
@@ -441,4 +494,41 @@ pub async fn run(dpi: Option<u32>, update_interval: u32, backend: StorageBackend
 /// * What if user is watching something?
 pub fn is_idle() -> bool {
     unsafe { IDLE_TIME > 20 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{TimeZone, Utc};
+
+    #[test]
+    fn pending_mouse_packet_uses_euclidean_distance_per_report() {
+        let now = Utc.with_ymd_and_hms(2026, 4, 18, 12, 0, 0).unwrap();
+        let mut packet = PendingMousePacket::default();
+        let mut buffer = InputBucketBuffer::new(DEFAULT_SOURCE_ID, DEFAULT_BUCKET_MINUTES as u32);
+
+        packet.record_relative_event(REL_X, 3);
+        packet.record_relative_event(REL_Y, 4);
+        packet.flush(&mut buffer, now, 800.0);
+
+        let rows = buffer.drain();
+        assert_eq!(rows.len(), 1);
+        assert!((rows[0].mouse_distance_cm - (5.0 / 800.0 * 2.54)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn pending_mouse_packet_tracks_scroll_axes_separately() {
+        let now = Utc.with_ymd_and_hms(2026, 4, 18, 12, 0, 0).unwrap();
+        let mut packet = PendingMousePacket::default();
+        let mut buffer = InputBucketBuffer::new(DEFAULT_SOURCE_ID, DEFAULT_BUCKET_MINUTES as u32);
+
+        packet.record_relative_event(REL_WHEEL, -2);
+        packet.record_relative_event(REL_HWHEEL, 1);
+        packet.flush(&mut buffer, now, 800.0);
+
+        let rows = buffer.drain();
+        assert_eq!(rows.len(), 1);
+        assert!((rows[0].scroll_vertical_cm - 0.8).abs() < 1e-6);
+        assert!((rows[0].scroll_horizontal_cm - 0.4).abs() < 1e-6);
+    }
 }

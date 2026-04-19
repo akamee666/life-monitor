@@ -21,7 +21,7 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::{
     GetRawInputData, GetRawInputDeviceInfoW, GetRawInputDeviceList, RegisterRawInputDevices,
     HRAWINPUT, MOUSE_MOVE_ABSOLUTE, RAWINPUT, RAWINPUTDEVICE, RAWINPUTDEVICELIST, RAWINPUTHEADER,
-    RAWKEYBOARD, RAWMOUSE, RIDEV_INPUTSINK, RIDI_DEVICENAME, RID_INPUT,
+    RAWKEYBOARD, RAWMOUSE, RIDEV_INPUTSINK, RIDI_DEVICENAME, RID_INPUT, RI_MOUSE_HWHEEL,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -113,11 +113,10 @@ unsafe fn get_human_readable_name(device_handle: HANDLE) -> Result<String> {
 }
 
 pub async fn run(dpi: Option<u32>, update_interval: u32, backend: StorageBackend) -> Result<()> {
-    let mut inputs_data = InputLogger::new(&backend, dpi.unwrap_or(800))
-        .await
-        .with_context(|| {
-            "Failed to initialize Inputs runtime because could not create InputLogger data"
-        })?;
+    let mouse_dpi = dpi.unwrap_or(DEFAULT_MOUSE_DPI).max(1) as f64;
+    let mut inputs_data = InputLogger::default();
+    let mut input_buffer =
+        InputBucketBuffer::new(backend.source_id(), backend.bucket_granularity_minutes());
 
     let (events_tx, mut events_rx) = channel::<RawInputEvent>(256);
     let mut db_updates = interval(Duration::from_secs(update_interval as u64));
@@ -153,16 +152,12 @@ pub async fn run(dpi: Option<u32>, update_interval: u32, backend: StorageBackend
     loop {
         tokio::select! {
             Some(event) = events_rx.recv() => {
-                process_event(&mut inputs_data, event);
+                process_event(&mut inputs_data, &mut input_buffer, mouse_dpi, event);
             }
 
             _ = db_updates.tick() => {
-                if inputs_data.pixels_traveled != 0 {
-                    const INCHES_TO_CM: f64 = 2.54;
-                    inputs_data.cm_traveled = (inputs_data.pixels_traveled as f64 / inputs_data.mouse_dpi as f64) * INCHES_TO_CM;
-                }
-
-                if let Err(e) = backend.store_keys_data(&inputs_data).await {
+                let pending_rows = input_buffer.drain();
+                if let Err(e) = backend.store_keys_data(&pending_rows).await {
                     error!("Failed to store inputs data in backend: {:?}", e);
                 }
             }
@@ -177,77 +172,223 @@ pub async fn run(dpi: Option<u32>, update_interval: u32, backend: StorageBackend
 }
 
 // https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-rawmouse#remarks
-fn process_event(inputs: &mut InputLogger, event: RawInputEvent) {
+fn process_event(
+    inputs: &mut InputLogger,
+    input_buffer: &mut InputBucketBuffer,
+    mouse_dpi: f64,
+    event: RawInputEvent,
+) {
     match event {
         RawInputEvent::Keyboard(event) => {
-            let vkey = event.VKey;
-
-            // This is needed to avoid counting auto repeat.
-            if (event.Flags & RI_KEY_BREAK as u16) == 0 {
-                // key down
-                if inputs.w.pressed_keys_state.insert(vkey) {
-                    inputs.key_presses += 1;
-                }
-            } else {
-                // key up event
-                inputs.w.pressed_keys_state.remove(&vkey);
-            }
+            apply_keyboard_event(
+                inputs,
+                input_buffer,
+                chrono::Utc::now(),
+                event.VKey,
+                (event.Flags & RI_KEY_BREAK as u16) == 0,
+            );
         }
 
         RawInputEvent::Mouse(event) => {
+            let now = chrono::Utc::now();
             // Relative movement we already get the delta for x and y
             if (event.usFlags.0 & MOUSE_MOVE_ABSOLUTE.0) == 0 {
-                let dx = event.lLastX as f64;
-                let dy = event.lLastY as f64;
-                let dist = (dx * dx + dy * dy).sqrt();
-                inputs.pixels_traveled += dist as u64;
+                apply_relative_mouse_move(
+                    input_buffer,
+                    now,
+                    mouse_dpi,
+                    event.lLastX as f64,
+                    event.lLastY as f64,
+                );
             }
 
             // win32 doesn't use pixels as movement in this case
             if (event.usFlags.0 & MOUSE_MOVE_ABSOLUTE.0) != 0 {
-                // (0,0) is the top-left corner of the primary monitor
-                // (65535,65535) is the botton-right
-                let current_x = event.lLastX;
-                let current_y = event.lLastY;
-                if let (Some(last_x), Some(last_y)) = (inputs.w.last_abs_x, inputs.w.last_abs_y) {
-                    let raw_dx = (current_x - last_x) as f64;
-                    let raw_dy = (current_y - last_y) as f64;
-
-                    let dx_mm = raw_dx * (inputs.w.screen_width_mm / 65535.0);
-                    let dy_mm = raw_dy * (inputs.w.screen_height_mm / 65535.0);
-                    let dist_mm = (dx_mm * dx_mm + dy_mm * dy_mm).sqrt();
-                    // try to ignore noise, but this still doesn't seem to help in accuracy. it
-                    // seems we stumbled in a paradox: The Coastline Paradox.
-                    const JITTER_THRESHOLD_MM: f64 = 0.3;
-                    if dist_mm > JITTER_THRESHOLD_MM {
-                        inputs.cm_traveled += dist_mm / 10.0;
-                    }
-                }
-                inputs.w.last_abs_x = Some(current_x);
-                inputs.w.last_abs_y = Some(current_y);
+                apply_absolute_mouse_move(inputs, input_buffer, now, event.lLastX, event.lLastY);
             }
 
             unsafe {
-                if (event.Anonymous.Anonymous.usButtonFlags & RI_MOUSE_LEFT_BUTTON_DOWN as u16) != 0
-                {
-                    inputs.left_clicks += 1;
-                }
-                if (event.Anonymous.Anonymous.usButtonFlags & RI_MOUSE_RIGHT_BUTTON_DOWN as u16)
-                    != 0
-                {
-                    inputs.right_clicks += 1;
-                }
-                if (event.Anonymous.Anonymous.usButtonFlags & RI_MOUSE_MIDDLE_BUTTON_DOWN as u16)
-                    != 0
-                {
-                    inputs.middle_clicks += 1;
-                }
+                apply_mouse_buttons(input_buffer, now, event.Anonymous.Anonymous.usButtonFlags);
 
                 if (event.Anonymous.Anonymous.usButtonFlags & RI_MOUSE_WHEEL as u16) != 0 {
-                    let delta = event.Anonymous.Anonymous.usButtonData;
+                    apply_vertical_wheel(
+                        input_buffer,
+                        now,
+                        event.Anonymous.Anonymous.usButtonData as i16,
+                    );
+                }
+
+                if (event.Anonymous.Anonymous.usButtonFlags & RI_MOUSE_HWHEEL as u16) != 0 {
+                    apply_horizontal_wheel(
+                        input_buffer,
+                        now,
+                        event.Anonymous.Anonymous.usButtonData as i16,
+                    );
                 }
             }
         }
+    }
+}
+
+fn apply_keyboard_event(
+    inputs: &mut InputLogger,
+    input_buffer: &mut InputBucketBuffer,
+    now: chrono::DateTime<chrono::Utc>,
+    vkey: u16,
+    is_key_down: bool,
+) {
+    if is_key_down {
+        if inputs.w.pressed_keys_state.insert(vkey) {
+            input_buffer.record_key_press(now);
+        }
+    } else {
+        inputs.w.pressed_keys_state.remove(&vkey);
+    }
+}
+
+fn apply_relative_mouse_move(
+    input_buffer: &mut InputBucketBuffer,
+    now: chrono::DateTime<chrono::Utc>,
+    mouse_dpi: f64,
+    dx: f64,
+    dy: f64,
+) {
+    input_buffer.record_mouse_distance_cm(now, relative_counts_to_centimeters(dx, dy, mouse_dpi));
+}
+
+fn apply_absolute_mouse_move(
+    inputs: &mut InputLogger,
+    input_buffer: &mut InputBucketBuffer,
+    now: chrono::DateTime<chrono::Utc>,
+    current_x: i32,
+    current_y: i32,
+) {
+    if let (Some(last_x), Some(last_y)) = (inputs.w.last_abs_x, inputs.w.last_abs_y) {
+        let raw_dx = (current_x - last_x) as f64;
+        let raw_dy = (current_y - last_y) as f64;
+
+        let dx_mm = raw_dx * (inputs.w.screen_width_mm / 65535.0);
+        let dy_mm = raw_dy * (inputs.w.screen_height_mm / 65535.0);
+        let dist_cm = millimeters_to_centimeters(dx_mm, dy_mm);
+        const JITTER_THRESHOLD_MM: f64 = 0.3;
+        if dist_cm > JITTER_THRESHOLD_MM / 10.0 {
+            input_buffer.record_mouse_distance_cm(now, dist_cm);
+        }
+    }
+
+    inputs.w.last_abs_x = Some(current_x);
+    inputs.w.last_abs_y = Some(current_y);
+}
+
+fn apply_mouse_buttons(
+    input_buffer: &mut InputBucketBuffer,
+    now: chrono::DateTime<chrono::Utc>,
+    button_flags: u16,
+) {
+    if (button_flags & RI_MOUSE_LEFT_BUTTON_DOWN as u16) != 0 {
+        input_buffer.record_left_click(now);
+    }
+    if (button_flags & RI_MOUSE_RIGHT_BUTTON_DOWN as u16) != 0 {
+        input_buffer.record_right_click(now);
+    }
+    if (button_flags & RI_MOUSE_MIDDLE_BUTTON_DOWN as u16) != 0 {
+        input_buffer.record_middle_click(now);
+    }
+}
+
+fn apply_vertical_wheel(
+    input_buffer: &mut InputBucketBuffer,
+    now: chrono::DateTime<chrono::Utc>,
+    delta: i16,
+) {
+    let distance_cm = scroll_steps_to_centimeters(delta as f64 / 120.0);
+    input_buffer.record_vertical_scroll_cm(now, distance_cm);
+}
+
+fn apply_horizontal_wheel(
+    input_buffer: &mut InputBucketBuffer,
+    now: chrono::DateTime<chrono::Utc>,
+    delta: i16,
+) {
+    let distance_cm = scroll_steps_to_centimeters(delta as f64 / 120.0);
+    input_buffer.record_horizontal_scroll_cm(now, distance_cm);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{TimeZone, Utc};
+
+    fn empty_input_logger() -> InputLogger {
+        InputLogger::default()
+    }
+
+    #[test]
+    fn keyboard_event_counts_unique_keydown_only_once() {
+        let mut inputs = empty_input_logger();
+        let mut buffer = InputBucketBuffer::new(DEFAULT_SOURCE_ID, DEFAULT_BUCKET_MINUTES as u32);
+        let now = Utc.with_ymd_and_hms(2026, 4, 18, 12, 0, 0).unwrap();
+
+        apply_keyboard_event(&mut inputs, &mut buffer, now, 65, true);
+        apply_keyboard_event(&mut inputs, &mut buffer, now, 65, true);
+        apply_keyboard_event(&mut inputs, &mut buffer, now, 65, false);
+
+        let rows = buffer.drain();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].key_presses, 1);
+    }
+
+    #[test]
+    fn relative_mouse_move_converts_distance_to_centimeters() {
+        let mut buffer = InputBucketBuffer::new(DEFAULT_SOURCE_ID, DEFAULT_BUCKET_MINUTES as u32);
+        let now = Utc.with_ymd_and_hms(2026, 4, 18, 12, 0, 0).unwrap();
+
+        apply_relative_mouse_move(&mut buffer, now, 800.0, 3.0, 4.0);
+
+        let rows = buffer.drain();
+        assert_eq!(rows.len(), 1);
+        assert!((rows[0].mouse_distance_cm - (5.0 / 800.0 * 2.54)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn absolute_mouse_move_ignores_small_jitter_and_tracks_real_motion() {
+        let mut inputs = empty_input_logger();
+        inputs.w.screen_width_mm = 500.0;
+        inputs.w.screen_height_mm = 300.0;
+        let mut buffer = InputBucketBuffer::new(DEFAULT_SOURCE_ID, DEFAULT_BUCKET_MINUTES as u32);
+        let now = Utc.with_ymd_and_hms(2026, 4, 18, 12, 0, 0).unwrap();
+
+        apply_absolute_mouse_move(&mut inputs, &mut buffer, now, 100, 100);
+        apply_absolute_mouse_move(&mut inputs, &mut buffer, now, 101, 101);
+        assert!(buffer.drain().is_empty());
+
+        apply_absolute_mouse_move(&mut inputs, &mut buffer, now, 1000, 1000);
+        let rows = buffer.drain();
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].mouse_distance_cm > 0.0);
+    }
+
+    #[test]
+    fn button_and_wheel_helpers_record_bucket_metrics() {
+        let now = Utc.with_ymd_and_hms(2026, 4, 18, 12, 0, 0).unwrap();
+        let mut buffer = InputBucketBuffer::new(DEFAULT_SOURCE_ID, DEFAULT_BUCKET_MINUTES as u32);
+        apply_mouse_buttons(
+            &mut buffer,
+            now,
+            RI_MOUSE_LEFT_BUTTON_DOWN as u16
+                | RI_MOUSE_RIGHT_BUTTON_DOWN as u16
+                | RI_MOUSE_MIDDLE_BUTTON_DOWN as u16,
+        );
+        apply_vertical_wheel(&mut buffer, now, 240);
+        apply_horizontal_wheel(&mut buffer, now, 120);
+
+        let rows = buffer.drain();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].left_clicks, 1);
+        assert_eq!(rows[0].right_clicks, 1);
+        assert_eq!(rows[0].middle_clicks, 1);
+        assert!((rows[0].scroll_vertical_cm - 0.8).abs() < 1e-6);
+        assert!((rows[0].scroll_horizontal_cm - 0.4).abs() < 1e-6);
     }
 }
 

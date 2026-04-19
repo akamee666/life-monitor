@@ -154,8 +154,34 @@ pub fn get_idle_time() -> Result<Duration> {
     Ok(Duration::from_millis(diff.into()))
 }
 
+pub fn should_be_idle(idle_time: Duration) -> bool {
+    idle_time >= Duration::from_secs(20)
+}
+
+pub fn sync_focus_tracker(
+    tracker: &mut ProcessTracker,
+    focused_window: Option<Window>,
+    now: chrono::DateTime<chrono::Utc>,
+    idle: bool,
+) {
+    if idle {
+        tracker.pause(now);
+        return;
+    }
+
+    let Some(window) = focused_window else {
+        tracker.clear_focus(now);
+        return;
+    };
+
+    if tracker.current_window_name() != Some(window.name.as_str()) {
+        tracker.switch_window(window, now);
+    } else {
+        tracker.resume(now);
+    }
+}
+
 #[derive(Debug, Clone)]
-#[cfg_attr(feature = "remote", derive(serde::Deserialize))]
 #[allow(dead_code)]
 pub struct MouseSettings {
     pub threshold: i32,
@@ -258,8 +284,76 @@ pub fn uptime() -> u64 {
 }
 
 pub fn is_idle() -> bool {
-    if uptime() > 20 {
-        return true;
+    get_idle_time().map(should_be_idle).unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{TimeZone, Utc};
+
+    #[test]
+    fn should_be_idle_uses_real_idle_duration_threshold() {
+        assert!(!should_be_idle(Duration::from_secs(19)));
+        assert!(should_be_idle(Duration::from_secs(20)));
+        assert!(should_be_idle(Duration::from_secs(45)));
     }
-    false
+
+    #[test]
+    fn sync_focus_tracker_pauses_and_resumes_current_window() {
+        let mut tracker = ProcessTracker::new(DEFAULT_SOURCE_ID, DEFAULT_BUCKET_MINUTES as u32);
+        let start = Utc.with_ymd_and_hms(2026, 4, 18, 12, 0, 0).unwrap();
+        let resume = Utc.with_ymd_and_hms(2026, 4, 18, 12, 0, 10).unwrap();
+        let flush = Utc.with_ymd_and_hms(2026, 4, 18, 12, 0, 20).unwrap();
+        let window = Window {
+            name: "Editor".to_string(),
+            class: "nvim".to_string(),
+        };
+
+        sync_focus_tracker(&mut tracker, Some(window.clone()), start, false);
+        sync_focus_tracker(&mut tracker, Some(window.clone()), resume, true);
+        sync_focus_tracker(&mut tracker, Some(window), flush, false);
+        tracker.record_active_until(Utc.with_ymd_and_hms(2026, 4, 18, 12, 0, 30).unwrap());
+
+        let rows = tracker.drain_pending();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].focus_seconds, 20);
+    }
+
+    #[test]
+    fn sync_focus_tracker_switches_windows_and_clears_when_missing() {
+        let mut tracker = ProcessTracker::new(DEFAULT_SOURCE_ID, DEFAULT_BUCKET_MINUTES as u32);
+        let editor = Window {
+            name: "Editor".to_string(),
+            class: "nvim".to_string(),
+        };
+        let browser = Window {
+            name: "Browser".to_string(),
+            class: "firefox".to_string(),
+        };
+
+        sync_focus_tracker(
+            &mut tracker,
+            Some(editor),
+            Utc.with_ymd_and_hms(2026, 4, 18, 12, 0, 0).unwrap(),
+            false,
+        );
+        sync_focus_tracker(
+            &mut tracker,
+            Some(browser),
+            Utc.with_ymd_and_hms(2026, 4, 18, 12, 0, 30).unwrap(),
+            false,
+        );
+        sync_focus_tracker(
+            &mut tracker,
+            None,
+            Utc.with_ymd_and_hms(2026, 4, 18, 12, 0, 45).unwrap(),
+            false,
+        );
+
+        let rows = tracker.drain_pending();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].focus_seconds, 30);
+        assert_eq!(rows[1].focus_seconds, 15);
+    }
 }
