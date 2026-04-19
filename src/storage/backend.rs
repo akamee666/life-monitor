@@ -1,6 +1,8 @@
 //! Storage backend abstraction.
 use crate::common::*;
 use crate::storage::localdb::*;
+#[cfg(feature = "multi-sync")]
+use crate::sync::{apply_local_focus_rows, apply_local_input_rows, apply_local_source};
 use crate::utils::lock::acquire_db_operation_lock;
 
 use rusqlite::Connection;
@@ -52,6 +54,12 @@ impl LocalDb {
         setup_database(&conn).context("Failed to properly setup sqlite database")?;
         let session_uuid = begin_session(&conn, DEFAULT_SOURCE_ID, std::env::consts::OS)
             .with_context(|| "Failed to record the startup of the current collection session")?;
+        #[cfg(feature = "multi-sync")]
+        {
+            let source = get_source(&conn, DEFAULT_SOURCE_ID)?;
+            apply_local_source(&conn, &source)
+                .with_context(|| "Failed to seed the local source row into the sync outbox")?;
+        }
 
         info!(
             "Backend using SQLite successfully initialized at {}.",
@@ -76,6 +84,16 @@ impl LocalDb {
     pub fn bucket_granularity_minutes(&self) -> u32 {
         DEFAULT_BUCKET_MINUTES as u32
     }
+
+    #[cfg(feature = "multi-sync")]
+    pub fn shared_connection(&self) -> Arc<Mutex<Connection>> {
+        self.con.clone()
+    }
+
+    #[cfg(feature = "multi-sync")]
+    pub fn db_path(&self) -> &PathBuf {
+        &self.db_path
+    }
 }
 
 fn format_remembered_db_open_error(path: &std::path::Path) -> String {
@@ -95,6 +113,10 @@ impl DataStore for LocalDb {
             let _op_lock = acquire_db_operation_lock(&db_path)?;
             let mut con = con.lock().unwrap();
             let tx = con.transaction()?;
+            #[cfg(feature = "multi-sync")]
+            apply_local_input_rows(&tx, &rows)
+                .context("Failed to insert input bucket rows into sqlite database")?;
+            #[cfg(not(feature = "multi-sync"))]
             insert_input_buckets(&tx, &rows)
                 .context("Failed to insert input bucket rows into sqlite database")?;
             tx.commit().context("Failed to commit input bucket rows")
@@ -111,6 +133,10 @@ impl DataStore for LocalDb {
             let _op_lock = acquire_db_operation_lock(&db_path)?;
             let mut con = con.lock().unwrap();
             let tx = con.transaction()?;
+            #[cfg(feature = "multi-sync")]
+            apply_local_focus_rows(&tx, &rows)
+                .context("Failed to insert focus bucket rows into sqlite database")?;
+            #[cfg(not(feature = "multi-sync"))]
             insert_focus_buckets(&tx, &rows)
                 .context("Failed to insert focus bucket rows into sqlite database")?;
             tx.commit().context("Failed to commit focus bucket rows")

@@ -164,6 +164,8 @@ mod tests {
 
     fn base_cli() -> Cli {
         Cli {
+            #[cfg(feature = "multi-sync")]
+            command: None,
             interval: None,
             #[cfg(target_os = "windows")]
             no_systray: true,
@@ -179,6 +181,14 @@ mod tests {
             clear: false,
             enable_startup: false,
             disable_startup: false,
+            #[cfg(feature = "multi-sync")]
+            sync_enable: false,
+            #[cfg(feature = "multi-sync")]
+            sync_remote_url: None,
+            #[cfg(feature = "multi-sync")]
+            sync_auth_token: None,
+            #[cfg(feature = "multi-sync")]
+            sync_interval: 300,
         }
     }
 
@@ -214,6 +224,8 @@ mod tests {
         }
     }
 
+    /// Verifies that enabling startup targets the current user's Startup folder by driving the
+    /// pure helper with a fake shortcut manager instead of calling real Windows COM APIs.
     #[test]
     fn configure_startup_creates_shortcut_in_startup_folder() {
         let mut cli = base_cli();
@@ -234,6 +246,8 @@ mod tests {
         assert_eq!(created[0].1, ctx.current_exe);
     }
 
+    /// Verifies that disabling startup removes an existing shortcut only when one is present
+    /// by preloading fake manager state and checking the requested removal path.
     #[test]
     fn configure_startup_removes_existing_shortcut_when_disabled() {
         let mut cli = base_cli();
@@ -252,6 +266,8 @@ mod tests {
         assert_eq!(manager.removed.borrow().as_slice(), &[ctx.shortcut_path()]);
     }
 
+    /// Verifies that disabling startup is a no-op when no shortcut exists by using the same
+    /// helper path with an empty fake manager and asserting nothing was removed.
     #[test]
     fn configure_startup_does_not_remove_missing_shortcut() {
         let mut cli = base_cli();

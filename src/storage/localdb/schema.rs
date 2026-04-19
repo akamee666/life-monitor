@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::common::DEFAULT_SOURCE_ID;
 
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 pub fn setup_database(conn: &Connection) -> Result<()> {
     conn.execute_batch(
@@ -95,6 +95,83 @@ pub fn setup_database(conn: &Connection) -> Result<()> {
             platform TEXT NOT NULL,
             FOREIGN KEY(source_id) REFERENCES sources(id)
         );
+
+        CREATE TABLE IF NOT EXISTS sync_state (
+            own_source_uuid TEXT NOT NULL,
+            remote_url TEXT NOT NULL,
+            last_pulled_revision INTEGER NOT NULL DEFAULT 0,
+            last_pushed_batch_uuid TEXT,
+            last_push_at_utc TEXT,
+            last_pull_at_utc TEXT,
+            last_sync_error TEXT,
+            last_sync_error_at_utc TEXT,
+            remote_head_revision INTEGER,
+            sync_enabled INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (own_source_uuid, remote_url)
+        );
+
+        CREATE TABLE IF NOT EXISTS sync_outbox_sources (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_uuid TEXT,
+            source_uuid TEXT NOT NULL,
+            source_name TEXT NOT NULL,
+            platform TEXT NOT NULL,
+            created_at_utc TEXT NOT NULL,
+            sent_at_utc TEXT,
+            attempt_count INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS sync_outbox_sources_pending_idx
+        ON sync_outbox_sources (source_uuid)
+        WHERE sent_at_utc IS NULL;
+
+        CREATE TABLE IF NOT EXISTS sync_outbox_input_buckets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_uuid TEXT,
+            source_uuid TEXT NOT NULL,
+            bucket_start_utc TEXT NOT NULL,
+            bucket_end_utc TEXT NOT NULL,
+            local_date TEXT NOT NULL,
+            local_hour INTEGER NOT NULL,
+            timezone_offset_minutes INTEGER NOT NULL,
+            granularity_minutes INTEGER NOT NULL,
+            left_clicks INTEGER NOT NULL,
+            right_clicks INTEGER NOT NULL,
+            middle_clicks INTEGER NOT NULL,
+            key_presses INTEGER NOT NULL,
+            mouse_distance_cm REAL NOT NULL,
+            scroll_vertical_cm REAL NOT NULL,
+            scroll_horizontal_cm REAL NOT NULL,
+            created_at_utc TEXT NOT NULL,
+            sent_at_utc TEXT,
+            attempt_count INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS sync_outbox_input_pending_idx
+        ON sync_outbox_input_buckets (source_uuid, bucket_start_utc, granularity_minutes)
+        WHERE sent_at_utc IS NULL;
+
+        CREATE TABLE IF NOT EXISTS sync_outbox_focus_buckets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_uuid TEXT,
+            source_uuid TEXT NOT NULL,
+            bucket_start_utc TEXT NOT NULL,
+            bucket_end_utc TEXT NOT NULL,
+            local_date TEXT NOT NULL,
+            local_hour INTEGER NOT NULL,
+            timezone_offset_minutes INTEGER NOT NULL,
+            app_identifier TEXT NOT NULL,
+            window_title TEXT NOT NULL,
+            window_class TEXT NOT NULL,
+            focus_seconds INTEGER NOT NULL,
+            created_at_utc TEXT NOT NULL,
+            sent_at_utc TEXT,
+            attempt_count INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS sync_outbox_focus_pending_idx
+        ON sync_outbox_focus_buckets (source_uuid, bucket_start_utc, window_title, window_class)
+        WHERE sent_at_utc IS NULL;
         ",
     )
     .with_context(|| "Failed to initialize local sqlite schema")?;

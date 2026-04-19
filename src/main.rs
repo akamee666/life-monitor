@@ -18,7 +18,14 @@ use crate::storage::localdb::{
     app_activity_report, export_database, import_snapshot, open_con_at, plan_import,
     session_report, setup_database, DbConfig,
 };
+#[cfg(feature = "multi-sync")]
+use crate::sync::{
+    render_sync_status, resolve_sync_runtime_config, run_sync_cycle, sync_pull, sync_push,
+    sync_status_snapshot, SqldRemote,
+};
 use crate::utils::args::{Cli, ReportKind};
+#[cfg(feature = "multi-sync")]
+use crate::utils::args::{Command, SyncCommand};
 use crate::utils::dpi::{log_mouse_dpi_resolution, resolve_mouse_dpi};
 use crate::utils::lock::*;
 use crate::utils::logger;
@@ -35,6 +42,8 @@ mod input_bindings;
 mod common;
 mod platform;
 mod storage;
+#[cfg(feature = "multi-sync")]
+mod sync;
 mod utils;
 
 #[tokio::main]
@@ -50,6 +59,30 @@ async fn main() {
 
 async fn run(mut args: Cli) -> Result<()> {
     let db_config = DbConfig::from_cli_path(args.db_path.clone())?;
+
+    #[cfg(feature = "multi-sync")]
+    if let Some(Command::Sync { action }) = args.command.clone() {
+        let mut conn = open_con_at(&db_config.db_path)?;
+        setup_database(&conn)?;
+        let sync_config = resolve_sync_runtime_config(&conn, &args)?.with_context(|| {
+            "Sync is not configured. Pass --sync-remote-url or set LIFE_MONITOR_SYNC_REMOTE_URL."
+        })?;
+        let remote = SqldRemote::new(&sync_config.remote_url, &sync_config.auth_token).await?;
+
+        match action {
+            SyncCommand::Push => {
+                sync_push(&conn, &remote, &sync_config).await?;
+            }
+            SyncCommand::Pull => {
+                sync_pull(&mut conn, &remote, &sync_config).await?;
+            }
+            SyncCommand::Status => {
+                let status = sync_status_snapshot(&conn, Some(&remote), &sync_config).await?;
+                println!("{}", render_sync_status(&status));
+            }
+        }
+        return Ok(());
+    }
 
     // if we receive one of these two flags we call the function and it will enable or disable the
     // startup depending on the enable value.
@@ -147,6 +180,37 @@ async fn run(mut args: Cli) -> Result<()> {
     );
 
     let mut tasks_set = JoinSet::new();
+
+    #[cfg(feature = "multi-sync")]
+    {
+        let StorageBackend::Local(local_db) = &storage_backend;
+        let sync_config = {
+            let conn = local_db.shared_connection();
+            let conn = conn.lock().unwrap();
+            resolve_sync_runtime_config(&conn, &args)?
+        };
+        if let Some(sync_config) = sync_config.filter(|config| config.sync_enabled) {
+            let remote = SqldRemote::new(&sync_config.remote_url, &sync_config.auth_token).await?;
+            let remote = std::sync::Arc::new(remote);
+            let db_path = local_db.db_path().clone();
+            let sync_config = sync_config.clone();
+            tasks_set.spawn(async move {
+                let mut tick = tokio::time::interval(std::time::Duration::from_secs(
+                    sync_config.sync_interval_seconds,
+                ));
+                loop {
+                    tick.tick().await;
+                    let _op_lock = acquire_db_operation_lock(&db_path)?;
+                    if let Err(err) = run_sync_cycle(&db_path, remote.as_ref(), &sync_config).await
+                    {
+                        error!("Sync cycle failed: {err:#}");
+                    }
+                }
+                #[allow(unreachable_code)]
+                Ok::<(), anyhow::Error>(())
+            });
+        }
+    }
     #[cfg(target_os = "linux")]
     tasks_set.spawn(crate::platform::linux::inputs::run(
         Some(mouse_dpi.dpi),
@@ -210,6 +274,8 @@ mod tests {
 
     fn base_cli() -> Cli {
         Cli {
+            #[cfg(feature = "multi-sync")]
+            command: None,
             interval: None,
             #[cfg(target_os = "windows")]
             no_systray: true,
@@ -225,6 +291,14 @@ mod tests {
             clear: false,
             enable_startup: false,
             disable_startup: false,
+            #[cfg(feature = "multi-sync")]
+            sync_enable: false,
+            #[cfg(feature = "multi-sync")]
+            sync_remote_url: None,
+            #[cfg(feature = "multi-sync")]
+            sync_auth_token: None,
+            #[cfg(feature = "multi-sync")]
+            sync_interval: 300,
         }
     }
 
@@ -262,6 +336,8 @@ mod tests {
         }
     }
 
+    /// Verifies that the `--export-db` command path exits after writing a snapshot by
+    /// seeding a real temporary database, running `run`, and checking the snapshot contents.
     #[tokio::test]
     async fn run_export_db_creates_snapshot_and_exits() -> Result<()> {
         let _guard = env_lock().lock().unwrap();
@@ -295,6 +371,8 @@ mod tests {
         Ok(())
     }
 
+    /// Verifies that `--import-db --dry-run` leaves the destination unchanged by comparing
+    /// imports metadata and bucket totals before and after running the CLI short-circuit path.
     #[tokio::test]
     async fn run_import_db_dry_run_leaves_destination_unchanged() -> Result<()> {
         let _guard = env_lock().lock().unwrap();
@@ -349,6 +427,8 @@ mod tests {
         Ok(())
     }
 
+    /// Verifies that the import CLI path merges into the configured custom database by using
+    /// real exported data, then asserting the destination gained merged focus and import rows.
     #[tokio::test]
     async fn run_import_db_merges_snapshot_using_custom_db_path() -> Result<()> {
         let _guard = env_lock().lock().unwrap();

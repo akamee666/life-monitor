@@ -18,7 +18,10 @@ pub use export::{export_database, ExportMetadata, ExportResult};
 #[allow(unused_imports)]
 pub use import::{import_snapshot, plan_import, ImportPlan, ImportResult};
 #[allow(unused_imports)]
-pub use rows::{get_source, insert_focus_buckets, insert_input_buckets, open_con_at};
+pub use rows::{
+    get_source, get_source_by_uuid, insert_focus_buckets, insert_input_buckets, open_con_at,
+    upsert_source_by_uuid,
+};
 #[allow(unused_imports)]
 pub use schema::{clear_database, setup_database, SCHEMA_VERSION};
 
@@ -87,6 +90,8 @@ mod tests {
         }
     }
 
+    /// Verifies that DB path memory overwrites the previous remembered location by using an
+    /// isolated data dir override and reading the config back through the public constructor.
     #[test]
     fn db_config_remembers_and_overwrites_last_db_path() -> anyhow::Result<()> {
         let _guard = env_lock().lock().unwrap();
@@ -140,6 +145,8 @@ mod tests {
         }
     }
 
+    /// Verifies that a direct custom file path is preserved as-is while ensuring the parent
+    /// directory exists, which is the observable contract for explicit file destinations.
     #[test]
     fn resolve_db_path_uses_custom_location() -> anyhow::Result<()> {
         let path = unique_temp_db("custom-path").join("nested/data.db");
@@ -149,6 +156,8 @@ mod tests {
         Ok(())
     }
 
+    /// Verifies that an existing directory path resolves to `data.db` inside that directory,
+    /// which is how directory-style `--db-path` inputs are interpreted.
     #[test]
     fn resolve_db_path_uses_data_db_inside_existing_directory() -> anyhow::Result<()> {
         let dir = unique_temp_db("custom-dir-existing");
@@ -162,6 +171,8 @@ mod tests {
         Ok(())
     }
 
+    /// Verifies that a missing directory-like path is created and then resolved to `data.db`
+    /// inside it, which covers the user flow of pointing at a new storage directory.
     #[test]
     fn resolve_db_path_creates_missing_directory_and_uses_data_db() -> anyhow::Result<()> {
         let dir = std::env::temp_dir().join(format!(
@@ -177,6 +188,8 @@ mod tests {
         Ok(())
     }
 
+    /// Verifies that schema setup creates metadata and the default source row by opening a
+    /// fresh database, running setup, and querying the resulting tables directly.
     #[test]
     fn setup_database_creates_metadata_tables() -> anyhow::Result<()> {
         let path = unique_temp_db("schema");
@@ -197,6 +210,8 @@ mod tests {
         Ok(())
     }
 
+    /// Verifies that snapshot export writes both copied data and export metadata by exporting
+    /// a seeded database and asserting on the snapshot's bucket rows and export record.
     #[test]
     fn export_database_creates_snapshot_with_export_metadata() -> anyhow::Result<()> {
         let source_path = unique_temp_db("export-source");
@@ -221,6 +236,8 @@ mod tests {
         Ok(())
     }
 
+    /// Verifies duplicate detection by recording an import with the same export UUID and hash,
+    /// then checking that a later dry-run import is flagged as a duplicate instead of mergeable.
     #[test]
     fn plan_import_marks_duplicate_snapshot() -> anyhow::Result<()> {
         let destination_path = unique_temp_db("import-dest");
@@ -267,6 +284,8 @@ mod tests {
         Ok(())
     }
 
+    /// Verifies that import merges same-source buckets and records import history by exporting
+    /// a source snapshot, importing it, and asserting on merged totals plus metadata rows.
     #[test]
     fn import_snapshot_merges_rows_and_records_history() -> anyhow::Result<()> {
         let destination_path = unique_temp_db("merge-dest");
@@ -322,6 +341,8 @@ mod tests {
         Ok(())
     }
 
+    /// Verifies that rows from a different source UUID stay separate after import by importing
+    /// the same bucket shape from another source and asserting the destination keeps two rows.
     #[test]
     fn import_snapshot_with_different_source_uuid_keeps_rows_separate() -> anyhow::Result<()> {
         let destination_path = unique_temp_db("multi-source-dest");
@@ -352,6 +373,8 @@ mod tests {
         Ok(())
     }
 
+    /// Verifies that corrupted snapshot files fail during planning by writing invalid bytes
+    /// to a temp file and checking that the planner reports an open or integrity failure.
     #[test]
     fn plan_import_rejects_corrupted_snapshot_file() -> anyhow::Result<()> {
         let destination_path = unique_temp_db("corrupt-dest");
@@ -370,6 +393,8 @@ mod tests {
         Ok(())
     }
 
+    /// Verifies that import planning rejects mismatched schema versions by mutating the
+    /// exported snapshot metadata and asserting the planner refuses to proceed.
     #[test]
     fn plan_import_rejects_schema_version_mismatch() -> anyhow::Result<()> {
         let destination_path = unique_temp_db("schema-mismatch-dest");
@@ -398,6 +423,8 @@ mod tests {
         Ok(())
     }
 
+    /// Verifies that overlapping input and focus buckets merge only the overlapping rows while
+    /// preserving distinct later buckets, using one shared-source snapshot with partial overlap.
     #[test]
     fn import_snapshot_handles_partial_bucket_and_window_overlaps() -> anyhow::Result<()> {
         let destination_path = unique_temp_db("partial-overlap-dest");
@@ -447,6 +474,8 @@ mod tests {
         Ok(())
     }
 
+    /// Verifies that duplicate detection prioritizes export UUID over file hash changes by
+    /// mutating snapshot metadata after import and checking the plan still rejects reimport.
     #[test]
     fn duplicate_detection_prefers_export_uuid_even_if_snapshot_hash_changes() -> anyhow::Result<()>
     {
@@ -491,6 +520,8 @@ mod tests {
         Ok(())
     }
 
+    /// Verifies that session reporting returns both open and closed sessions in reverse
+    /// chronology by creating one ended session and one current session in a real database.
     #[test]
     fn session_report_returns_closed_and_open_sessions() -> anyhow::Result<()> {
         let path = unique_temp_db("session-report");
@@ -513,6 +544,8 @@ mod tests {
         Ok(())
     }
 
+    /// Verifies that app activity reporting aggregates focus time by app identifier by loading
+    /// multiple focus rows and asserting the grouped totals and ordering from the query result.
     #[test]
     fn app_activity_report_aggregates_focus_seconds_by_app() -> anyhow::Result<()> {
         let path = unique_temp_db("app-report");

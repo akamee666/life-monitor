@@ -1,3 +1,5 @@
+#[cfg(feature = "multi-sync")]
+use clap::Subcommand;
 use clap::{value_parser, Parser, ValueEnum};
 use std::path::PathBuf;
 
@@ -11,6 +13,23 @@ pub enum ReportKind {
     Apps,
 }
 
+#[cfg(feature = "multi-sync")]
+#[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
+pub enum SyncCommand {
+    Push,
+    Pull,
+    Status,
+}
+
+#[cfg(feature = "multi-sync")]
+#[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
+pub enum Command {
+    Sync {
+        #[command(subcommand)]
+        action: SyncCommand,
+    },
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "Life Monitor")]
 #[command(about = "Track keyboard, mouse, and focused-window activity into a SQLite database.")]
@@ -21,6 +40,10 @@ pub enum ReportKind {
     after_long_help = "Examples:\n  life-monitor\n  life-monitor --debug --interval 10\n  life-monitor --db-path /mnt/shared/life-monitor/data.db\n  life-monitor --export-db ./snapshot.sqlite\n  life-monitor --import-db ./snapshot.sqlite --dry-run\n  life-monitor --import-db ./snapshot.sqlite --import-notes \"desktop sync\""
 )]
 pub struct Cli {
+    #[cfg(feature = "multi-sync")]
+    #[command(subcommand)]
+    pub command: Option<Command>,
+
     #[arg(
         short = 'i',
         long,
@@ -160,6 +183,44 @@ pub struct Cli {
         conflicts_with = "enable_startup"
     )]
     pub disable_startup: bool,
+
+    #[cfg(feature = "multi-sync")]
+    #[arg(
+        long,
+        help_heading = "Sync",
+        default_value_t = false,
+        help = "Enable background multi-device sync during normal collection runs."
+    )]
+    pub sync_enable: bool,
+
+    #[cfg(feature = "multi-sync")]
+    #[arg(
+        long,
+        help_heading = "Sync",
+        value_name = "URL",
+        help = "Remote sqld/libSQL endpoint used as the canonical sync store."
+    )]
+    pub sync_remote_url: Option<String>,
+
+    #[cfg(feature = "multi-sync")]
+    #[arg(
+        long,
+        help_heading = "Sync",
+        value_name = "TOKEN",
+        help = "Authentication token for the remote sqld/libSQL endpoint."
+    )]
+    pub sync_auth_token: Option<String>,
+
+    #[cfg(feature = "multi-sync")]
+    #[arg(
+        long,
+        help_heading = "Sync",
+        value_name = "SECS",
+        default_value_t = 300,
+        value_parser = value_parser!(u64).range(1..),
+        help = "How often to attempt push/pull sync while collecting."
+    )]
+    pub sync_interval: u64,
 }
 
 impl Cli {
@@ -176,6 +237,12 @@ impl Cli {
         info!("Dry-run import: {:?}", self.dry_run);
         info!("Report: {:?}", self.report);
         info!("Report days: {:?}", self.report_days);
+        #[cfg(feature = "multi-sync")]
+        info!("Sync command: {:?}", self.command);
+        #[cfg(feature = "multi-sync")]
+        info!("Sync enabled: {:?}", self.sync_enable);
+        #[cfg(feature = "multi-sync")]
+        info!("Sync remote URL: {:?}", self.sync_remote_url);
         info!("Mouse DPI: {:?}", self.dpi.unwrap_or(DEFAULT_MOUSE_DPI));
         info!("Clear database: {:?}", self.clear);
         println!();

@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection, OpenFlags};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
@@ -129,6 +129,51 @@ pub fn get_source(conn: &Connection, source_id: i64) -> Result<SourceInfo> {
         },
     )
     .with_context(|| format!("Failed to retrieve source row with id {source_id}"))
+}
+
+#[cfg_attr(not(feature = "multi-sync"), allow(dead_code))]
+pub fn get_source_by_uuid(conn: &Connection, source_uuid: &str) -> Result<Option<SourceInfo>> {
+    conn.query_row(
+        "SELECT id, source_uuid, source_name, platform FROM sources WHERE source_uuid = ?1",
+        [source_uuid],
+        |row| {
+            Ok(SourceInfo {
+                id: row.get(0)?,
+                source_uuid: row.get(1)?,
+                source_name: row.get(2)?,
+                platform: row.get(3)?,
+            })
+        },
+    )
+    .optional()
+    .with_context(|| format!("Failed to retrieve source row with source_uuid {source_uuid}"))
+}
+
+#[cfg_attr(not(feature = "multi-sync"), allow(dead_code))]
+pub fn upsert_source_by_uuid(
+    conn: &Connection,
+    source_uuid: &str,
+    source_name: &str,
+    platform: &str,
+    created_at_utc: &str,
+) -> Result<i64> {
+    conn.execute(
+        "
+        INSERT INTO sources (source_uuid, source_name, platform, created_at_utc)
+        VALUES (?1, ?2, ?3, ?4)
+        ON CONFLICT(source_uuid) DO UPDATE SET
+            source_name = excluded.source_name,
+            platform = excluded.platform
+        ",
+        params![source_uuid, source_name, platform, created_at_utc],
+    )
+    .with_context(|| format!("Failed to upsert source row for source_uuid {source_uuid}"))?;
+
+    Ok(conn.query_row(
+        "SELECT id FROM sources WHERE source_uuid = ?1",
+        [source_uuid],
+        |row| row.get(0),
+    )?)
 }
 
 pub fn open_con_at(db_path: &Path) -> Result<Connection> {
