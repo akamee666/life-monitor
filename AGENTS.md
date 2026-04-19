@@ -354,31 +354,45 @@ If a migration or schema change is proposed:
 
 ---
 
+Here's the updated section:
+
+---
+
 ## Testing Expectations
 
 The repo already has a good amount of targeted tests.
 
-Preferred tests:
+**Core philosophy**
+
+Tests exist to catch real behavioral regressions. A test that does not break when the program breaks is noise. A test that breaks when the program is correct is worse than no test. When in doubt, skip the test.
+
+Tests may be unit-level or integration-level. The distinction that matters is not the level — it is whether external dependencies are involved. Tests must run fully in-process with no network, no Docker, no subprocesses, no timing dependencies, and no global machine state unless the integration boundary itself is the behavior being verified.
+
+When a test needs real storage, use real SQLite (in-memory or tempfile) and real schema migrations. Do not mock the storage layer — mocking it validates the mock, not the program.
+
+When a test needs a network boundary (e.g. sync), fake it via a trait with an in-memory implementation. Only the concrete HTTP client should be excluded from tests, not the logic that drives it.
+
+**Preferred tests**
 
 - singular tests for real behavioral guarantees
-- import/export edge cases
-- path resolution
-- buffer aggregation
+- import/export edge cases and duplicate protection
+- path resolution where non-trivial policy exists
+- buffer aggregation correctness
 - lock behavior where it matters
 - CLI short-circuit behavior
 - observable behavior, state transitions, side effects, and contracts
-- the lowest stable test level that covers the risk well
+- the lowest stable level that covers the risk without coupling to internals
 
-Avoid low-value tests such as:
+**Avoid low-value tests**
 
 - asserting exact wording of ordinary static strings
-- tests that fail without breaking behavior
-- broad smoke tests that are hard to diagnose unless they simulate something genuinely important
+- tests that pass even when the behavior they claim to cover is broken
+- broad smoke paths that can fail for many unrelated reasons and are hard to diagnose
 - testing OS behavior, shell behavior, environment-variable mechanics, clocks, randomness, or external tool correctness
-- tests for trivial path-joining or wrapper logic when the real program risk is elsewhere
-- brittle timing-based tests, sleeps, real subprocess tests, or tests that depend on global machine state unless that integration boundary is the behavior being verified
+- trivial path-joining or wrapper logic unless the program adds real policy around it
+- brittle timing-based tests, sleeps, real subprocess tests, or tests that depend on global machine state unless that integration boundary is the thing being verified
 
-When adding tests:
+**When adding tests**
 
 - prefer testing helpers or isolated behavior directly
 - choose the lowest level that gives strong confidence without coupling to internals
@@ -387,37 +401,59 @@ When adding tests:
 - only use command-spawning or timing-heavy tests when the integration behavior itself is the thing being verified
 - explicitly note which candidate behaviors should not be tested when they add noise instead of confidence
 
-Useful classification when deciding what to test:
+**Sync-specific test guidance**
 
-- must test:
-  - bucket aggregation behavior
-  - import/export duplicate protection
-  - focus/input state transitions
-  - CLI short-circuit behavior
-  - recovery/error handling that changes persisted state or user-visible behavior
-- nice to test:
-  - narrow helpers that encode meaningful domain behavior and are hard to reason about at a glance
-  - stable contract/API behavior that would be expensive to debug if broken
-- do not test:
-  - raw OS correctness
-  - third-party library correctness
-  - simple environment/path plumbing unless the program adds non-trivial policy around it
-  - giant smoke paths that can fail for many unrelated reasons
+Sync tests must follow the same in-process rule. Use real SQLite and real schema migrations. Fake only the network boundary.
 
-Current CI coverage:
+Required sync coverage:
+
+- outbox: insert a row → verify it appears in the outbox; push it → verify it is marked sent; push again → verify no duplicate is created
+- incremental pull: given rows at known revisions, verify only rows above the stored cursor are applied; verify the cursor advances only after a confirmed successful apply
+- ownership: verify that rows pulled from the remote with a foreign `source_uuid` are never added to the local outbox
+- offline fallback: fake remote returns a connection error; verify local writes still succeed and the outbox accumulates without panic or data loss
+- retry safety: fake remote fails once then succeeds; verify no duplicate rows are written and the cursor advances exactly once
+- convergence: two separate in-memory SQLite DBs with different `source_uuid` values each push to a shared in-memory fake remote, then each pulls from it; assert both DBs contain identical row sets — this is the highest-value sync test because it is the only one that catches push-pull interaction bugs that unit tests with mocks cannot see
+
+Do not test: real sqld connectivity, JWT correctness, network behavior, Docker, or anything that requires a running external process.
+
+**Classification**
+
+Must test:
+
+- bucket aggregation behavior
+- import/export duplicate protection
+- focus/input state transitions
+- CLI short-circuit behavior
+- recovery and error handling that changes persisted state or user-visible behavior
+- sync outbox, cursor, ownership, offline, retry, and convergence behaviors (when the feature is enabled)
+
+Nice to test:
+
+- narrow helpers that encode meaningful domain behavior and are hard to reason about at a glance
+- stable contract or API behavior that would be expensive to debug if broken
+
+Do not test:
+
+- raw OS correctness
+- third-party library correctness
+- simple environment or path plumbing unless the program adds non-trivial policy around it
+- giant smoke paths that can fail for many unrelated reasons
+- sync network transport correctness — that is the HTTP client library's responsibility, not the program's
+
+**Current CI coverage**
 
 - Linux checks/tests/build
 - native Windows tests/build on GitHub Actions
 - release workflow on tags
 
-Windows test note:
+**Windows test note**
 
 - `cargo test --target x86_64-pc-windows-gnu` can be attempted from the Nix dev shell through Wine
 - this is useful for compile coverage and for a subset of runtime tests
 - it is not full Windows validation; some Windows-target tests still fail under Wine because of missing or incomplete Windows APIs
 - treat real Windows CI or a real Windows machine as the final authority for Windows runtime behavior
 
-Current release workflow:
+**Current release workflow**
 
 - validates tag vs `Cargo.toml`
 - reruns Linux and Windows checks
@@ -426,12 +462,10 @@ Current release workflow:
 - creates a GitHub release
 - attaches Linux and Windows archives
 
-Changelog support:
+**Changelog support**
 
 - `CHANGELOG.md` is maintained manually
 - `cliff.toml` exists to support `git-cliff`
-
----
 
 ## Build and Release Commands
 

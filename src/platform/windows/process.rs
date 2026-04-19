@@ -4,6 +4,16 @@ use anyhow::{Context, Result};
 use tokio::time::*;
 use tracing::*;
 
+fn read_focused_window(idle: bool) -> Result<Option<Window>> {
+    if idle {
+        Ok(None)
+    } else {
+        get_focused_window()
+            .map(|(name, class)| Some(Window { name, class }))
+            .with_context(|| "Failed to find foreground window")
+    }
+}
+
 fn update_focus_tracker(
     tracker: &mut ProcessTracker,
     now: chrono::DateTime<chrono::Utc>,
@@ -36,13 +46,7 @@ pub async fn run(update_interval: u32, backend: StorageBackend) -> Result<()> {
             _ = tick.tick() => {
                 let now = chrono::Utc::now();
                 let idle = is_idle();
-                let focused_window = if idle {
-                    Ok(None)
-                } else {
-                    get_focused_window()
-                        .map(|(name, class)| Some(Window { name, class }))
-                        .with_context(|| "Failed to find foreground window")
-                };
+                let focused_window = read_focused_window(idle);
                 update_focus_tracker(&mut procs_data, now, idle, focused_window);
             }
 

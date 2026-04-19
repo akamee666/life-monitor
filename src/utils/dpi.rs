@@ -177,17 +177,6 @@ pub fn log_mouse_dpi_resolution(config: MouseDpiConfig) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
-    use uuid::Uuid;
-
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
-
-    fn unique_temp_dir(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("life-monitor-dpi-{name}-{}", Uuid::new_v4()))
-    }
 
     #[test]
     fn parse_mouse_dpi_rejects_zero_and_invalid_values() {

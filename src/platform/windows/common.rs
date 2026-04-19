@@ -2,7 +2,6 @@
 
 use std::{ffi::OsString, os::windows::ffi::OsStringExt};
 use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
-use tracing::*;
 use windows::core::Error;
 
 use anyhow::{anyhow, Result};
@@ -10,7 +9,6 @@ use anyhow::{anyhow, Result};
 use crate::common::{ProcessTracker, Window};
 #[cfg(test)]
 use crate::common::{DEFAULT_BUCKET_MINUTES, DEFAULT_SOURCE_ID};
-use crate::Cli;
 use windows::Win32::{
     Foundation::*,
     System::SystemInformation::*,
@@ -20,79 +18,9 @@ use windows::Win32::{
     },
 };
 
-use std::env;
-
 use std::time::Duration;
 
 use windows::Win32::System::SystemInformation::GetTickCount;
-
-pub fn check_startup_status() -> Result<bool> {
-    let startup_folder = env::var("APPDATA")
-        .map(std::path::PathBuf::from)
-        .map(|path| {
-            path.join("Microsoft")
-                .join("Windows")
-                .join("Start Menu")
-                .join("Programs")
-                .join("Startup")
-                .join("life-monitor.lnk")
-        })
-        .unwrap_or_default();
-
-    let startup_exists = startup_folder.exists();
-
-    info!("Startup status on Windows:");
-    info!(
-        "  Startup Folder: {}",
-        if startup_exists {
-            "Enabled"
-        } else {
-            "Disabled"
-        }
-    );
-
-    Ok(startup_exists)
-}
-
-pub fn configure_startup(_args: &Cli) -> Result<()> {
-    unimplemented!();
-    // let startup_folder = if let Some(appdata) = env::var_os("APPDATA") {
-    //     PathBuf::from(appdata)
-    //         .join("Microsoft")
-    //         .join("Windows")
-    //         .join("Start Menu")
-    //         .join("Programs")
-    //         .join("Startup")
-    // } else {
-    //     return Err(anyhow!("Could not find APPDATA environment variable"));
-    // };
-    // let shortcut_path = startup_folder.join("life_monitor.lnk");
-    // let current_exe = env::current_exe()?;
-    //
-    // if args.enable_startup {
-    //     // Using PowerShell to create shortcut since it's more reliable than direct COM automation
-    //     let ps_script = format!(
-    //         "$WScriptShell = New-Object -ComObject WScript.Shell; \
-    //          $Shortcut = $WScriptShell.CreateShortcut('{}'); \
-    //          $Shortcut.TargetPath = '{}'; \
-    //          $Shortcut.Save()",
-    //         shortcut_path.to_str().unwrap(),
-    //         current_exe.to_str().unwrap()
-    //     );
-    //
-    //     Command::new("powershell")
-    //         .arg("-Command")
-    //         .arg(&ps_script)
-    //         .output()?;
-    //
-    //     info!("Created startup shortcut at: {:?}", shortcut_path);
-    // } else if shortcut_path.exists() {
-    //     fs::remove_file(&shortcut_path)?;
-    //     info!("Removed startup shortcut");
-    // }
-    //
-    // Ok(())
-}
 
 // Returns window title and class in that order.
 pub fn get_focused_window() -> Result<(String, String)> {

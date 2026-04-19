@@ -1,5 +1,5 @@
 #[cfg(target_os = "windows")]
-use crate::platform::windows::common::*;
+use crate::platform::windows::startup::configure_startup;
 
 #[cfg(target_os = "windows")]
 use crate::platform::windows::process;
@@ -14,8 +14,11 @@ use crate::platform::linux::common::*;
 use crate::platform::linux::process;
 
 use crate::storage::backend::*;
-use crate::storage::localdb::{export_database, import_snapshot, plan_import, DbConfig};
-use crate::utils::args::Cli;
+use crate::storage::localdb::{
+    app_activity_report, export_database, import_snapshot, open_con_at, plan_import,
+    session_report, setup_database, DbConfig,
+};
+use crate::utils::args::{Cli, ReportKind};
 use crate::utils::dpi::{log_mouse_dpi_resolution, resolve_mouse_dpi};
 use crate::utils::lock::*;
 use crate::utils::logger;
@@ -108,6 +111,32 @@ async fn run(mut args: Cli) -> Result<()> {
         return Ok(());
     }
 
+    if let Some(report) = args.report {
+        let conn = open_con_at(&db_config.db_path)?;
+        setup_database(&conn)?;
+        match report {
+            ReportKind::Sessions => {
+                for row in session_report(&conn, args.report_days)? {
+                    let ended = row.ended_at_utc.as_deref().unwrap_or("running");
+                    let duration = row
+                        .duration_seconds
+                        .map(|value| format!("{value}s"))
+                        .unwrap_or_else(|| "unknown".to_string());
+                    println!(
+                        "{} {} {} {}",
+                        row.started_at_utc, ended, duration, row.platform
+                    );
+                }
+            }
+            ReportKind::Apps => {
+                for row in app_activity_report(&conn, args.report_days)? {
+                    println!("{} {}", row.focus_seconds, row.app_identifier);
+                }
+            }
+        }
+        return Ok(());
+    }
+
     let db_update_interval = args.interval.unwrap_or(300);
     let mouse_dpi = resolve_mouse_dpi(args.dpi)?;
     log_mouse_dpi_resolution(mouse_dpi);
@@ -190,6 +219,8 @@ mod tests {
             import_db: None,
             dry_run: false,
             import_notes: None,
+            report: None,
+            report_days: 7,
             dpi: None,
             clear: false,
             enable_startup: false,

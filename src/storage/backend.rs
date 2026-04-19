@@ -23,6 +23,13 @@ pub struct LocalDb {
     con: Arc<Mutex<Connection>>,
     source_id: i64,
     db_path: PathBuf,
+    _session: Arc<SessionLifecycle>,
+}
+
+#[derive(Debug)]
+struct SessionLifecycle {
+    con: Arc<Mutex<Connection>>,
+    session_uuid: String,
 }
 
 impl LocalDb {
@@ -43,15 +50,22 @@ impl LocalDb {
             }
         })?;
         setup_database(&conn).context("Failed to properly setup sqlite database")?;
+        let session_uuid = begin_session(&conn, DEFAULT_SOURCE_ID, std::env::consts::OS)
+            .with_context(|| "Failed to record the startup of the current collection session")?;
 
         info!(
             "Backend using SQLite successfully initialized at {}.",
             config.db_path.display()
         );
+        let shared_con = Arc::new(Mutex::new(conn));
         Ok(Self {
-            con: Arc::new(Mutex::new(conn)),
+            con: shared_con.clone(),
             source_id: DEFAULT_SOURCE_ID,
             db_path: config.db_path,
+            _session: Arc::new(SessionLifecycle {
+                con: shared_con,
+                session_uuid,
+            }),
         })
     }
 
@@ -102,6 +116,19 @@ impl DataStore for LocalDb {
             tx.commit().context("Failed to commit focus bucket rows")
         })
         .await?
+    }
+}
+
+impl Drop for SessionLifecycle {
+    fn drop(&mut self) {
+        if let Some(conn) = self.con.lock().ok() {
+            if let Err(err) = end_session(&conn, &self.session_uuid) {
+                error!(
+                    "Failed to finalize collection session {}: {err:#}",
+                    self.session_uuid
+                );
+            }
+        }
     }
 }
 

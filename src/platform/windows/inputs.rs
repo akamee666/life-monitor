@@ -21,7 +21,7 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::{
     GetRawInputData, GetRawInputDeviceInfoW, GetRawInputDeviceList, RegisterRawInputDevices,
     HRAWINPUT, MOUSE_MOVE_ABSOLUTE, RAWINPUT, RAWINPUTDEVICE, RAWINPUTDEVICELIST, RAWINPUTHEADER,
-    RAWKEYBOARD, RAWMOUSE, RIDEV_INPUTSINK, RIDI_DEVICENAME, RID_INPUT,
+    RAWKEYBOARD, RAWMOUSE, RIDEV_DEVNOTIFY, RIDEV_INPUTSINK, RIDI_DEVICENAME, RID_INPUT,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -49,6 +49,61 @@ fn list_raw_input_devices() -> Result<Vec<RAWINPUTDEVICELIST>> {
 pub enum RawInputEvent {
     Keyboard(RAWKEYBOARD),
     Mouse(RAWMOUSE),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeviceChange {
+    Arrived,
+    Removed,
+}
+
+#[derive(Clone, Copy)]
+enum RawInputMessage {
+    Input(RawInputEvent),
+    DeviceChange {
+        event: DeviceChange,
+        device_handle: isize,
+    },
+}
+
+struct InputCollector {
+    inputs: InputLogger,
+    input_buffer: InputBucketBuffer,
+    mouse_dpi: f64,
+}
+
+impl InputCollector {
+    fn new(source_id: i64, granularity_minutes: u32, mouse_dpi: f64) -> Self {
+        Self {
+            inputs: InputLogger::default(),
+            input_buffer: InputBucketBuffer::new(source_id, granularity_minutes),
+            mouse_dpi,
+        }
+    }
+
+    fn set_screen_size_mm(&mut self, width_mm: f64, height_mm: f64) {
+        self.inputs.w.screen_width_mm = width_mm;
+        self.inputs.w.screen_height_mm = height_mm;
+    }
+
+    fn handle_message(&mut self, message: RawInputMessage) {
+        match message {
+            RawInputMessage::Input(event) => process_event(
+                &mut self.inputs,
+                &mut self.input_buffer,
+                self.mouse_dpi,
+                event,
+            ),
+            RawInputMessage::DeviceChange {
+                event,
+                device_handle,
+            } => log_device_change(event, HANDLE(device_handle as *mut c_void)),
+        }
+    }
+
+    fn drain_rows(&mut self) -> Vec<InputBucketRecord> {
+        self.input_buffer.drain()
+    }
 }
 
 unsafe fn get_human_readable_name(device_handle: HANDLE) -> Result<String> {
@@ -114,11 +169,13 @@ unsafe fn get_human_readable_name(device_handle: HANDLE) -> Result<String> {
 
 pub async fn run(dpi: Option<u32>, update_interval: u32, backend: StorageBackend) -> Result<()> {
     let mouse_dpi = dpi.unwrap_or(DEFAULT_MOUSE_DPI).max(1) as f64;
-    let mut inputs_data = InputLogger::default();
-    let mut input_buffer =
-        InputBucketBuffer::new(backend.source_id(), backend.bucket_granularity_minutes());
+    let mut collector = InputCollector::new(
+        backend.source_id(),
+        backend.bucket_granularity_minutes(),
+        mouse_dpi,
+    );
 
-    let (events_tx, mut events_rx) = channel::<RawInputEvent>(256);
+    let (events_tx, mut events_rx) = channel::<RawInputMessage>(256);
     let mut db_updates = interval(Duration::from_secs(update_interval as u64));
 
     // Log devices
@@ -134,8 +191,10 @@ pub async fn run(dpi: Option<u32>, update_interval: u32, backend: StorageBackend
             anyhow::bail!("Failed to get screen size!");
         }
 
-        inputs_data.w.screen_width_mm = unsafe { GetDeviceCaps(Some(screen_dc), HORZSIZE).into() };
-        inputs_data.w.screen_height_mm = unsafe { GetDeviceCaps(Some(screen_dc), VERTSIZE).into() };
+        collector.set_screen_size_mm(
+            unsafe { GetDeviceCaps(Some(screen_dc), HORZSIZE).into() },
+            unsafe { GetDeviceCaps(Some(screen_dc), VERTSIZE).into() },
+        );
 
         let _ = unsafe { ReleaseDC(None, screen_dc) };
     }
@@ -151,12 +210,12 @@ pub async fn run(dpi: Option<u32>, update_interval: u32, backend: StorageBackend
 
     loop {
         tokio::select! {
-            Some(event) = events_rx.recv() => {
-                process_event(&mut inputs_data, &mut input_buffer, mouse_dpi, event);
+            Some(message) = events_rx.recv() => {
+                collector.handle_message(message);
             }
 
             _ = db_updates.tick() => {
-                let pending_rows = input_buffer.drain();
+                let pending_rows = collector.drain_rows();
                 if let Err(e) = backend.store_keys_data(&pending_rows).await {
                     error!("Failed to store inputs data in backend: {:?}", e);
                 }
@@ -405,9 +464,22 @@ mod tests {
         assert!((rows[0].scroll_vertical_cm - 0.8).abs() < 1e-6);
         assert!((rows[0].scroll_horizontal_cm - 0.4).abs() < 1e-6);
     }
+
+    #[test]
+    fn decode_device_change_translates_raw_input_notifications() {
+        assert_eq!(
+            decode_device_change(GIDC_ARRIVAL),
+            Some(DeviceChange::Arrived)
+        );
+        assert_eq!(
+            decode_device_change(GIDC_REMOVAL),
+            Some(DeviceChange::Removed)
+        );
+        assert_eq!(decode_device_change(9999), None);
+    }
 }
 
-fn run_message_loop(tx: mpsc::Sender<RawInputEvent>) -> Result<()> {
+fn run_message_loop(tx: mpsc::Sender<RawInputMessage>) -> Result<()> {
     unsafe {
         let hinstance = GetModuleHandleW(None)?;
         let class_name = w!("RawInputSinkWindowClass");
@@ -456,13 +528,13 @@ fn run_message_loop(tx: mpsc::Sender<RawInputEvent>) -> Result<()> {
             RAWINPUTDEVICE {
                 usUsagePage: 1, // Generic Desktop
                 usUsage: 6,     // Keyboard
-                dwFlags: RIDEV_INPUTSINK,
+                dwFlags: RIDEV_INPUTSINK | RIDEV_DEVNOTIFY,
                 hwndTarget: hwnd,
             },
             RAWINPUTDEVICE {
                 usUsagePage: 1, // Generic Desktop
                 usUsage: 2,     // Mouse
-                dwFlags: RIDEV_INPUTSINK,
+                dwFlags: RIDEV_INPUTSINK | RIDEV_DEVNOTIFY,
                 hwndTarget: hwnd,
             },
         ];
@@ -498,7 +570,7 @@ unsafe extern "system" fn wnd_proc(
         WM_INPUT => {
             // Retrieve the sender pointer we stored earlier.
             let tx_ptr =
-                GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const mpsc::Sender<RawInputEvent>;
+                GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const mpsc::Sender<RawInputMessage>;
             if !tx_ptr.is_null() {
                 let tx = &*tx_ptr;
                 if let Err(e) = handle_raw_input(HRAWINPUT(lparam.0 as _), tx) {
@@ -508,10 +580,27 @@ unsafe extern "system" fn wnd_proc(
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
 
+        WM_INPUT_DEVICE_CHANGE => {
+            let tx_ptr =
+                GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const mpsc::Sender<RawInputMessage>;
+            if !tx_ptr.is_null() {
+                let tx = &*tx_ptr;
+                if let Some(event) = decode_device_change(wparam.0 as u32) {
+                    if let Err(send_err) = tx.try_send(RawInputMessage::DeviceChange {
+                        event,
+                        device_handle: lparam.0,
+                    }) {
+                        warn!("Failed to forward raw input device change: {}", send_err);
+                    }
+                }
+            }
+            LRESULT(0)
+        }
+
         WM_DESTROY => {
             info!("Destroying window and cleaning up sender...");
             let tx_ptr =
-                SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0) as *mut mpsc::Sender<RawInputEvent>;
+                SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0) as *mut mpsc::Sender<RawInputMessage>;
             if !tx_ptr.is_null() {
                 let _ = Box::from_raw(tx_ptr);
             }
@@ -522,7 +611,7 @@ unsafe extern "system" fn wnd_proc(
     }
 }
 
-unsafe fn handle_raw_input(handle: HRAWINPUT, tx: &mpsc::Sender<RawInputEvent>) -> Result<()> {
+unsafe fn handle_raw_input(handle: HRAWINPUT, tx: &mpsc::Sender<RawInputMessage>) -> Result<()> {
     let mut size: u32 = 0;
     GetRawInputData(
         handle,
@@ -565,7 +654,7 @@ unsafe fn handle_raw_input(handle: HRAWINPUT, tx: &mpsc::Sender<RawInputEvent>) 
     };
 
     if let Some(e) = event {
-        if let Err(send_err) = tx.try_send(e) {
+        if let Err(send_err) = tx.try_send(RawInputMessage::Input(e)) {
             warn!(
                 "Failed to send raw input event, channel may be full: {}",
                 send_err
@@ -574,4 +663,21 @@ unsafe fn handle_raw_input(handle: HRAWINPUT, tx: &mpsc::Sender<RawInputEvent>) 
     }
 
     Ok(())
+}
+
+fn decode_device_change(message: u32) -> Option<DeviceChange> {
+    match message {
+        GIDC_ARRIVAL => Some(DeviceChange::Arrived),
+        GIDC_REMOVAL => Some(DeviceChange::Removed),
+        _ => None,
+    }
+}
+
+fn log_device_change(event: DeviceChange, device_handle: HANDLE) {
+    let name = unsafe { get_human_readable_name(device_handle) }
+        .unwrap_or_else(|err| format!("[Error: {err}]"));
+    match event {
+        DeviceChange::Arrived => info!("Raw input device arrived: {}", name),
+        DeviceChange::Removed => info!("Raw input device removed: {}", name),
+    }
 }

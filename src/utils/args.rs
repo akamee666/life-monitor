@@ -1,9 +1,15 @@
-use clap::{value_parser, Parser};
+use clap::{value_parser, Parser, ValueEnum};
 use std::path::PathBuf;
 
 use tracing::info;
 
 use crate::common::DEFAULT_MOUSE_DPI;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ReportKind {
+    Sessions,
+    Apps,
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "Life Monitor")]
@@ -95,6 +101,28 @@ pub struct Cli {
     pub import_notes: Option<String>,
 
     #[arg(
+        long,
+        help_heading = "Analytics",
+        value_enum,
+        value_name = "KIND",
+        conflicts_with_all = ["export_db", "import_db", "enable_startup", "disable_startup", "clear"],
+        help = "Render a built-in analytics report and exit.",
+        long_help = "Renders a built-in analytics report from the local SQLite database and then exits.\n\nAvailable reports:\n- sessions: collection sessions recorded by Life Monitor\n- apps: focused-app totals aggregated from focus buckets"
+    )]
+    pub report: Option<ReportKind>,
+
+    #[arg(
+        long,
+        help_heading = "Analytics",
+        requires = "report",
+        value_name = "DAYS",
+        default_value_t = 7,
+        value_parser = value_parser!(u32).range(1..),
+        help = "How many recent days the analytics report should cover."
+    )]
+    pub report_days: u32,
+
+    #[arg(
         short = 'p',
         long,
         help_heading = "Collection",
@@ -146,6 +174,8 @@ impl Cli {
         info!("Export database: {:?}", self.export_db);
         info!("Import database: {:?}", self.import_db);
         info!("Dry-run import: {:?}", self.dry_run);
+        info!("Report: {:?}", self.report);
+        info!("Report days: {:?}", self.report_days);
         info!("Mouse DPI: {:?}", self.dpi.unwrap_or(DEFAULT_MOUSE_DPI));
         info!("Clear database: {:?}", self.clear);
         println!();
