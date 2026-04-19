@@ -1,0 +1,147 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate-tag:
+    runs-on: ubuntu-latest
+    outputs:
+      package_name: ${{ steps.meta.outputs.package_name }}
+      crate_version: ${{ steps.meta.outputs.crate_version }}
+      tag_version: ${{ steps.meta.outputs.tag_version }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Read crate metadata
+        id: meta
+        run: |
+          package_name="$(sed -n 's/^name = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+          crate_version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+          tag_version="${GITHUB_REF_NAME#v}"
+
+          if [ -z "$package_name" ] || [ -z "$crate_version" ]; then
+            echo "Failed to read package name or version from Cargo.toml"
+            exit 1
+          fi
+
+          echo "package_name=$package_name" >> "$GITHUB_OUTPUT"
+          echo "crate_version=$crate_version" >> "$GITHUB_OUTPUT"
+          echo "tag_version=$tag_version" >> "$GITHUB_OUTPUT"
+
+      - name: Verify tag matches Cargo.toml version
+        run: |
+          if [ "${{ steps.meta.outputs.crate_version }}" != "${{ steps.meta.outputs.tag_version }}" ]; then
+            echo "Tag version v${{ steps.meta.outputs.tag_version }} does not match Cargo.toml version ${{ steps.meta.outputs.crate_version }}"
+            echo "Fix: update Cargo.toml or create the correct tag, then push again."
+            exit 1
+          fi
+
+  test-linux:
+    runs-on: ubuntu-latest
+    needs: validate-tag
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libclang-dev linux-libc-dev pkg-config libsqlite3-dev libssl-dev libwayland-dev libx11-dev libxi-dev libxtst-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt -- --check
+
+      - name: Run tests
+        run: cargo test --locked
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Verify crate can be packaged
+        run: cargo package --locked
+
+  test-windows:
+    runs-on: windows-latest
+    needs: validate-tag
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        run: cargo test --locked
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+  publish-crate:
+    runs-on: ubuntu-latest
+    needs:
+      - validate-tag
+      - test-linux
+      - test-windows
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libclang-dev linux-libc-dev pkg-config libsqlite3-dev libssl-dev libwayland-dev libx11-dev libxi-dev libxtst-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Package crate
+        run: cargo package --locked
+
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish --locked
+
+  github-release:
+    runs-on: ubuntu-latest
+    needs:
+      - validate-tag
+      - publish-crate
+
+    steps:
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          body: |
+            Published `${{ needs.validate-tag.outputs.package_name }}` `${{ needs.validate-tag.outputs.crate_version }}` to crates.io.
