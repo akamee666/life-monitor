@@ -393,23 +393,56 @@ Preferred tests:
 - buffer aggregation
 - lock behavior where it matters
 - CLI short-circuit behavior
+- observable behavior, state transitions, side effects, and contracts
+- the lowest stable test level that covers the risk well
 
 Avoid low-value tests such as:
 
 - asserting exact wording of ordinary static strings
 - tests that fail without breaking behavior
 - broad smoke tests that are hard to diagnose unless they simulate something genuinely important
+- testing OS behavior, shell behavior, environment-variable mechanics, clocks, randomness, or external tool correctness
+- tests for trivial path-joining or wrapper logic when the real program risk is elsewhere
+- brittle timing-based tests, sleeps, real subprocess tests, or tests that depend on global machine state unless that integration boundary is the behavior being verified
 
 When adding tests:
 
 - prefer testing helpers or isolated behavior directly
+- choose the lowest level that gives strong confidence without coupling to internals
+- verify what the program is responsible for, not what the OS or dependencies are responsible for
+- inject, fake, or stub OS/process/time/randomness dependencies when possible
 - only use command-spawning or timing-heavy tests when the integration behavior itself is the thing being verified
+- explicitly note which candidate behaviors should not be tested when they add noise instead of confidence
+
+Useful classification when deciding what to test:
+
+- must test:
+  - bucket aggregation behavior
+  - import/export duplicate protection
+  - focus/input state transitions
+  - CLI short-circuit behavior
+  - recovery/error handling that changes persisted state or user-visible behavior
+- nice to test:
+  - narrow helpers that encode meaningful domain behavior and are hard to reason about at a glance
+  - stable contract/API behavior that would be expensive to debug if broken
+- do not test:
+  - raw OS correctness
+  - third-party library correctness
+  - simple environment/path plumbing unless the program adds non-trivial policy around it
+  - giant smoke paths that can fail for many unrelated reasons
 
 Current CI coverage:
 
 - Linux checks/tests/build
-- Windows tests/build
+- native Windows tests/build on GitHub Actions
 - release workflow on tags
+
+Windows test note:
+
+- `cargo test --target x86_64-pc-windows-gnu` can be attempted from the Nix dev shell through Wine
+- this is useful for compile coverage and for a subset of runtime tests
+- it is not full Windows validation; some Windows-target tests still fail under Wine because of missing or incomplete Windows APIs
+- treat real Windows CI or a real Windows machine as the final authority for Windows runtime behavior
 
 Current release workflow:
 
@@ -429,21 +462,25 @@ Changelog support:
 
 ## Build and Release Commands
 
+Builds and checks should be run from the environments defined in `flake.nix`.
+
+Use the Nix shell for routine validation instead of assuming host tools are configured correctly.
+
 Common commands:
 
 ```bash
-cargo check
-cargo build
-cargo build --release
-cargo test
-cargo fmt -- --check
-cargo clippy -- -D warnings
+nix develop --command cargo check
+nix develop --command cargo build
+nix develop --command cargo build --release
+nix develop --command cargo test
+nix develop --command cargo fmt -- --check
+nix develop --command cargo clippy -- -D warnings
 ```
 
 Linux + X11 build/testing:
 
 ```bash
-cargo test --features x11
+nix develop --command cargo test --features x11
 ```
 
 Nix-based flows:
@@ -451,9 +488,16 @@ Nix-based flows:
 ```bash
 nix develop --command ci-checks
 nix develop --command ci-test-build
+nix develop --command cargo test --target x86_64-pc-windows-gnu
 nix build .#linux
 nix build .#windows
 ```
+
+Windows target note:
+
+- `.cargo/config.toml` points the Windows GNU runner at `wine`
+- that makes Windows-target tests runnable from Linux inside the Nix shell
+- do not treat Wine-backed results as equivalent to native Windows results
 
 Changelog generation:
 
@@ -490,6 +534,17 @@ When working in this repo:
    - input/runtime behavior
    - CI/release
    - docs
+
+6. Split commits by feature or coherent code-change area, not as one mixed batch.
+
+For commits:
+
+- use a helpful title that explains the change area
+- add a real commit body
+- explain what changed
+- explain why it changed
+- explain how it was implemented when that context will help future readers
+- avoid “blog post” commit bodies, but do leave enough detail for release notes and future debugging
 
 This commit structure already fits the recent history and makes release-note generation easier.
 
@@ -549,6 +604,8 @@ These are good candidates for future cleanup.
 - bypassing bucket storage with ad-hoc totals
 - changing import semantics without updating duplicate protection
 - writing tests that only assert static message wording
+- writing tests for OS behavior instead of program behavior
+- trusting Wine-based Windows results as if they were native Windows validation
 - mixing release, runtime, and schema changes into one commit when they can be separate
 - assuming Windows behavior from Linux-only testing
 
