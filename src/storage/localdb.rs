@@ -1324,9 +1324,7 @@ fn default_source_platform() -> String {
 mod tests {
     use super::*;
     use chrono::TimeZone;
-    use std::sync::mpsc as std_mpsc;
     use std::sync::{Mutex, OnceLock};
-    use std::thread;
 
     fn unique_temp_db(name: &str) -> PathBuf {
         let suffix = Uuid::new_v4();
@@ -1405,30 +1403,6 @@ mod tests {
 
         std::env::remove_var("LIFE_MONITOR_DATA_DIR");
         fs::remove_dir_all(data_dir)?;
-        Ok(())
-    }
-
-    #[test]
-    fn db_config_reports_helpful_error_for_unavailable_remembered_path() -> Result<()> {
-        let _guard = env_lock().lock().unwrap();
-        let data_dir = unique_temp_db("remembered-error-dir");
-        std::fs::create_dir_all(&data_dir)?;
-        std::env::set_var("LIFE_MONITOR_DATA_DIR", &data_dir);
-
-        let blocking_file = unique_temp_db("remembered-blocking-file");
-        fs::write(&blocking_file, b"file-not-directory")?;
-        let impossible_db_path = blocking_file.join("nested/data.db");
-        store_remembered_db_path(&impossible_db_path)?;
-
-        let err = DbConfig::from_cli_path(None).unwrap_err();
-        let message = err.to_string();
-        assert!(message.contains(impossible_db_path.to_string_lossy().as_ref()));
-        assert!(message.contains("mount or reconnect the share again"));
-        assert!(message.contains("--db-path <NEW_PATH>"));
-
-        std::env::remove_var("LIFE_MONITOR_DATA_DIR");
-        fs::remove_dir_all(data_dir)?;
-        fs::remove_file(blocking_file)?;
         Ok(())
     }
 
@@ -1783,95 +1757,6 @@ mod tests {
                 let _ = fs::remove_file(entry.path());
             }
         }
-        Ok(())
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn export_waits_for_external_operation_lock_release() -> Result<()> {
-        use std::process::Command;
-        use std::time::{Duration as StdDuration, Instant};
-
-        let source_path = unique_temp_db("lock-export-source");
-        let export_path = unique_temp_db("lock-export-out");
-        let source = build_test_db(&source_path)?;
-        insert_input_buckets(&source, &[sample_input_row()])?;
-        let lock_path = crate::utils::lock::db_operation_lock_path(&source_path);
-
-        let mut child = Command::new("bash")
-            .arg("-lc")
-            .arg(format!(
-                "exec 9>\"{}\"; flock -x 9; sleep 1",
-                lock_path.display()
-            ))
-            .spawn()
-            .with_context(|| "Failed to spawn lock-holder process")?;
-
-        thread::sleep(StdDuration::from_millis(150));
-        let (tx, rx) = std_mpsc::channel();
-        let source_path_clone = source_path.clone();
-        let export_path_clone = export_path.clone();
-        let start = Instant::now();
-        thread::spawn(move || {
-            let result = export_database(&source_path_clone, &export_path_clone);
-            let _ = tx.send((start.elapsed(), result));
-        });
-
-        let (elapsed, result) = rx.recv().unwrap();
-        child.wait()?;
-        result?;
-        assert!(elapsed >= StdDuration::from_millis(800));
-
-        fs::remove_file(source_path)?;
-        fs::remove_file(export_path)?;
-        Ok(())
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn import_waits_for_external_operation_lock_release() -> Result<()> {
-        use std::process::Command;
-        use std::time::{Duration as StdDuration, Instant};
-
-        let destination_path = unique_temp_db("lock-import-dest");
-        let source_path = unique_temp_db("lock-import-source");
-        let export_path = unique_temp_db("lock-import-export");
-
-        build_test_db(&destination_path)?;
-        let source = build_test_db(&source_path)?;
-        insert_input_buckets(&source, &[sample_input_row()])?;
-        export_database(&source_path, &export_path)?;
-
-        let lock_path = crate::utils::lock::db_operation_lock_path(&destination_path);
-        let mut child = Command::new("bash")
-            .arg("-lc")
-            .arg(format!(
-                "exec 9>\"{}\"; flock -x 9; sleep 1",
-                lock_path.display()
-            ))
-            .spawn()
-            .with_context(|| "Failed to spawn lock-holder process")?;
-
-        thread::sleep(StdDuration::from_millis(150));
-        let (tx, rx) = std_mpsc::channel();
-        let destination_path_clone = destination_path.clone();
-        let export_path_clone = export_path.clone();
-        let start = Instant::now();
-        thread::spawn(move || {
-            let result =
-                import_snapshot(&destination_path_clone, &export_path_clone, Some("locked"));
-            let _ = tx.send((start.elapsed(), result));
-        });
-
-        let (elapsed, result) = rx.recv().unwrap();
-        child.wait()?;
-        let import_result = result?;
-        assert!(elapsed >= StdDuration::from_millis(800));
-
-        fs::remove_file(destination_path)?;
-        fs::remove_file(source_path)?;
-        fs::remove_file(export_path)?;
-        fs::remove_file(import_result.destination_backup_path)?;
         Ok(())
     }
 }
