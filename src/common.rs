@@ -1,14 +1,19 @@
 //! Shared runtime types and helpers used across platforms.
+#[cfg(target_os = "linux")]
 use tokio::sync::mpsc;
+#[cfg(target_os = "linux")]
 use tokio::task::JoinHandle;
+#[cfg(target_os = "linux")]
 use tokio::time::interval;
+#[cfg(target_os = "linux")]
 use tokio::time::Duration;
 
 use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Datelike, FixedOffset, Offset, TimeZone, Timelike, Utc};
 
-use tracing::*;
+#[cfg(target_os = "linux")]
+use tracing::error;
 
 use std::env;
 use std::io::{self};
@@ -349,6 +354,7 @@ impl ProcessTracker {
 }
 
 /// Spawns a new asynchronous task that sends a message on a channel at a regular interval.
+#[cfg(target_os = "linux")]
 pub fn spawn_ticker<T>(tx: mpsc::Sender<T>, duration: Duration, event_to_send: T) -> JoinHandle<()>
 where
     T: Clone + Send + 'static,

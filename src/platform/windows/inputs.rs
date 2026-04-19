@@ -21,7 +21,7 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::{
     GetRawInputData, GetRawInputDeviceInfoW, GetRawInputDeviceList, RegisterRawInputDevices,
     HRAWINPUT, MOUSE_MOVE_ABSOLUTE, RAWINPUT, RAWINPUTDEVICE, RAWINPUTDEVICELIST, RAWINPUTHEADER,
-    RAWKEYBOARD, RAWMOUSE, RIDEV_INPUTSINK, RIDI_DEVICENAME, RID_INPUT, RI_MOUSE_HWHEEL,
+    RAWKEYBOARD, RAWMOUSE, RIDEV_INPUTSINK, RIDI_DEVICENAME, RID_INPUT,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -339,6 +339,21 @@ mod tests {
     }
 
     #[test]
+    fn keyboard_event_counts_a_new_press_after_release() {
+        let mut inputs = empty_input_logger();
+        let mut buffer = InputBucketBuffer::new(DEFAULT_SOURCE_ID, DEFAULT_BUCKET_MINUTES as u32);
+        let now = Utc.with_ymd_and_hms(2026, 4, 18, 12, 0, 0).unwrap();
+
+        apply_keyboard_event(&mut inputs, &mut buffer, now, 65, true);
+        apply_keyboard_event(&mut inputs, &mut buffer, now, 65, false);
+        apply_keyboard_event(&mut inputs, &mut buffer, now, 65, true);
+
+        let rows = buffer.drain();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].key_presses, 2);
+    }
+
+    #[test]
     fn relative_mouse_move_converts_distance_to_centimeters() {
         let mut buffer = InputBucketBuffer::new(DEFAULT_SOURCE_ID, DEFAULT_BUCKET_MINUTES as u32);
         let now = Utc.with_ymd_and_hms(2026, 4, 18, 12, 0, 0).unwrap();
@@ -461,7 +476,7 @@ fn run_message_loop(tx: mpsc::Sender<RawInputEvent>) -> Result<()> {
         }
         info!("Win32 message loop finished.");
     }
-    anyhow::bail!("");
+    anyhow::bail!("Win32 raw input message loop stopped")
 }
 
 unsafe extern "system" fn wnd_proc(
