@@ -55,3 +55,23 @@ jobs:
 
       - name: Build release binary
         run: cargo build --release
+
+  windows-test-and-build:
+    runs-on: windows-latest
+    needs: checks
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run tests on Windows
+        run: cargo test
+
+      - name: Build release binary on Windows
+        run: cargo build --release
