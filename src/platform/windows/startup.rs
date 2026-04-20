@@ -177,6 +177,8 @@ mod tests {
             import_notes: None,
             report: None,
             report_days: 7,
+            tui: false,
+            tui_ascii: false,
             dpi: None,
             clear: false,
             enable_startup: false,

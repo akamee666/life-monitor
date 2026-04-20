@@ -155,6 +155,25 @@ pub struct Cli {
     pub report_days: u32,
 
     #[arg(
+        long,
+        help_heading = "Analytics",
+        default_value_t = false,
+        conflicts_with_all = ["export_db", "import_db", "enable_startup", "disable_startup", "clear", "report"],
+        help = "Open the interactive terminal dashboard and exit when it closes.",
+        long_help = "Opens an interactive ratatui-based dashboard backed by the local SQLite database and exits when you close it.\n\nThe dashboard is read-only. It does not start the collector and it does not require the single-instance lock, so it can be used while another Life Monitor collector process is already running."
+    )]
+    pub tui: bool,
+
+    #[arg(
+        long,
+        help_heading = "Analytics",
+        requires = "tui",
+        default_value_t = false,
+        help = "Render the TUI with ASCII-safe glyphs instead of richer Unicode bars and markers."
+    )]
+    pub tui_ascii: bool,
+
+    #[arg(
         short = 'p',
         long,
         help_heading = "Collection",
@@ -257,6 +276,8 @@ impl Cli {
         info!("Dry-run import: {:?}", self.dry_run);
         info!("Report: {:?}", self.report);
         info!("Report days: {:?}", self.report_days);
+        info!("TUI: {:?}", self.tui);
+        info!("TUI ASCII: {:?}", self.tui_ascii);
         #[cfg(feature = "multi-sync")]
         info!("Sync command: {:?}", self.command);
         #[cfg(feature = "multi-sync")]

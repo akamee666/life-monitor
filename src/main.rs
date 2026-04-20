@@ -23,6 +23,7 @@ use crate::sync::{
     record_sync_error, render_sync_status, resolve_sync_runtime_config, run_sync_cycle, sync_pull,
     sync_push, sync_status_snapshot, SqldRemote,
 };
+use crate::tui::run_dashboard;
 use crate::utils::args::{Cli, ReportKind};
 #[cfg(feature = "multi-sync")]
 use crate::utils::args::{Command, SyncCommand};
@@ -44,6 +45,7 @@ mod platform;
 mod storage;
 #[cfg(feature = "multi-sync")]
 mod sync;
+mod tui;
 mod utils;
 
 #[tokio::main]
@@ -102,19 +104,6 @@ async fn run(mut args: Cli) -> Result<()> {
         return Ok(());
     }
 
-    ensure_single_instance()
-        .with_context(|| "Failed to ensure that we are the only instance of the program")?;
-
-    info!(
-        "Lock acquired. Running application with PID {}",
-        std::process::id()
-    );
-
-    if args.debug && args.interval.is_none() {
-        info!("Debug mode enabled but no interval was provided. Using default value of 5 seconds!");
-        args.interval = 5.into();
-    }
-
     if let Some(ref export_path) = args.export_db {
         let export = export_database(&db_config.db_path, export_path)
             .with_context(|| "Failed to export sqlite snapshot")?;
@@ -144,6 +133,12 @@ async fn run(mut args: Cli) -> Result<()> {
             "Imported snapshot. Automatic backup created at {}",
             result.destination_backup_path.display()
         );
+        return Ok(());
+    }
+
+    if args.tui {
+        run_dashboard(&db_config.db_path, args.report_days, args.tui_ascii)
+            .with_context(|| "Failed to run terminal dashboard")?;
         return Ok(());
     }
 
@@ -217,6 +212,19 @@ async fn run(mut args: Cli) -> Result<()> {
             }
         }
         return Ok(());
+    }
+
+    ensure_single_instance()
+        .with_context(|| "Failed to ensure that we are the only instance of the program")?;
+
+    info!(
+        "Lock acquired. Running application with PID {}",
+        std::process::id()
+    );
+
+    if args.debug && args.interval.is_none() {
+        info!("Debug mode enabled but no interval was provided. Using default value of 5 seconds!");
+        args.interval = 5.into();
     }
 
     let db_update_interval = args.interval.unwrap_or(300);
@@ -361,6 +369,8 @@ mod tests {
             import_notes: None,
             report: None,
             report_days: 7,
+            tui: false,
+            tui_ascii: false,
             dpi: None,
             clear: false,
             enable_startup: false,

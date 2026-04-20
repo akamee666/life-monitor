@@ -17,17 +17,15 @@
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs =
-    {
-      self,
-      nixpkgs,
-      naersk,
-      fenix,
-      flake-utils,
-    }:
+  outputs = {
+    self,
+    nixpkgs,
+    naersk,
+    fenix,
+    flake-utils,
+  }:
     flake-utils.lib.eachDefaultSystem (
-      system:
-      let
+      system: let
         pkgs = import nixpkgs {
           inherit system;
           config.allowUnfree = true;
@@ -48,8 +46,7 @@
         windowsCxx = "${mingw.stdenv.cc}/bin/${mingw.stdenv.cc.targetPrefix}g++";
 
         # Small build toolchain used by naersk builds.
-        buildToolchain =
-          with fenix.packages.${system};
+        buildToolchain = with fenix.packages.${system};
           combine [
             minimal.cargo
             minimal.rustc
@@ -57,8 +54,7 @@
           ];
 
         # Richer toolchain for interactive development.
-        devToolchain =
-          with fenix.packages.${system};
+        devToolchain = with fenix.packages.${system};
           combine [
             (complete.withComponents [
               "cargo"
@@ -99,11 +95,11 @@
           "-isystem ${pkgs.linuxHeaders}/include"
           (
             lib.optionalString pkgs.stdenv.cc.isClang
-              "-idirafter ${pkgs.stdenv.cc.cc}/lib/clang/${lib.getVersion pkgs.stdenv.cc.cc}/include"
+            "-idirafter ${pkgs.stdenv.cc.cc}/lib/clang/${lib.getVersion pkgs.stdenv.cc.cc}/include"
           )
           (
             lib.optionalString pkgs.stdenv.cc.isGNU
-              "-isystem ${pkgs.stdenv.cc.cc}/include/c++/${lib.getVersion pkgs.stdenv.cc.cc} -isystem ${pkgs.stdenv.cc.cc}/include/c++/${lib.getVersion pkgs.stdenv.cc.cc}/${pkgs.stdenv.hostPlatform.config} -idirafter ${pkgs.stdenv.cc.cc}/lib/gcc/${pkgs.stdenv.hostPlatform.config}/${lib.getVersion pkgs.stdenv.cc.cc}/include"
+            "-isystem ${pkgs.stdenv.cc.cc}/include/c++/${lib.getVersion pkgs.stdenv.cc.cc} -isystem ${pkgs.stdenv.cc.cc}/include/c++/${lib.getVersion pkgs.stdenv.cc.cc}/${pkgs.stdenv.hostPlatform.config} -idirafter ${pkgs.stdenv.cc.cc}/lib/gcc/${pkgs.stdenv.hostPlatform.config}/${lib.getVersion pkgs.stdenv.cc.cc}/include"
           )
         ];
 
@@ -114,7 +110,7 @@
 
         ciChecks = pkgs.writeShellApplication {
           name = "ci-checks";
-          runtimeInputs = [ pkgs.cargo-deny ];
+          runtimeInputs = [pkgs.cargo-deny];
           text = ''
             set -euo pipefail
             cargo fmt --all -- --check
@@ -134,7 +130,7 @@
 
         ciLocal = pkgs.writeShellApplication {
           name = "ci-local";
-          runtimeInputs = [ ciChecks ciTestBuild ];
+          runtimeInputs = [ciChecks ciTestBuild];
           text = ''
             set -euo pipefail
             ci-checks
@@ -147,10 +143,12 @@
           {
             src = ./.;
             CARGO_BUILD_TARGET = linuxTarget;
-            nativeBuildInputs = linuxBuildDeps ++ [
-              llvmPackages.clang
-              llvmPackages.libclang
-            ];
+            nativeBuildInputs =
+              linuxBuildDeps
+              ++ [
+                llvmPackages.clang
+                llvmPackages.libclang
+              ];
             buildInputs = linuxRuntimeDeps;
           }
           // commonBuildEnv
@@ -179,13 +177,12 @@
             # phase requirement.
             doCheck = false;
             singleStep = true;
-            nativeBuildInputs = [ mingw.stdenv.cc ];
-            buildInputs = [ mingw.windows.pthreads ];
+            nativeBuildInputs = [mingw.stdenv.cc];
+            buildInputs = [mingw.windows.pthreads];
           }
           // commonBuildEnv
         );
-      in
-      {
+      in {
         formatter = pkgs.nixfmt-rfc-style;
 
         packages = {
@@ -195,23 +192,25 @@
         };
 
         devShells.default = pkgs.mkShell {
-          packages = [
-            devToolchain
-            llvmPackages.clang
-            llvmPackages.libclang
-            mingw.stdenv.cc
-            pkgs.cargo-deny
-            pkgs.codespell
-            pkgs.rust-analyzer
-            pkgs.cargo-watch
-            pkgs.sqlitebrowser
-            pkgs.evtest
-            pkgs.wine64
-            pkgs.crush
-            ciChecks
-            ciTestBuild
-            ciLocal
-          ] ++ linuxRuntimeDeps ++ linuxBuildDeps;
+          packages =
+            [
+              devToolchain
+              llvmPackages.clang
+              llvmPackages.libclang
+              mingw.stdenv.cc
+              pkgs.cargo-deny
+              pkgs.codespell
+              pkgs.rust-analyzer
+              pkgs.cargo-watch
+              pkgs.sqlitebrowser
+              pkgs.evtest
+              pkgs.wine64
+              pkgs.crush
+              ciChecks
+              ciTestBuild
+              ciLocal
+            ]
+            ++ linuxRuntimeDeps ++ linuxBuildDeps;
 
           shellHook = ''
             export LIBCLANG_PATH="${llvmPackages.libclang.lib}/lib"
@@ -234,20 +233,6 @@
 
             export WINEPREFIX="$HOME/.wine64"
             export WINEARCH=win64
-
-            cat <<'EOF'
-life-monitor dev shell
-  host target:    ${linuxTarget}
-  windows target: ${windowsTarget}
-
-Common commands:
-  cargo test --target ${linuxTarget}
-  cargo build --target ${linuxTarget}
-  cargo build --target ${windowsTarget}
-  cargo check --target ${windowsTarget}
-  nix build .#linux
-  nix build .#windows
-EOF
           '';
         };
       }

@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(nix develop *)",
+      "Bash(grep -E \"\\\\.\\(rs|toml\\)$\")",
+      "Bash(grep -E \"error|Finished|ok$|FAILED\")",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
+    ]
+  },
+  "spinnerTipsEnabled": false
+}

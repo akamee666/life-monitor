@@ -36,6 +36,8 @@ sysinfo = "0.37.0"
 clap = { version = "4.5.18", features = ["derive"] }
 sha2 = "0.10.9"
 uuid = { version = "1.18.1", features = ["v4"] }
+ratatui = { version = "0.29.0", default-features = false, features = ["crossterm"] }
+crossterm = "0.28.1"
 libsql = { version = "0.9.30", default-features = false, features = ["remote", "tls"], optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
