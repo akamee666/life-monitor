@@ -68,6 +68,7 @@ When built with `--features multi-sync` and explicitly configured by the user:
 - devices push only their own source-owned rows
 - devices pull foreign rows and keep them locally queryable
 - if remote sync fails, local collection must continue
+- if remote sync is unavailable at startup, the collector must still start and keep writing locally
 
 ### Data model
 
@@ -82,6 +83,13 @@ Those bucket rows are the source of truth for:
 - analytics
 - import/export merging
 - sync convergence
+
+Current built-in analytics are CLI-first:
+
+- `sessions`
+- `session-stats`
+- `apps`
+- `daily`
 
 Do not replace bucket storage with ad hoc cumulative counters unless the product model is being deliberately redesigned.
 
@@ -283,7 +291,14 @@ Push and pull must remain idempotent:
 - no cursor advance before successful full apply
 - no marking pending rows as sent before remote acknowledgement
 
-### 8. Sync failure must not stop collection
+### 8. Foreign source metadata must stay real
+
+When pulling foreign-source bucket rows, the local database must receive the real remote
+`sources` metadata first.
+
+Do not reintroduce placeholder source rows based on guessed names or the local platform.
+
+### 9. Sync failure must not stop collection
 
 If the remote is unavailable or a sync attempt fails:
 
@@ -292,7 +307,7 @@ If the remote is unavailable or a sync attempt fails:
 - pending outbox rows remain queued
 - status records the failure
 
-### 9. Linux and Windows should share logic only where behavior is truly shared
+### 10. Linux and Windows should share logic only where behavior is truly shared
 
 Good places to share:
 
@@ -302,7 +317,7 @@ Good places to share:
 
 Keep platform event decoding and OS integration local to each platform.
 
-### 10. Release tags must match `Cargo.toml`
+### 11. Release tags must match `Cargo.toml`
 
 The release workflow enforces this.
 
@@ -390,6 +405,7 @@ Prefer tests that verify:
 - state transitions
 - merge/import/export outcomes
 - retry and idempotency behavior
+- analytics outputs derived from real stored bucket/session rows
 
 Avoid tests that mostly verify:
 
@@ -397,6 +413,14 @@ Avoid tests that mostly verify:
 - static message wording
 - broad smoke paths with many unrelated failure points
 - timing-sensitive behavior when a direct helper-level test would be clearer
+
+If sync behavior changes, add tests for:
+
+- startup/offline behavior
+- source ownership
+- foreign row pull behavior
+- outbox safety
+- convergence or retry behavior
 
 Use the lowest stable test level that proves the behavior.
 
@@ -471,7 +495,7 @@ Be extra careful in:
 
 Current likely cleanup targets:
 
-- some sync/runtime seams can still be simplified
+- some sync/outbox seams can still be simplified without undoing the current module boundaries
 - storage and sync responsibilities should continue to stay narrow as features grow
 - Wine cannot replace native Windows validation
 - remote share behavior depends on OS mount semantics and is still best-effort
