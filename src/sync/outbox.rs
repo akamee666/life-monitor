@@ -600,13 +600,14 @@ fn resolve_remote_source_id(
     source_uuid: &str,
     created_at_utc: &str,
 ) -> Result<i64> {
-    upsert_source_by_uuid(
-        conn,
-        source_uuid,
-        source_uuid,
-        std::env::consts::OS,
-        created_at_utc,
-    )
+    let Some(source) = get_source_by_uuid(conn, source_uuid)? else {
+        anyhow::bail!(
+            "missing source metadata for remote source {} while applying bucket change at {}",
+            source_uuid,
+            created_at_utc
+        );
+    };
+    Ok(source.id)
 }
 
 fn parse_utc(value: String) -> Result<DateTime<Utc>> {

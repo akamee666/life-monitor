@@ -131,6 +131,25 @@ fn focus_snapshot(conn: &Connection) -> Result<Vec<String>> {
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
+fn source_snapshot(conn: &Connection) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "
+        SELECT source_uuid, source_name, platform
+        FROM sources
+        ORDER BY source_uuid
+        ",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(format!(
+            "{}|{}|{}",
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
 struct AlwaysFailRemote;
 
 impl SyncRemote for AlwaysFailRemote {
@@ -302,7 +321,7 @@ async fn incremental_pull_applies_only_new_revisions_and_advances_cursor_on_succ
     sync_push(&source, &remote, &source_config).await?;
 
     let second = sync_pull(&mut target, &remote, &target_config).await?;
-    assert_eq!(second.changes.len(), 1);
+    assert_eq!(second.changes.len(), 2);
     assert_eq!(input_snapshot(&target)?.len(), 2);
     assert_eq!(
         load_sync_state(
@@ -374,6 +393,41 @@ async fn foreign_rows_are_pulled_without_entering_the_outbox() -> Result<()> {
     sync_pull(&mut target, &remote, &target_config).await?;
 
     assert_eq!(input_snapshot(&target)?.len(), 1);
+    assert!(list_pending_outbox(&target, &target_config.own_source_uuid)?.is_empty());
+
+    Ok(())
+}
+
+/// Proves pull injects real source metadata before foreign bucket rows are applied, instead of
+/// synthesizing placeholder local source records with guessed names or platforms.
+/// It is stable because the source metadata is set explicitly in the source database and then
+/// verified in the pulled target database after one push/pull cycle.
+/// This catches regressions where foreign rows create fake local source entries during apply.
+#[tokio::test]
+async fn pull_applies_real_foreign_source_metadata_before_bucket_rows() -> Result<()> {
+    let source_path = unique_temp_db("foreign-source-metadata-source");
+    let target_path = unique_temp_db("foreign-source-metadata-target");
+    let source = build_test_db(&source_path)?;
+    let mut target = build_test_db(&target_path)?;
+    let source_config = sync_config(&source, "memory://foreign-source-metadata")?;
+    let target_config = sync_config(&target, "memory://foreign-source-metadata")?;
+    let remote = InMemoryRemote::default();
+
+    source.execute(
+        "UPDATE sources SET source_name = 'thinkpad', platform = 'windows' WHERE id = ?1",
+        [DEFAULT_SOURCE_ID],
+    )?;
+    super::outbox::apply_local_source(&source, &get_source(&source, DEFAULT_SOURCE_ID)?)?;
+    apply_local_input_rows(&source, &[sample_input_row(DEFAULT_SOURCE_ID, 0, 11)])?;
+
+    sync_push(&source, &remote, &source_config).await?;
+    sync_pull(&mut target, &remote, &target_config).await?;
+
+    let foreign_source = source_snapshot(&target)?
+        .into_iter()
+        .find(|row| row.contains("|thinkpad|windows"))
+        .expect("foreign source metadata should be replicated");
+    assert!(foreign_source.contains("thinkpad"));
     assert!(list_pending_outbox(&target, &target_config.own_source_uuid)?.is_empty());
 
     Ok(())

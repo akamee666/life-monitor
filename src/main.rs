@@ -15,13 +15,13 @@ use crate::platform::linux::process;
 
 use crate::storage::backend::*;
 use crate::storage::localdb::{
-    app_activity_report, export_database, import_snapshot, open_con_at, plan_import,
-    session_report, setup_database, DbConfig,
+    app_activity_report, daily_activity_report, export_database, import_snapshot, open_con_at,
+    plan_import, session_report, session_stats_report, setup_database, DbConfig,
 };
 #[cfg(feature = "multi-sync")]
 use crate::sync::{
-    render_sync_status, resolve_sync_runtime_config, run_sync_cycle, sync_pull, sync_push,
-    sync_status_snapshot, SqldRemote,
+    record_sync_error, render_sync_status, resolve_sync_runtime_config, run_sync_cycle, sync_pull,
+    sync_push, sync_status_snapshot, SqldRemote,
 };
 use crate::utils::args::{Cli, ReportKind};
 #[cfg(feature = "multi-sync")]
@@ -156,14 +156,60 @@ async fn run(mut args: Cli) -> Result<()> {
                         .map(|value| format!("{value}s"))
                         .unwrap_or_else(|| "unknown".to_string());
                     println!(
-                        "{} {} {} {}",
-                        row.started_at_utc, ended, duration, row.platform
+                        "{} {} {} {} {} {}",
+                        row.started_at_utc,
+                        ended,
+                        duration,
+                        row.source_name,
+                        row.source_uuid,
+                        row.platform
+                    );
+                }
+            }
+            ReportKind::SessionStats => {
+                for row in session_stats_report(&conn, args.report_days)? {
+                    println!(
+                        "{} {} {} {} {} {} {} {}",
+                        row.source_name,
+                        row.source_uuid,
+                        row.platform,
+                        row.session_count,
+                        row.open_session_count,
+                        row.total_duration_seconds,
+                        row.average_duration_seconds,
+                        row.longest_duration_seconds
                     );
                 }
             }
             ReportKind::Apps => {
                 for row in app_activity_report(&conn, args.report_days)? {
-                    println!("{} {}", row.focus_seconds, row.app_identifier);
+                    println!(
+                        "{} {} {} {} {}",
+                        row.focus_seconds,
+                        row.source_name,
+                        row.source_uuid,
+                        row.platform,
+                        row.app_identifier
+                    );
+                }
+            }
+            ReportKind::Daily => {
+                for row in daily_activity_report(&conn, args.report_days)? {
+                    println!(
+                        "{} {} {} {} {} {} {} {} {:.2} {:.2} {:.2} {}",
+                        row.local_date,
+                        row.source_name,
+                        row.source_uuid,
+                        row.platform,
+                        row.key_presses,
+                        row.left_clicks,
+                        row.right_clicks,
+                        row.middle_clicks,
+                        row.mouse_distance_cm,
+                        row.scroll_vertical_cm,
+                        row.scroll_horizontal_cm,
+                        row.focus_seconds
+                    );
                 }
             }
         }
@@ -190,20 +236,45 @@ async fn run(mut args: Cli) -> Result<()> {
             resolve_sync_runtime_config(&conn, &args)?
         };
         if let Some(sync_config) = sync_config.filter(|config| config.sync_enabled) {
-            let remote = SqldRemote::new(&sync_config.remote_url, &sync_config.auth_token).await?;
-            let remote = std::sync::Arc::new(remote);
             let db_path = local_db.db_path().clone();
             let sync_config = sync_config.clone();
             tasks_set.spawn(async move {
                 let mut tick = tokio::time::interval(std::time::Duration::from_secs(
                     sync_config.sync_interval_seconds,
                 ));
+                let mut remote = None;
                 loop {
                     tick.tick().await;
                     let _op_lock = acquire_db_operation_lock(&db_path)?;
-                    if let Err(err) = run_sync_cycle(&db_path, remote.as_ref(), &sync_config).await
-                    {
-                        error!("Sync cycle failed: {err:#}");
+                    // Sync must stay opportunistic. When the remote is down we only record the
+                    // failure in local sync state and retry later; collection keeps running.
+                    if remote.is_none() {
+                        match SqldRemote::new(&sync_config.remote_url, &sync_config.auth_token)
+                            .await
+                        {
+                            Ok(connected) => {
+                                info!("Connected background sync to {}", sync_config.remote_url);
+                                remote = Some(connected);
+                            }
+                            Err(err) => {
+                                error!("Sync remote unavailable: {err:#}");
+                                let conn = open_con_at(&db_path)?;
+                                record_sync_error(
+                                    &conn,
+                                    &sync_config.own_source_uuid,
+                                    &sync_config.remote_url,
+                                    &err.to_string(),
+                                )?;
+                                continue;
+                            }
+                        }
+                    }
+
+                    if let Some(connected) = remote.as_ref() {
+                        if let Err(err) = run_sync_cycle(&db_path, connected, &sync_config).await {
+                            error!("Sync cycle failed: {err:#}");
+                            remote = None;
+                        }
                     }
                 }
                 #[allow(unreachable_code)]

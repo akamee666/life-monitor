@@ -10,7 +10,9 @@ use crate::common::DEFAULT_MOUSE_DPI;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum ReportKind {
     Sessions,
+    SessionStats,
     Apps,
+    Daily,
 }
 
 #[cfg(feature = "multi-sync")]
@@ -130,7 +132,7 @@ pub struct Cli {
         value_name = "KIND",
         conflicts_with_all = ["export_db", "import_db", "enable_startup", "disable_startup", "clear"],
         help = "Render a built-in analytics report and exit.",
-        long_help = "Renders a built-in analytics report from the local SQLite database and then exits.\n\nAvailable reports:\n- sessions: collection sessions recorded by Life Monitor\n- apps: focused-app totals aggregated from focus buckets"
+        long_help = "Renders a built-in analytics report from the local SQLite database and then exits.\n\nAvailable reports:\n- sessions: collection sessions recorded by Life Monitor\n- session-stats: per-source session totals and duration summaries\n- apps: focused-app totals grouped by source\n- daily: per-day activity totals grouped by source"
     )]
     pub report: Option<ReportKind>,
 

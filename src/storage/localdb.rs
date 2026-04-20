@@ -8,8 +8,9 @@ mod schema;
 
 #[allow(unused_imports)]
 pub use analytics::{
-    app_activity_report, begin_session, current_open_session, end_session, session_report,
-    AppActivityRow, SessionRow,
+    app_activity_report, begin_session, current_open_session, daily_activity_report, end_session,
+    session_report, session_stats_report, AppActivityRow, DailyActivityRow, SessionRow,
+    SessionStatsRow,
 };
 #[allow(unused_imports)]
 pub use config::{default_db_path, resolve_db_path, DbConfig, DbPathSource};
@@ -534,6 +535,8 @@ mod tests {
         let sessions = session_report(&conn, 30)?;
         assert_eq!(sessions.len(), 2);
         assert_eq!(sessions[0].session_uuid, second);
+        assert!(!sessions[0].source_uuid.is_empty());
+        assert!(!sessions[0].source_name.is_empty());
         assert_eq!(sessions[0].ended_at_utc, None);
         assert!(sessions[0].duration_seconds.is_some());
         assert_eq!(sessions[1].session_uuid, first);
@@ -570,10 +573,58 @@ mod tests {
         )?;
 
         let rows = app_activity_report(&conn, 30)?;
+        assert!(!rows[0].source_uuid.is_empty());
+        assert!(!rows[0].source_name.is_empty());
         assert_eq!(rows[0].app_identifier, "firefox");
         assert_eq!(rows[0].focus_seconds, 150);
         assert_eq!(rows[1].app_identifier, "code");
         assert_eq!(rows[1].focus_seconds, 10);
+
+        drop(conn);
+        fs::remove_file(path)?;
+        Ok(())
+    }
+
+    /// Verifies that daily analytics merge input and focus totals per local day and source by
+    /// inserting both bucket kinds and asserting the joined daily summary row.
+    #[test]
+    fn daily_activity_report_groups_metrics_by_day_and_source() -> anyhow::Result<()> {
+        let path = unique_temp_db("daily-report");
+        let conn = build_test_db(&path)?;
+        insert_input_buckets(&conn, &[sample_input_row(), sample_second_input_row()])?;
+        insert_focus_buckets(&conn, &[sample_focus_row(), sample_second_focus_row()])?;
+
+        let rows = daily_activity_report(&conn, 30)?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].local_date, "2026-04-18");
+        assert_eq!(rows[0].key_presses, 12);
+        assert_eq!(rows[0].left_clicks, 5);
+        assert_eq!(rows[0].focus_seconds, 165);
+        assert!((rows[0].mouse_distance_cm - 4.5).abs() < 1e-6);
+
+        drop(conn);
+        fs::remove_file(path)?;
+        Ok(())
+    }
+
+    /// Verifies that session statistics summarize counts and durations per source by creating
+    /// one closed session and one open session and asserting the aggregated metrics.
+    #[test]
+    fn session_stats_report_summarizes_sessions_per_source() -> anyhow::Result<()> {
+        let path = unique_temp_db("session-stats");
+        let conn = build_test_db(&path)?;
+
+        let first = begin_session(&conn, DEFAULT_SOURCE_ID, "windows")?;
+        end_session(&conn, &first)?;
+        let _second = begin_session(&conn, DEFAULT_SOURCE_ID, "windows")?;
+
+        let rows = session_stats_report(&conn, 30)?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].session_count, 2);
+        assert_eq!(rows[0].open_session_count, 1);
+        assert!(rows[0].total_duration_seconds >= rows[0].longest_duration_seconds);
+        assert!(!rows[0].source_uuid.is_empty());
+        assert!(!rows[0].source_name.is_empty());
 
         drop(conn);
         fs::remove_file(path)?;

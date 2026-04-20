@@ -68,19 +68,6 @@ pub fn apply_push_success(
     Ok(())
 }
 
-pub fn apply_push_error(
-    conn: &Connection,
-    config: &SyncRuntimeConfig,
-    err: &anyhow::Error,
-) -> Result<()> {
-    record_sync_error(
-        conn,
-        &config.own_source_uuid,
-        &config.remote_url,
-        &err.to_string(),
-    )
-}
-
 pub async fn sync_push<R: SyncRemote + ?Sized>(
     conn: &Connection,
     remote: &R,
@@ -96,7 +83,12 @@ pub async fn sync_push<R: SyncRemote + ?Sized>(
             Ok(Some(ack))
         }
         Err(err) => {
-            apply_push_error(conn, config, &err)?;
+            record_sync_error(
+                conn,
+                &config.own_source_uuid,
+                &config.remote_url,
+                &err.to_string(),
+            )?;
             Err(err)
         }
     }

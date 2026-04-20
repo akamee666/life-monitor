@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Context, Result};
@@ -59,6 +59,45 @@ impl InMemoryRemote {
 
         state.change_log.push(RemoteChange { revision, payload });
     }
+
+    fn source_metadata_changes(
+        state: &RemoteState,
+        changes: &[RemoteChange],
+        own_source_uuid: &str,
+        last_pulled_revision: i64,
+    ) -> Vec<RemoteChange> {
+        let mut source_changes = Vec::new();
+        let mut seen_source_payloads = HashSet::new();
+        let mut referenced_sources = HashSet::new();
+
+        for change in changes {
+            if let ChangePayload::Source(source) = &change.payload {
+                seen_source_payloads.insert(source.source_uuid.clone());
+                continue;
+            }
+            let source_uuid = change.payload.source_uuid().to_string();
+            if last_pulled_revision == 0 && source_uuid == own_source_uuid {
+                continue;
+            }
+            referenced_sources.insert(source_uuid);
+        }
+
+        let mut referenced_sources = referenced_sources.into_iter().collect::<Vec<_>>();
+        referenced_sources.sort();
+        for source_uuid in referenced_sources {
+            if seen_source_payloads.contains(&source_uuid) {
+                continue;
+            }
+            if let Some(source) = state.source_rows.get(&format!("source:{source_uuid}")) {
+                source_changes.push(RemoteChange {
+                    revision: 0,
+                    payload: ChangePayload::Source(source.clone()),
+                });
+            }
+        }
+
+        source_changes
+    }
 }
 
 impl SyncRemote for InMemoryRemote {
@@ -117,7 +156,7 @@ impl SyncRemote for InMemoryRemote {
         last_pulled_revision: i64,
     ) -> Result<PullResponse> {
         let state = self.inner.lock().unwrap();
-        let changes = state
+        let mut changes = state
             .change_log
             .iter()
             .filter(|change| change.revision > last_pulled_revision)
@@ -126,9 +165,12 @@ impl SyncRemote for InMemoryRemote {
             })
             .cloned()
             .collect::<Vec<_>>();
+        let mut source_changes =
+            Self::source_metadata_changes(&state, &changes, own_source_uuid, last_pulled_revision);
+        source_changes.append(&mut changes);
         Ok(PullResponse {
             remote_head_revision: state.head_revision,
-            changes,
+            changes: source_changes,
         })
     }
 
@@ -467,6 +509,86 @@ impl SqldRemote {
             focus_seconds: *row.get_value(9)?.as_integer().unwrap_or(&0) as u64,
         })
     }
+
+    async fn load_source_row(conn: &libsql::Connection, source_uuid: &str) -> Result<SourceChange> {
+        let mut rows = conn
+            .query(
+                "
+                SELECT source_uuid, source_name, platform, created_at_utc
+                FROM sources
+                WHERE source_uuid = ?1
+                ",
+                libsql::params![source_uuid.to_string()],
+            )
+            .await?;
+        let row = rows.next().await?.context("missing canonical source row")?;
+        Ok(SourceChange {
+            source_uuid: row
+                .get_value(0)?
+                .as_text()
+                .map(ToString::to_string)
+                .unwrap_or_default(),
+            source_name: row
+                .get_value(1)?
+                .as_text()
+                .map(ToString::to_string)
+                .unwrap_or_default(),
+            platform: row
+                .get_value(2)?
+                .as_text()
+                .map(ToString::to_string)
+                .unwrap_or_default(),
+            created_at_utc: row
+                .get_value(3)?
+                .as_text()
+                .map(ToString::to_string)
+                .unwrap_or_default(),
+        })
+    }
+
+    async fn prepend_missing_source_rows(
+        conn: &libsql::Connection,
+        changes: Vec<RemoteChange>,
+        own_source_uuid: &str,
+        last_pulled_revision: i64,
+    ) -> Result<Vec<RemoteChange>> {
+        let mut seen_source_payloads = HashSet::new();
+        let mut referenced_sources = HashSet::new();
+
+        for change in &changes {
+            if let ChangePayload::Source(source) = &change.payload {
+                seen_source_payloads.insert(source.source_uuid.clone());
+                continue;
+            }
+            let source_uuid = change.payload.source_uuid().to_string();
+            if last_pulled_revision == 0 && source_uuid == own_source_uuid {
+                continue;
+            }
+            referenced_sources.insert(source_uuid);
+        }
+
+        let mut source_changes = Vec::new();
+        let mut referenced_sources = referenced_sources.into_iter().collect::<Vec<_>>();
+        referenced_sources.sort();
+        for source_uuid in referenced_sources {
+            if seen_source_payloads.contains(&source_uuid) {
+                continue;
+            }
+            // Guarantee local source rows exist before any foreign bucket rows are applied.
+            // This keeps the pull path faithful to remote metadata instead of inventing
+            // placeholder names or platforms locally.
+            source_changes.push(RemoteChange {
+                // Synthetic metadata row used only to guarantee local source rows exist
+                // before any pulled bucket rows are applied.
+                revision: 0,
+                payload: ChangePayload::Source(Self::load_source_row(conn, &source_uuid).await?),
+            });
+        }
+
+        let mut combined = source_changes;
+        combined.extend(changes);
+        Ok(combined)
+    }
 }
 
 #[cfg(feature = "multi-sync")]
@@ -736,6 +858,14 @@ impl SyncRemote for SqldRemote {
             let payload = Self::load_change_by_revision(&conn, revision, &entity_type).await?;
             changes.push(RemoteChange { revision, payload });
         }
+
+        let changes = Self::prepend_missing_source_rows(
+            &conn,
+            changes,
+            own_source_uuid,
+            last_pulled_revision,
+        )
+        .await?;
 
         Ok(PullResponse {
             remote_head_revision: self.remote_head_revision().await?,

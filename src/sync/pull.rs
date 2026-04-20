@@ -9,18 +9,6 @@ use super::state::{
 };
 use super::types::PullResponse;
 
-#[derive(Debug, Clone)]
-pub struct PreparedPull {
-    pub last_pulled_revision: i64,
-}
-
-pub fn prepare_sync_pull(conn: &Connection, config: &SyncRuntimeConfig) -> Result<PreparedPull> {
-    let state = load_sync_state(conn, &config.own_source_uuid, &config.remote_url)?;
-    Ok(PreparedPull {
-        last_pulled_revision: state.last_pulled_revision,
-    })
-}
-
 pub fn apply_pull_response(
     conn: &mut Connection,
     config: &SyncRuntimeConfig,
@@ -50,36 +38,29 @@ pub fn apply_pull_response(
     Ok(())
 }
 
-pub fn apply_pull_error(
-    conn: &Connection,
-    config: &SyncRuntimeConfig,
-    err: &anyhow::Error,
-) -> Result<()> {
-    record_sync_error(
-        conn,
-        &config.own_source_uuid,
-        &config.remote_url,
-        &err.to_string(),
-    )
-}
-
 pub async fn sync_pull(
     conn: &mut Connection,
     remote: &(impl SyncRemote + ?Sized),
     config: &SyncRuntimeConfig,
 ) -> Result<PullResponse> {
-    let prepared = prepare_sync_pull(conn, config)?;
+    let last_pulled_revision =
+        load_sync_state(conn, &config.own_source_uuid, &config.remote_url)?.last_pulled_revision;
     let response = match remote
-        .pull_since(&config.own_source_uuid, prepared.last_pulled_revision)
+        .pull_since(&config.own_source_uuid, last_pulled_revision)
         .await
     {
         Ok(response) => response,
         Err(err) => {
-            apply_pull_error(conn, config, &err)?;
+            record_sync_error(
+                conn,
+                &config.own_source_uuid,
+                &config.remote_url,
+                &err.to_string(),
+            )?;
             return Err(err);
         }
     };
 
-    apply_pull_response(conn, config, prepared.last_pulled_revision, &response)?;
+    apply_pull_response(conn, config, last_pulled_revision, &response)?;
     Ok(response)
 }
