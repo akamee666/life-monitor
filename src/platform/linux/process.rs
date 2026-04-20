@@ -142,10 +142,9 @@ pub async fn run(update_interval: u32, backend: StorageBackend) -> Result<()> {
     match detect_display_server() {
         DisplayServer::Wayland => {
             info!(
-                "Wayland detected via environment. WAYLAND_DISPLAY={:?}, XDG_SESSION_TYPE={:?}, HYPRLAND_INSTANCE_SIGNATURE={:?}, DISPLAY={:?}",
+                "Wayland detected via environment. WAYLAND_DISPLAY={:?}, XDG_SESSION_TYPE={:?}, DISPLAY={:?}",
                 std::env::var("WAYLAND_DISPLAY").ok(),
                 std::env::var("XDG_SESSION_TYPE").ok(),
-                std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok(),
                 std::env::var("DISPLAY").ok(),
             );
             #[cfg(feature = "wayland")]
@@ -175,11 +174,10 @@ pub async fn run(update_interval: u32, backend: StorageBackend) -> Result<()> {
         }
         DisplayServer::Unknown => {
             error!(
-                "Could not determine graphical session type from environment. WAYLAND_DISPLAY={:?}, WAYLAND_SOCKET={:?}, XDG_SESSION_TYPE={:?}, HYPRLAND_INSTANCE_SIGNATURE={:?}, DISPLAY={:?}",
+                "Could not determine graphical session type from environment. WAYLAND_DISPLAY={:?}, WAYLAND_SOCKET={:?}, XDG_SESSION_TYPE={:?}, DISPLAY={:?}",
                 std::env::var("WAYLAND_DISPLAY").ok(),
                 std::env::var("WAYLAND_SOCKET").ok(),
                 std::env::var("XDG_SESSION_TYPE").ok(),
-                std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok(),
                 std::env::var("DISPLAY").ok(),
             );
             return Err(anyhow!(

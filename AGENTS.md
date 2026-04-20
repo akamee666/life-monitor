@@ -188,7 +188,7 @@ If the task is about:
   - `src/platform/windows/process.rs`
   - `src/platform/windows/startup.rs`
 
-- Linux startup unit generation:
+- Linux startup generation:
   - `src/platform/linux/common.rs`
 
 - DPI persistence:
@@ -326,14 +326,19 @@ The release workflow enforces this.
 
 Do not change release logic in a way that allows publishing mismatched versions.
 
-### 12. Linux startup units should stay self-contained and per-user
+### 12. Linux startup should prefer standard XDG autostart and keep systemd fallback narrow
 
-Linux startup uses a generated `systemd --user` unit.
+Linux startup now has two modes:
+
+- default: XDG autostart desktop entry
+- fallback: `systemd --user` unit tied to the graphical session
 
 Preserve these expectations:
 
-- the unit should point at the executable the user enabled startup from
-- the unit should carry only the session environment values the service itself needs
+- startup artifacts should point at the executable the user enabled startup from
+- prefer XDG autostart for desktop-session startup
+- keep the `systemd --user` mode explicit and advanced
+- do not bake volatile graphical-session variables such as `WAYLAND_DISPLAY` into the systemd unit
 - do not mutate the wider systemd user manager environment just to make the service start
 - warn when startup is enabled from a fragile repo build path such as `target/debug` or `target/release`
 
@@ -397,6 +402,23 @@ nix build .#windows
 ```
 
 Do not assume the repo's current default target. CI explicitly passes `--target`, and local verification should do the same.
+
+The default dev shell intentionally separates host Linux and Windows cross-build C toolchains:
+
+- host Linux builds should use the host compiler toolchain
+- Windows cross-builds should use target-specific `x86_64-pc-windows-gnu` toolchain variables
+
+Do not reintroduce Windows MinGW runtime headers or libraries into the default host build environment in a way that pollutes Linux native C builds.
+
+### SQLite runtime expectation
+
+`rusqlite` is bundled on both Linux and Windows.
+
+Preserve that unless there is a deliberate packaging reason to change it:
+
+- Linux runtime should not depend on a system `libsqlite3.so`
+- Windows runtime should not depend on an external SQLite install
+- if build or shell changes break bundled SQLite compilation, fix the toolchain environment instead of silently falling back to a system SQLite dependency
 
 ### Windows test reality
 

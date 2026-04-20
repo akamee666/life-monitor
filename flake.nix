@@ -81,8 +81,8 @@
           name = "ci-test-build";
           text = ''
             set -euo pipefail
-            cargo test --target x86_64-unknown-linux-gnu
-            cargo build --release --target x86_64-unknown-linux-gnu
+            CC=gcc CXX=g++ AR=ar RANLIB=ranlib cargo test --target x86_64-unknown-linux-gnu
+            CC=gcc CXX=g++ AR=ar RANLIB=ranlib cargo build --release --target x86_64-unknown-linux-gnu
           '';
         };
 
@@ -172,8 +172,6 @@
             llvmPackages.clang
             pkgs.cargo-deny
             pkgs.codespell
-            pkgs.pkgsCross.mingwW64.sqlite
-            pkgs.pkgsCross.mingwW64.windows.pthreads
             ciChecks
             ciTestBuild
             ciLocal
@@ -200,7 +198,19 @@
             export WINEARCH=win64
             [ ! -d "$WINEPREFIX" ] && wineboot
             export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${pkgs.lib.makeLibraryPath unixBuildDeps}";
+            export CC=gcc
+            export CXX=g++
+            export AR=ar
+            export RANLIB=ranlib
+            export CC_x86_64_unknown_linux_gnu=gcc
+            export CXX_x86_64_unknown_linux_gnu=g++
+            export AR_x86_64_unknown_linux_gnu=ar
+            export RANLIB_x86_64_unknown_linux_gnu=ranlib
             export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER="${pkgs.pkgsCross.mingwW64.stdenv.cc}/bin/x86_64-w64-mingw32-gcc"
+            export CC_x86_64_pc_windows_gnu="${pkgs.pkgsCross.mingwW64.stdenv.cc}/bin/x86_64-w64-mingw32-gcc"
+            export CXX_x86_64_pc_windows_gnu="${pkgs.pkgsCross.mingwW64.stdenv.cc}/bin/x86_64-w64-mingw32-g++"
+            export AR_x86_64_pc_windows_gnu="${pkgs.pkgsCross.mingwW64.stdenv.cc.bintools}/bin/x86_64-w64-mingw32-ar"
+            export RANLIB_x86_64_pc_windows_gnu="${pkgs.pkgsCross.mingwW64.stdenv.cc.bintools}/bin/x86_64-w64-mingw32-ranlib"
             export BINDGEN_EXTRA_CLANG_ARGS="${bindgenClangArgs}"
           '';
         };

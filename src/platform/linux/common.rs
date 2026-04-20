@@ -1,23 +1,23 @@
-/// This file is used to store code that will be used for both wayland or x11
+/// Shared Linux helpers for session detection and startup configuration.
+use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::fs::{self, create_dir_all, write};
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::utils::args::Cli;
+use crate::utils::args::{Cli, LinuxStartupMode};
 
 use anyhow::*;
 use tracing::*;
 
 const SERVICE_NAME: &str = "life-monitor.service";
-const SESSION_ENV_VARS: [&str; 6] = [
+const DESKTOP_ENTRY_NAME: &str = "life-monitor.desktop";
+const SESSION_ENV_VARS: [&str; 5] = [
     "DISPLAY",
     "WAYLAND_DISPLAY",
     "XDG_RUNTIME_DIR",
     "XDG_SESSION_TYPE",
     "XAUTHORITY",
-    "HYPRLAND_INSTANCE_SIGNATURE",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,6 +25,95 @@ pub enum DisplayServer {
     Wayland,
     X11,
     Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct XdgAutostartProbe {
+    current_desktop: Option<String>,
+    desktop_session: Option<String>,
+    session_type: Option<String>,
+    display_server: DisplayServer,
+}
+
+impl XdgAutostartProbe {
+    fn gather() -> Self {
+        Self {
+            current_desktop: non_empty_env("XDG_CURRENT_DESKTOP"),
+            desktop_session: non_empty_env("DESKTOP_SESSION"),
+            session_type: non_empty_env("XDG_SESSION_TYPE"),
+            display_server: detect_display_server(),
+        }
+    }
+
+    fn warnings(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
+
+        if self.current_desktop.is_none() && self.desktop_session.is_none() {
+            warnings.push(
+                "No XDG_CURRENT_DESKTOP or DESKTOP_SESSION value was detected. XDG autostart is the recommended default, but minimalist window-manager or compositor setups may require extra session setup.".to_string(),
+            );
+        }
+
+        if self.display_server == DisplayServer::Unknown {
+            warnings.push(
+                "The current process does not look like it is running inside a recognizable graphical Wayland or X11 session. Enable startup from the desktop session where you normally run Life Monitor.".to_string(),
+            );
+        }
+
+        if self.session_type.is_none() {
+            warnings.push(
+                "XDG_SESSION_TYPE is not set in the current environment. This does not block XDG autostart, but it is a sign that the session integration may be unusual.".to_string(),
+            );
+        }
+
+        warnings
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SystemdEnvironmentProbe {
+    missing_keys: Vec<String>,
+}
+
+impl SystemdEnvironmentProbe {
+    fn gather() -> Result<Self> {
+        let output = Command::new("systemctl")
+            .args(["--user", "show-environment"])
+            .output()
+            .with_context(|| "Failed to invoke systemctl --user show-environment")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow!(
+                "systemctl --user show-environment failed: {}",
+                stderr.trim()
+            ));
+        }
+
+        let manager_keys = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter_map(|line| line.split_once('=').map(|(key, _)| key.to_string()))
+            .collect::<HashSet<_>>();
+
+        let missing_keys = SESSION_ENV_VARS
+            .iter()
+            .filter(|key| non_empty_env(key).is_some() && !manager_keys.contains(**key))
+            .map(|key| (*key).to_string())
+            .collect::<Vec<_>>();
+
+        Ok(Self { missing_keys })
+    }
+
+    fn warning(&self) -> Option<String> {
+        if self.missing_keys.is_empty() {
+            return None;
+        }
+
+        Some(format!(
+            "systemd --user does not currently expose these graphical-session variables from your login environment: {}. The systemd startup mode expects the desktop session to import them at login, so prefer the XDG mode unless you have already verified your systemd user manager inherits the graphical environment.",
+            self.missing_keys.join(", ")
+        ))
+    }
 }
 
 fn non_empty_env(key: &str) -> Option<String> {
@@ -37,17 +126,14 @@ fn detect_display_server_from_values(
     wayland_display: Option<&str>,
     wayland_socket: Option<&str>,
     xdg_session_type: Option<&str>,
-    hyprland_signature: Option<&str>,
     display: Option<&str>,
 ) -> DisplayServer {
     let has_wayland_display = wayland_display.is_some_and(|value| !value.trim().is_empty());
     let has_wayland_socket = wayland_socket.is_some_and(|value| !value.trim().is_empty());
-    let has_hyprland_signature = hyprland_signature.is_some_and(|value| !value.trim().is_empty());
     let session_type = xdg_session_type.map(|value| value.trim().to_ascii_lowercase());
     let has_x11_display = display.is_some_and(|value| !value.trim().is_empty());
 
-    if has_hyprland_signature
-        || has_wayland_socket
+    if has_wayland_socket
         || has_wayland_display
         || session_type.as_deref() == Some("wayland")
     {
@@ -64,13 +150,56 @@ pub fn detect_display_server() -> DisplayServer {
         non_empty_env("WAYLAND_DISPLAY").as_deref(),
         non_empty_env("WAYLAND_SOCKET").as_deref(),
         non_empty_env("XDG_SESSION_TYPE").as_deref(),
-        non_empty_env("HYPRLAND_INSTANCE_SIGNATURE").as_deref(),
         non_empty_env("DISPLAY").as_deref(),
     )
 }
 
+fn expand_home(path: &str) -> PathBuf {
+    if let Some(stripped) = path.strip_prefix("~/") {
+        let home = std::env::var("HOME").unwrap_or_else(|_| {
+            let username = std::env::var("USER").expect("Cannot determine home directory");
+            format!("/home/{username}")
+        });
+
+        PathBuf::from(home).join(stripped)
+    } else {
+        PathBuf::from(path)
+    }
+}
+
+fn user_config_dir() -> PathBuf {
+    non_empty_env("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| expand_home("~/.config"))
+}
+
+fn autostart_dir_path() -> PathBuf {
+    user_config_dir().join("autostart")
+}
+
+fn autostart_dir() -> Result<PathBuf> {
+    let path = autostart_dir_path();
+    if !path.exists() {
+        create_dir_all(&path).with_context(|| {
+            format!(
+                "Failed to create XDG autostart directory: {}",
+                path.display()
+            )
+        })?;
+    }
+    Ok(path)
+}
+
+fn desktop_entry_path() -> PathBuf {
+    autostart_dir_path().join(DESKTOP_ENTRY_NAME)
+}
+
+fn user_unit_dir_path() -> PathBuf {
+    expand_home("~/.config/systemd/user")
+}
+
 fn user_unit_dir() -> Result<PathBuf> {
-    let path = expand_home("~/.config/systemd/user");
+    let path = user_unit_dir_path();
     if !path.exists() {
         create_dir_all(&path).with_context(|| {
             format!(
@@ -82,13 +211,8 @@ fn user_unit_dir() -> Result<PathBuf> {
     Ok(path)
 }
 
-fn service_unit_path() -> Result<PathBuf> {
-    Ok(user_unit_dir()?.join(SERVICE_NAME))
-}
-
-fn unit_escape(value: &str) -> String {
-    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
-    format!("\"{escaped}\"")
+fn service_unit_path() -> PathBuf {
+    user_unit_dir_path().join(SERVICE_NAME)
 }
 
 fn systemd_path_escape(value: &str) -> String {
@@ -98,25 +222,54 @@ fn systemd_path_escape(value: &str) -> String {
         .replace('\t', "\\\t")
 }
 
-fn collect_session_environment() -> Vec<(String, String)> {
-    SESSION_ENV_VARS
-        .iter()
-        .filter_map(|key| non_empty_env(key).map(|value| ((*key).to_string(), value)))
-        .collect()
+fn desktop_entry_escape(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('\n', "\\n")
+        .replace('\t', "\\t")
+        .replace('\r', "\\r")
 }
 
-fn render_service_unit(
-    executable: &std::path::Path,
-    working_dir: &std::path::Path,
-    session_env: &[(String, String)],
-) -> String {
-    let environment_lines = session_env
-        .iter()
-        .map(|(key, value)| format!("Environment={}={}", key, unit_escape(value)))
-        .collect::<Vec<_>>()
-        .join("\n");
+fn desktop_exec_escape(arg: &str) -> String {
+    let reserved = [
+        ' ', '\t', '\n', '"', '\'', '\\', '>', '<', '~', '|', '&', ';', '$', '*', '?', '#',
+        '(', ')', '`',
+    ];
+    let escaped = arg
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('`', "\\`")
+        .replace('$', "\\$")
+        .replace('%', "%%");
 
-    let mut unit = format!(
+    if arg.chars().any(|ch| reserved.contains(&ch)) {
+        format!("\"{escaped}\"")
+    } else {
+        escaped
+    }
+}
+
+fn render_desktop_entry(executable: &Path, working_dir: &Path) -> String {
+    format!(
+        "[Desktop Entry]\n\
+Type=Application\n\
+Version=1.0\n\
+Name=Life Monitor\n\
+Comment=Track keyboard, mouse, and focused-window activity\n\
+Exec={}\n\
+TryExec={}\n\
+Path={}\n\
+Terminal=false\n\
+StartupNotify=false\n\
+X-GNOME-Autostart-enabled=true\n",
+        desktop_exec_escape(&executable.display().to_string()),
+        desktop_entry_escape(&executable.display().to_string()),
+        desktop_entry_escape(&working_dir.display().to_string()),
+    )
+}
+
+fn render_service_unit(executable: &Path, working_dir: &Path) -> String {
+    format!(
         "[Unit]\n\
 Description=Life Monitor activity tracker\n\
 After=graphical-session.target\n\
@@ -128,22 +281,13 @@ WorkingDirectory={}\n\
 ExecStart={}\n\
 Restart=on-failure\n\
 RestartSec=3\n\
-",
+Slice=app.slice\n\
+\n\
+[Install]\n\
+WantedBy=graphical-session.target\n",
         systemd_path_escape(&working_dir.display().to_string()),
         systemd_path_escape(&executable.display().to_string()),
-    );
-
-    if !environment_lines.is_empty() {
-        unit.push_str(&environment_lines);
-        unit.push('\n');
-    }
-
-    unit.push_str(
-        "\n[Install]\n\
-WantedBy=default.target\n",
-    );
-
-    unit
+    )
 }
 
 fn run_systemctl<I, S>(args: I) -> Result<()>
@@ -181,11 +325,14 @@ where
 
 #[allow(dead_code)]
 pub fn check_startup_status() -> Result<bool> {
-    let output = Command::new("systemctl")
+    let xdg_enabled = desktop_entry_path().exists();
+    let systemd_enabled = Command::new("systemctl")
         .args(["--user", "is-enabled", SERVICE_NAME])
         .output()
-        .with_context(|| "Failed to invoke systemctl --user is-enabled")?;
-    let is_enabled = output.status.success();
+        .map(|output| output.status.success())
+        .unwrap_or(false);
+
+    let is_enabled = xdg_enabled || systemd_enabled;
 
     info!(
         "Startup status on Linux is {}.",
@@ -193,19 +340,6 @@ pub fn check_startup_status() -> Result<bool> {
     );
 
     Ok(is_enabled)
-}
-
-fn expand_home(path: &str) -> PathBuf {
-    if let Some(stripped) = path.strip_prefix("~/") {
-        let home = std::env::var("HOME").unwrap_or_else(|_| {
-            let username = std::env::var("USER").expect("Cannot determine home directory");
-            format!("/home/{username}")
-        });
-
-        PathBuf::from(home).join(stripped)
-    } else {
-        PathBuf::from(path)
-    }
 }
 
 fn looks_like_repo_build_output(executable: &Path) -> bool {
@@ -223,14 +357,115 @@ fn looks_like_repo_build_output(executable: &Path) -> bool {
     })
 }
 
-// According to system/user arch wiki, user units are located at:
-//
-// `/usr/lib/systemd/user/` where units provided by installed packages belong.
-// `~/.local/share/systemd/user/` where units of packages that have been installed in the home directory belong.
-// `/etc/systemd/user/` where system-wide user units are placed by the system administrator. !!! I don't think this shouldn't be used.
-// `~/.config/systemd/user/` where the user puts their own units.
+fn write_xdg_autostart(executable: &Path, working_dir: &Path) -> Result<PathBuf> {
+    let entry_path = desktop_entry_path();
+    let autostart_dir = autostart_dir()?;
+    let desktop_entry = render_desktop_entry(executable, working_dir);
 
-/// This function is used to enable or disabling the startup of the program using `systemctl`
+    write(&entry_path, desktop_entry).with_context(|| {
+        format!(
+            "Failed to write the XDG autostart desktop entry to {}",
+            entry_path.display()
+        )
+    })?;
+
+    debug!(
+        "Ensured XDG autostart directory exists at '{}'.",
+        autostart_dir.display()
+    );
+
+    Ok(entry_path)
+}
+
+fn write_systemd_startup(executable: &Path, working_dir: &Path) -> Result<PathBuf> {
+    let unit_dir = user_unit_dir()?;
+    let unit_path = service_unit_path();
+    let service_unit = render_service_unit(executable, working_dir);
+
+    write(&unit_path, &service_unit).with_context(|| {
+        format!(
+            "Failed to write the contents of the unit service into: {}",
+            unit_path.display()
+        )
+    })?;
+
+    debug!("Ensured systemd user unit directory exists at '{}'.", unit_dir.display());
+
+    run_systemctl(["daemon-reload"]).with_context(|| {
+        format!(
+            "Failed to reload systemd --user after creating service unit: {}",
+            unit_path.display()
+        )
+    })?;
+
+    run_systemctl(["enable", SERVICE_NAME])
+        .with_context(|| format!("Failed to enable service located at: {}", unit_path.display()))?;
+
+    Ok(unit_path)
+}
+
+fn remove_xdg_autostart() -> Result<()> {
+    let entry_path = desktop_entry_path();
+    if entry_path.exists() {
+        fs::remove_file(&entry_path).with_context(|| {
+            format!(
+                "Failed to remove XDG autostart desktop entry {}",
+                entry_path.display()
+            )
+        })?;
+        info!("Removed XDG autostart entry at '{}'.", entry_path.display());
+    } else {
+        debug!(
+            "No XDG autostart entry exists at '{}'; nothing to remove.",
+            entry_path.display()
+        );
+    }
+    Ok(())
+}
+
+fn remove_systemd_startup() -> Result<()> {
+    let unit_path = service_unit_path();
+    if !unit_path.exists() {
+        debug!(
+            "No Life Monitor systemd user unit exists at '{}'; nothing to remove.",
+            unit_path.display()
+        );
+        return Ok(());
+    }
+
+    info!(
+        "Removing Life Monitor systemd --user startup unit at '{}'.",
+        unit_path.display()
+    );
+
+    if let Err(err) = run_systemctl(["stop", SERVICE_NAME]) {
+        warn!("Failed to stop service {SERVICE_NAME}: {err:#}");
+    } else {
+        info!("Stopped systemd --user service '{}'.", SERVICE_NAME);
+    }
+
+    if let Err(err) = run_systemctl(["disable", SERVICE_NAME]) {
+        warn!("Failed to disable service {SERVICE_NAME}: {err:#}");
+    } else {
+        info!("Disabled systemd --user service '{}'.", SERVICE_NAME);
+    }
+
+    fs::remove_file(&unit_path).with_context(|| {
+        format!(
+            "Failed to remove systemd user unit file {}",
+            unit_path.display()
+        )
+    })?;
+    info!("Removed systemd user unit at '{}'.", unit_path.display());
+
+    run_systemctl(["daemon-reload"])
+        .with_context(|| "Failed to reload systemd --user after removing service unit")?;
+    info!("Reloaded systemd --user after removing '{}'.", SERVICE_NAME);
+
+    Ok(())
+}
+
+/// Configures or removes Linux user-session startup.
 pub fn configure_startup(args: &Cli) -> Result<()> {
     let current_exe = std::env::current_exe()
         .with_context(|| "Could not determine the filesystem path of the application")?;
@@ -239,77 +474,82 @@ pub fn configure_startup(args: &Cli) -> Result<()> {
         .with_context(|| "Current executable path did not have a parent directory")?;
 
     if args.enable_startup {
-        let session_env = collect_session_environment();
-        let unit_path = service_unit_path()?;
-        let service_unit = render_service_unit(&current_exe, working_dir, &session_env);
-
-        write(&unit_path, &service_unit).with_context(|| {
-            format!(
-                "Failed to write the contents of the unit service into: {}",
-                unit_path.display()
-            )
-        })?;
-
-        info!("Unit file successfully created at: {}", unit_path.display());
-
-        run_systemctl(["daemon-reload"]).with_context(|| {
-            format!(
-                "Failed to reload systemd --user after creating service unit: {}",
-                unit_path.display()
-            )
-        })?;
-        info!("Reloaded systemctl daemon");
-
-        run_systemctl(["enable", "--now", SERVICE_NAME]).with_context(|| {
-            format!(
-                "Failed to enable and start service located at: {}",
-                unit_path.display()
-            )
-        })?;
         info!(
-            "Enabled and started systemctl service: {}, unit file can be found at: {}",
-            SERVICE_NAME,
-            unit_path.display()
+            "Enabling Linux startup in {:?} mode for executable '{}'.",
+            args.startup_mode,
+            current_exe.display()
         );
-        if session_env.is_empty() {
-            warn!("Startup was enabled without capturing any graphical session variables. If the service cannot connect to Wayland or X11, re-run '--enable-startup' from inside your graphical session.");
+        debug!(
+            "Removing any existing Life Monitor startup artifacts before creating the new startup entry."
+        );
+        remove_xdg_autostart()?;
+        remove_systemd_startup()?;
+
+        match args.startup_mode {
+            LinuxStartupMode::Xdg => {
+                let entry_path = write_xdg_autostart(&current_exe, working_dir)?;
+                info!(
+                    "Created XDG autostart desktop entry at '{}'.",
+                    entry_path.display()
+                );
+                info!(
+                    "Startup was configured successfully. Life Monitor will auto-start on the next graphical login."
+                );
+                info!(
+                    "This command does not launch a second Life Monitor instance immediately. If you want to keep collecting now, run Life Monitor again without the startup flags."
+                );
+
+                for warning in XdgAutostartProbe::gather().warnings() {
+                    warn!("{warning}");
+                }
+            }
+            LinuxStartupMode::Systemd => {
+                let unit_path = write_systemd_startup(&current_exe, working_dir)?;
+                info!(
+                    "Enabled systemd --user service '{}', unit file can be found at '{}'.",
+                    SERVICE_NAME,
+                    unit_path.display()
+                );
+                info!(
+                    "Startup was configured successfully. Life Monitor will auto-start on future graphical logins when your systemd user session reaches the graphical session target."
+                );
+                info!(
+                    "The startup unit was not started immediately. This avoids racing the current Life Monitor instance against its single-instance lock."
+                );
+                info!(
+                    "If you want to keep collecting now, run Life Monitor again without the startup flags. If you want to test the systemd startup unit itself, stop the current Life Monitor process first and then run: systemctl --user start {}",
+                    SERVICE_NAME
+                );
+
+                match SystemdEnvironmentProbe::gather() {
+                    std::result::Result::Ok(probe) => {
+                        if let Some(warning) = probe.warning() {
+                            warn!("{warning}");
+                        }
+                    }
+                    std::result::Result::Err(err) => warn!(
+                        "Could not inspect the systemd --user manager environment after enabling startup: {err:#}"
+                    ),
+                }
+            }
         }
+
         if looks_like_repo_build_output(&current_exe) {
             warn!(
                 "Startup was enabled from a repository build output at '{}'. This works, but it is fragile if you clean, rebuild, or move the repository. Prefer enabling startup from a stable installed binary such as '~/.cargo/bin/life-monitor'.",
                 current_exe.display()
             );
         }
-        warn!("Startup is now enabled. If the executable path changes, re-run '--enable-startup' so the unit file points to the new binary.");
+
+        warn!(
+            "Startup is now enabled. If the executable path changes, re-run '--enable-startup' so the startup entry points to the new binary."
+        );
     }
 
     if args.disable_startup {
-        if let Err(err) = run_systemctl(["stop", SERVICE_NAME]) {
-            warn!("Failed to stop service {SERVICE_NAME}: {err:#}");
-        }
-
-        run_systemctl(["disable", SERVICE_NAME]).with_context(|| {
-            format!("Successfully stopped service {SERVICE_NAME} but failed to disable it")
-        })?;
-
-        info!("Systemctl services were stopped or were not running already");
-        let unit_f = service_unit_path()?;
-        if unit_f.exists() {
-            fs::remove_file(unit_f.clone()).with_context(|| {
-                format!(
-                    "Stopped and disabled service {SERVICE_NAME} but failed to remove unit file {}. Please remove it manually",
-                    unit_f.display()
-                )
-            })?;
-            info!(
-                "Disabled service '{}' and removed unit file: '{}'",
-                SERVICE_NAME,
-                unit_f.display()
-            );
-        }
-
-        run_systemctl(["daemon-reload"])
-            .with_context(|| "Failed to reload systemd --user after removing service unit")?;
+        info!("Disabling all Life Monitor Linux startup artifacts for the current user.");
+        remove_xdg_autostart()?;
+        remove_systemd_startup()?;
     }
 
     Ok(())
@@ -341,24 +581,6 @@ mod tests {
         ENV_LOCK.get_or_init(|| Mutex::new(()))
     }
 
-    /// Verifies that absolute or already-expanded paths pass through unchanged, because
-    /// systemd unit locations may already be resolved before reaching this helper.
-    #[test]
-    fn expand_home_leaves_plain_paths_unchanged() {
-        let path = "/tmp/life-monitor.service";
-        assert_eq!(expand_home(path), PathBuf::from(path));
-    }
-
-    /// Verifies that `~/` prefixes expand against the current HOME directory, which is
-    /// required for writing user service files into the expected systemd locations.
-    #[test]
-    fn expand_home_expands_tilde_prefix() {
-        let home = std::env::var("HOME").expect("HOME should exist in the test environment");
-        let expanded = expand_home("~/.config/systemd/user");
-
-        assert_eq!(expanded, PathBuf::from(home).join(".config/systemd/user"));
-    }
-
     /// Verifies that Wayland is preferred when both Wayland and X11-related variables
     /// are present, which is common in Wayland sessions with Xwayland compatibility.
     #[test]
@@ -368,19 +590,8 @@ mod tests {
                 Some("wayland-1"),
                 None,
                 Some("wayland"),
-                None,
                 Some(":0"),
             ),
-            DisplayServer::Wayland
-        );
-    }
-
-    /// Verifies that Hyprland-specific environment is enough to classify the session as
-    /// Wayland even if generic session variables are missing.
-    #[test]
-    fn detect_display_server_recognizes_hyprland_sessions() {
-        assert_eq!(
-            detect_display_server_from_values(None, None, None, Some("hypr-test"), Some(":0")),
             DisplayServer::Wayland
         );
     }
@@ -390,7 +601,7 @@ mod tests {
     #[test]
     fn detect_display_server_recognizes_x11_sessions() {
         assert_eq!(
-            detect_display_server_from_values(None, None, Some("x11"), None, Some(":0")),
+            detect_display_server_from_values(None, None, Some("x11"), Some(":0")),
             DisplayServer::X11
         );
     }
@@ -403,55 +614,41 @@ mod tests {
         std::env::set_var("WAYLAND_DISPLAY", "wayland-1");
         std::env::remove_var("WAYLAND_SOCKET");
         std::env::set_var("XDG_SESSION_TYPE", "wayland");
-        std::env::set_var("HYPRLAND_INSTANCE_SIGNATURE", "hypr-test");
         std::env::set_var("DISPLAY", ":0");
 
         assert_eq!(detect_display_server(), DisplayServer::Wayland);
     }
 
-    /// Verifies that user-managed units are written to the per-user config directory
-    /// rather than package-managed system locations.
+    /// Verifies that the systemd fallback unit is tied to the graphical session and
+    /// keeps service startup free of hardcoded graphical-session environment values.
     #[test]
-    fn user_unit_dir_prefers_user_config_directory() -> Result<()> {
-        let expected = expand_home("~/.config/systemd/user");
-        assert_eq!(user_unit_dir()?, expected);
-        Ok(())
-    }
-
-    /// Verifies that service units capture restart behavior and the expected session
-    /// environment variables so systemd --user launches remain session-aware without
-    /// mutating the wider user manager environment.
-    #[test]
-    fn render_service_unit_includes_restart_policy_and_session_environment() {
-        let unit = render_service_unit(
-            std::path::Path::new("/tmp/life-monitor"),
-            std::path::Path::new("/tmp"),
-            &[
-                ("WAYLAND_DISPLAY".to_string(), "wayland-1".to_string()),
-                ("DISPLAY".to_string(), ":0".to_string()),
-            ],
-        );
+    fn render_service_unit_includes_graphical_session_binding_without_env_snapshot() {
+        let unit = render_service_unit(Path::new("/tmp/life-monitor"), Path::new("/tmp"));
 
         assert!(unit.contains("Restart=on-failure"));
-        assert!(unit.contains("WantedBy=default.target"));
-        assert!(unit.contains("Environment=WAYLAND_DISPLAY=\"wayland-1\""));
-        assert!(unit.contains("Environment=DISPLAY=\":0\""));
+        assert!(unit.contains("After=graphical-session.target"));
+        assert!(unit.contains("PartOf=graphical-session.target"));
+        assert!(unit.contains("WantedBy=graphical-session.target"));
+        assert!(!unit.contains("Environment="));
         assert!(unit.contains("WorkingDirectory=/tmp"));
         assert!(unit.contains("ExecStart=/tmp/life-monitor"));
     }
 
-    /// Verifies that unit escaping quotes values safely enough for systemd unit files
-    /// when paths or environment values contain whitespace or quotes.
+    /// Verifies that the generated desktop entry uses XDG autostart conventions and
+    /// points to the current executable and working directory explicitly.
     #[test]
-    fn unit_escape_quotes_and_escapes_special_characters() {
-        assert_eq!(
-            unit_escape(r#"/tmp/with "quotes""#),
-            r#""/tmp/with \"quotes\"""#
+    fn render_desktop_entry_uses_absolute_exec_and_working_directory() {
+        let entry = render_desktop_entry(
+            Path::new("/tmp/with spaces/life-monitor"),
+            Path::new("/tmp/with spaces"),
         );
-        assert_eq!(
-            unit_escape(r#"value with spaces"#),
-            r#""value with spaces""#
-        );
+
+        assert!(entry.contains("Type=Application"));
+        assert!(entry.contains("Name=Life Monitor"));
+        assert!(entry.contains("Exec=\"/tmp/with spaces/life-monitor\""));
+        assert!(entry.contains("TryExec=/tmp/with spaces/life-monitor"));
+        assert!(entry.contains("Path=/tmp/with spaces"));
+        assert!(entry.contains("Terminal=false"));
     }
 
     /// Verifies that path directives use systemd-style escaping instead of shell quotes,
@@ -462,10 +659,56 @@ mod tests {
             systemd_path_escape("/tmp/with spaces/life-monitor"),
             "/tmp/with\\ spaces/life-monitor"
         );
+        assert_eq!(systemd_path_escape("/tmp/plain"), "/tmp/plain");
+    }
+
+    /// Verifies that desktop-entry Exec escaping quotes reserved characters without
+    /// turning simple paths into noisier quoted strings than necessary.
+    #[test]
+    fn desktop_exec_escape_quotes_only_when_required() {
+        assert_eq!(desktop_exec_escape("/tmp/plain"), "/tmp/plain");
         assert_eq!(
-            systemd_path_escape("/tmp/plain"),
-            "/tmp/plain"
+            desktop_exec_escape("/tmp/with spaces/life-monitor"),
+            "\"/tmp/with spaces/life-monitor\""
         );
+        assert_eq!(
+            desktop_exec_escape("/tmp/with$cash"),
+            "\"/tmp/with\\$cash\""
+        );
+    }
+
+    /// Verifies that the XDG startup probe warns only for ambiguous or non-graphical
+    /// session signals so startup can stay quiet on ordinary desktop sessions.
+    #[test]
+    fn xdg_autostart_probe_warns_when_session_shape_is_ambiguous() {
+        let healthy = XdgAutostartProbe {
+            current_desktop: Some("KDE".to_string()),
+            desktop_session: Some("plasma".to_string()),
+            session_type: Some("wayland".to_string()),
+            display_server: DisplayServer::Wayland,
+        };
+        assert!(healthy.warnings().is_empty());
+
+        let ambiguous = XdgAutostartProbe {
+            current_desktop: None,
+            desktop_session: None,
+            session_type: None,
+            display_server: DisplayServer::Unknown,
+        };
+        assert_eq!(ambiguous.warnings().len(), 3);
+    }
+
+    /// Verifies that the systemd fallback warning is based on missing manager-side
+    /// graphical environment keys rather than on OS-specific assumptions.
+    #[test]
+    fn systemd_environment_probe_warns_when_manager_is_missing_graphical_keys() {
+        let probe = SystemdEnvironmentProbe {
+            missing_keys: vec!["WAYLAND_DISPLAY".to_string(), "XDG_RUNTIME_DIR".to_string()],
+        };
+        let warning = probe.warning().expect("warning should be present");
+
+        assert!(warning.contains("WAYLAND_DISPLAY"));
+        assert!(warning.contains("XDG_RUNTIME_DIR"));
     }
 
     /// Verifies that repo-local `target/debug` and `target/release` binaries are treated as

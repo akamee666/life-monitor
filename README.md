@@ -148,6 +148,7 @@ life-monitor --sync-remote-url http://homeserver:8080 sync status
 | `--import-notes <TEXT>`   | Record notes alongside import metadata                    |
 | `--enable-startup`        | Enable automatic startup for the current user session     |
 | `--disable-startup`       | Disable automatic startup for the current user session    |
+| `--startup-mode <MODE>`   | Linux only: choose `xdg` or `systemd` startup mode        |
 | `-s`, `--no-systray`      | Windows only: disable the tray icon                       |
 
 When built with `--features multi-sync`, additional sync options and subcommands are available:
@@ -191,6 +192,11 @@ Behavior:
 - the path is remembered for future runs
 - supplying `--db-path` again overwrites the remembered path
 - if a remembered share is unavailable later, the program errors with a recovery message telling you to remount the share or provide a new DB path
+
+SQLite note:
+
+- Life Monitor bundles SQLite on both Linux and Windows
+- you do not need a separate system SQLite installation just to run the program
 
 Important limitation:
 
@@ -276,24 +282,85 @@ Why this works this way:
 
 ### Linux
 
-`--enable-startup` creates a `systemd --user` service.
+Linux has two startup modes:
 
-Use it from the graphical session where you normally run the program:
+- `xdg` is the default and recommended mode
+- `systemd` is an explicit advanced fallback
+
+Use it from the graphical session where you normally run the program.
+
+Recommended default:
 
 ```bash
-life-monitor --enable-startup
+life-monitor --enable-startup --startup-mode xdg
 ```
+
+Fallback mode:
+
+```bash
+life-monitor --enable-startup --startup-mode systemd
+```
+
+What each mode does:
+
+- `xdg` writes `life-monitor.desktop` into `~/.config/autostart` or `$XDG_CONFIG_HOME/autostart`
+- `systemd` writes and enables a per-user `systemd --user` unit tied to `graphical-session.target`
+- the `systemd` mode does not freeze volatile values such as `WAYLAND_DISPLAY` into the unit file; it expects the graphical session to import them into `systemd --user` at login
 
 Best practice:
 
 - enable startup from a stable installed binary such as `cargo install life-monitor`
 - avoid enabling startup from `target/debug` or `target/release` inside a repo checkout, because moving or cleaning the repository will break the stored executable path
+- prefer `xdg` unless you have already verified that your session imports graphical variables into `systemd --user`
 
-What the Linux unit does:
+How to check whether XDG autostart is likely a good fit before enabling it:
 
-- writes a per-user `systemd --user` service
-- records only the graphical-session environment values needed for that user session
-- does not try to mount shares or recreate the whole desktop environment
+```bash
+printf 'XDG_CURRENT_DESKTOP=%s\nDESKTOP_SESSION=%s\nXDG_SESSION_TYPE=%s\n' \
+  "$XDG_CURRENT_DESKTOP" "$DESKTOP_SESSION" "$XDG_SESSION_TYPE"
+echo "${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
+```
+
+Good signs:
+
+- you are running inside a normal graphical session
+- at least one of `XDG_CURRENT_DESKTOP` or `DESKTOP_SESSION` is set
+- `XDG_SESSION_TYPE` is set to `wayland` or `x11`
+
+If those values are missing, XDG autostart may still work, but your setup is probably more manual and you should verify it after logging in again.
+
+How to check whether the `systemd` fallback is likely to inherit the graphical environment correctly:
+
+```bash
+env | rg '^(DISPLAY|WAYLAND_DISPLAY|XDG_RUNTIME_DIR|XAUTHORITY|XDG_SESSION_TYPE)='
+systemctl --user show-environment | rg '^(DISPLAY|WAYLAND_DISPLAY|XDG_RUNTIME_DIR|XAUTHORITY|XDG_SESSION_TYPE)='
+systemctl --user status graphical-session.target
+```
+
+Good signs:
+
+- the same graphical-session variables appear in both `env` and `systemctl --user show-environment`
+- `graphical-session.target` exists and is part of the user session lifecycle
+
+If the process environment has those variables but `systemctl --user show-environment` does not, prefer XDG startup. That means your session is not currently exporting the graphical environment into `systemd --user`.
+
+After `--enable-startup`, Life Monitor does not try to launch a second copy immediately on Linux:
+
+- XDG mode takes effect on the next graphical login
+- systemd mode installs and enables the user unit, but does not start it right away
+- this avoids racing the current process against Life Monitor's single-instance lock
+
+If you want to test the systemd fallback immediately, first stop the current Life Monitor process and then run:
+
+```bash
+systemctl --user start life-monitor.service
+```
+
+What `life-monitor` itself does not do:
+
+- it does not try to detect every compositor or desktop environment individually
+- it does not rewrite the wider `systemd --user` manager environment for you
+- it does not mount shares or recreate the whole desktop environment
 
 Disable it with:
 

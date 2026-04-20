@@ -15,6 +15,13 @@ pub enum ReportKind {
     Daily,
 }
 
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum LinuxStartupMode {
+    Xdg,
+    Systemd,
+}
+
 #[cfg(feature = "multi-sync")]
 #[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
 pub enum SyncCommand {
@@ -172,7 +179,7 @@ pub struct Cli {
         long,
         help_heading = "Startup",
         help = "Enable automatic startup for the current user session.",
-        long_help = "Configures Life Monitor to start automatically for the current user.\n\nOn Windows, this creates a shortcut in the Startup folder.\nOn Linux, this creates and enables a systemd --user service.\n\nThis is user-session startup, not a system-wide boot service.",
+        long_help = "Configures Life Monitor to start automatically for the current user.\n\nOn Windows, this creates a shortcut in the Startup folder.\nOn Linux, this uses the startup mode selected by --startup-mode. The default is xdg, which creates an XDG autostart desktop entry. The systemd mode is available as an explicit fallback for setups where graphical-session integration is known to work.\n\nLinux startup installation does not launch a second Life Monitor instance immediately. XDG mode takes effect on the next graphical login, and systemd mode installs and enables the unit without starting it right away.\n\nThis is user-session startup, not a system-wide boot service.",
         conflicts_with = "disable_startup"
     )]
     pub enable_startup: bool,
@@ -181,10 +188,21 @@ pub struct Cli {
         long,
         help_heading = "Startup",
         help = "Disable automatic startup for the current user session.",
-        long_help = "Removes Life Monitor from automatic startup for the current user.\n\nOn Windows, this removes the Startup shortcut.\nOn Linux, this stops and disables the systemd --user service and removes the unit file.",
+        long_help = "Removes Life Monitor from automatic startup for the current user.\n\nOn Windows, this removes the Startup shortcut.\nOn Linux, this removes the XDG autostart entry and disables/removes the optional systemd --user fallback unit.",
         conflicts_with = "enable_startup"
     )]
     pub disable_startup: bool,
+
+    #[cfg(target_os = "linux")]
+    #[arg(
+        long,
+        help_heading = "Startup",
+        value_enum,
+        default_value_t = LinuxStartupMode::Xdg,
+        help = "Linux only: choose how automatic startup is configured.",
+        long_help = "Linux only.\n\nChoose how Life Monitor should be started automatically for the current user session.\n\nModes:\n- xdg: recommended default. Writes an XDG autostart desktop entry in ~/.config/autostart or $XDG_CONFIG_HOME/autostart.\n- systemd: advanced fallback. Writes a systemd --user unit that expects the graphical session environment to already be imported into systemd --user at login.\n\nThe systemd mode does not bake volatile values like WAYLAND_DISPLAY into the unit file."
+    )]
+    pub startup_mode: LinuxStartupMode,
 
     #[cfg(feature = "multi-sync")]
     #[arg(

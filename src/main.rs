@@ -95,7 +95,10 @@ async fn run(mut args: Cli) -> Result<()> {
 
         configure_startup(&args).with_context(|| format!("Failed to {} startup", state))?;
 
-        info!("Startup {}d successfully, the program will end now. Start it again without the start up flag to run normally.",state);
+        info!(
+            "Startup {}d successfully. This command only installs or removes the startup entry and then exits. If you want to keep collecting in this session, run Life Monitor again without the startup flags.",
+            state
+        );
         return Ok(());
     }
 
@@ -362,6 +365,8 @@ mod tests {
             clear: false,
             enable_startup: false,
             disable_startup: false,
+            #[cfg(target_os = "linux")]
+            startup_mode: crate::utils::args::LinuxStartupMode::Xdg,
             #[cfg(feature = "multi-sync")]
             sync_enable: false,
             #[cfg(feature = "multi-sync")]
