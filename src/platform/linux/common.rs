@@ -1,6 +1,7 @@
 /// This file is used to store code that will be used for both wayland or x11
 use std::ffi::OsStr;
 use std::fs::{self, create_dir_all, write};
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -90,6 +91,13 @@ fn unit_escape(value: &str) -> String {
     format!("\"{escaped}\"")
 }
 
+fn systemd_path_escape(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace(' ', "\\ ")
+        .replace('\t', "\\\t")
+}
+
 fn collect_session_environment() -> Vec<(String, String)> {
     SESSION_ENV_VARS
         .iter()
@@ -121,8 +129,8 @@ ExecStart={}\n\
 Restart=on-failure\n\
 RestartSec=3\n\
 ",
-        unit_escape(&working_dir.display().to_string()),
-        unit_escape(&executable.display().to_string()),
+        systemd_path_escape(&working_dir.display().to_string()),
+        systemd_path_escape(&executable.display().to_string()),
     );
 
     if !environment_lines.is_empty() {
@@ -171,29 +179,6 @@ where
     ))
 }
 
-fn import_session_environment(session_env: &[(String, String)]) -> Result<()> {
-    if session_env.is_empty() {
-        warn!("No graphical session environment variables were available to import into systemd --user");
-        return Ok(());
-    }
-
-    let env_names = session_env
-        .iter()
-        .map(|(key, _)| key.clone())
-        .collect::<Vec<_>>();
-    run_systemctl(std::iter::once("import-environment".to_string()).chain(env_names.clone()))
-        .with_context(|| "Failed to import session environment into systemd --user")?;
-
-    let key_values = session_env
-        .iter()
-        .map(|(key, value)| format!("{key}={value}"))
-        .collect::<Vec<_>>();
-    run_systemctl(std::iter::once("set-environment".to_string()).chain(key_values))
-        .with_context(|| "Failed to set session environment in systemd --user")?;
-
-    Ok(())
-}
-
 #[allow(dead_code)]
 pub fn check_startup_status() -> Result<bool> {
     let output = Command::new("systemctl")
@@ -221,6 +206,21 @@ fn expand_home(path: &str) -> PathBuf {
     } else {
         PathBuf::from(path)
     }
+}
+
+fn looks_like_repo_build_output(executable: &Path) -> bool {
+    let components = executable
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+
+    components.windows(2).any(|window| {
+        matches!(
+            window,
+            [target, profile]
+                if target == "target" && (profile == "debug" || profile == "release")
+        )
+    })
 }
 
 // According to system/user arch wiki, user units are located at:
@@ -251,7 +251,6 @@ pub fn configure_startup(args: &Cli) -> Result<()> {
         })?;
 
         info!("Unit file successfully created at: {}", unit_path.display());
-        import_session_environment(&session_env)?;
 
         run_systemctl(["daemon-reload"]).with_context(|| {
             format!(
@@ -274,6 +273,12 @@ pub fn configure_startup(args: &Cli) -> Result<()> {
         );
         if session_env.is_empty() {
             warn!("Startup was enabled without capturing any graphical session variables. If the service cannot connect to Wayland or X11, re-run '--enable-startup' from inside your graphical session.");
+        }
+        if looks_like_repo_build_output(&current_exe) {
+            warn!(
+                "Startup was enabled from a repository build output at '{}'. This works, but it is fragile if you clean, rebuild, or move the repository. Prefer enabling startup from a stable installed binary such as '~/.cargo/bin/life-monitor'.",
+                current_exe.display()
+            );
         }
         warn!("Startup is now enabled. If the executable path changes, re-run '--enable-startup' so the unit file points to the new binary.");
     }
@@ -414,7 +419,8 @@ mod tests {
     }
 
     /// Verifies that service units capture restart behavior and the expected session
-    /// environment variables so systemd --user launches remain session-aware.
+    /// environment variables so systemd --user launches remain session-aware without
+    /// mutating the wider user manager environment.
     #[test]
     fn render_service_unit_includes_restart_policy_and_session_environment() {
         let unit = render_service_unit(
@@ -430,7 +436,8 @@ mod tests {
         assert!(unit.contains("WantedBy=default.target"));
         assert!(unit.contains("Environment=WAYLAND_DISPLAY=\"wayland-1\""));
         assert!(unit.contains("Environment=DISPLAY=\":0\""));
-        assert!(unit.contains("ExecStart=\"/tmp/life-monitor\""));
+        assert!(unit.contains("WorkingDirectory=/tmp"));
+        assert!(unit.contains("ExecStart=/tmp/life-monitor"));
     }
 
     /// Verifies that unit escaping quotes values safely enough for systemd unit files
@@ -445,5 +452,34 @@ mod tests {
             unit_escape(r#"value with spaces"#),
             r#""value with spaces""#
         );
+    }
+
+    /// Verifies that path directives use systemd-style escaping instead of shell quotes,
+    /// because directives like `WorkingDirectory=` reject quoted absolute paths.
+    #[test]
+    fn systemd_path_escape_escapes_whitespace_without_adding_quotes() {
+        assert_eq!(
+            systemd_path_escape("/tmp/with spaces/life-monitor"),
+            "/tmp/with\\ spaces/life-monitor"
+        );
+        assert_eq!(
+            systemd_path_escape("/tmp/plain"),
+            "/tmp/plain"
+        );
+    }
+
+    /// Verifies that repo-local `target/debug` and `target/release` binaries are treated as
+    /// fragile startup targets so the caller can warn the user about unstable executable paths.
+    #[test]
+    fn looks_like_repo_build_output_matches_target_profiles() {
+        assert!(looks_like_repo_build_output(Path::new(
+            "/home/me/project/target/debug/life-monitor"
+        )));
+        assert!(looks_like_repo_build_output(Path::new(
+            "/home/me/project/target/release/life-monitor"
+        )));
+        assert!(!looks_like_repo_build_output(Path::new(
+            "/home/me/.cargo/bin/life-monitor"
+        )));
     }
 }

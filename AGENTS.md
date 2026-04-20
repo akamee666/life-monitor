@@ -188,6 +188,9 @@ If the task is about:
   - `src/platform/windows/process.rs`
   - `src/platform/windows/startup.rs`
 
+- Linux startup unit generation:
+  - `src/platform/linux/common.rs`
+
 - DPI persistence:
   - `src/utils/dpi.rs`
 
@@ -322,6 +325,17 @@ Keep platform event decoding and OS integration local to each platform.
 The release workflow enforces this.
 
 Do not change release logic in a way that allows publishing mismatched versions.
+
+### 12. Linux startup units should stay self-contained and per-user
+
+Linux startup uses a generated `systemd --user` unit.
+
+Preserve these expectations:
+
+- the unit should point at the executable the user enabled startup from
+- the unit should carry only the session environment values the service itself needs
+- do not mutate the wider systemd user manager environment just to make the service start
+- warn when startup is enabled from a fragile repo build path such as `target/debug` or `target/release`
 
 ---
 

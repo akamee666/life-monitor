@@ -284,6 +284,17 @@ Use it from the graphical session where you normally run the program:
 life-monitor --enable-startup
 ```
 
+Best practice:
+
+- enable startup from a stable installed binary such as `cargo install life-monitor`
+- avoid enabling startup from `target/debug` or `target/release` inside a repo checkout, because moving or cleaning the repository will break the stored executable path
+
+What the Linux unit does:
+
+- writes a per-user `systemd --user` service
+- records only the graphical-session environment values needed for that user session
+- does not try to mount shares or recreate the whole desktop environment
+
 Disable it with:
 
 ```bash
