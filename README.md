@@ -95,12 +95,25 @@ nix build .#linux
 nix build .#windows
 ```
 
+Notes:
+
+- `nix build .#linux` produces the native Linux package for the current host system
+- `nix build .#windows` cross-compiles the Windows GNU binary from the current host system; it is not a native Windows build
+
 If you are building or testing from source, prefer the flake environment so the expected toolchain and native dependencies are available:
 
 ```bash
+nix develop --command cargo build --target x86_64-unknown-linux-gnu
 nix develop --command cargo test --target x86_64-unknown-linux-gnu
+nix develop --command cargo build --target x86_64-pc-windows-gnu
 nix develop --command cargo check --target x86_64-pc-windows-gnu
 ```
+
+Inside the default dev shell:
+
+- normal host Linux `cargo build`, `cargo test`, and `cargo run` use the host toolchain
+- Windows cross-builds are available by passing `--target x86_64-pc-windows-gnu`
+- the shell does not switch the global default target for you
 
 > [!WARNING]
 > On Linux, `life-monitor` reads raw input events from `/dev/input`. Your user usually needs permission to access those devices, add yourself to input group using `sudo usermod -aG input $USER` or run the program as `root`

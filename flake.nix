@@ -1,22 +1,19 @@
 {
-  description = "A simple flake that allows this specific rust project to build for linux and windows. Both inside and outside a shell!";
+  description = "Development and build flake for life-monitor";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 
-    # Useful lib for caching cargo builds
     naersk = {
       url = "github:nmattia/naersk";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    # Provide toolchain profiles for rust
     fenix = {
       url = "github:nix-community/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    # Don't really know
     flake-utils.url = "github:numtide/flake-utils";
   };
 
@@ -36,16 +33,30 @@
           config.allowUnfree = true;
         };
 
+        lib = pkgs.lib;
         llvmPackages = pkgs.llvmPackages_21;
+        # MinGW cross toolchain used when we intentionally build the Windows target.
+        mingw = pkgs.pkgsCross.mingwW64;
 
+        linuxTarget = "x86_64-unknown-linux-gnu";
+        windowsTarget = "x86_64-pc-windows-gnu";
+
+        # Target-specific tool paths used by Cargo/cc-rs for Windows cross builds.
+        windowsLinker = "${mingw.stdenv.cc}/bin/${mingw.stdenv.cc.targetPrefix}cc";
+        windowsAr = "${mingw.stdenv.cc.bintools}/bin/${mingw.stdenv.cc.targetPrefix}ar";
+        windowsRanlib = "${mingw.stdenv.cc.bintools}/bin/${mingw.stdenv.cc.targetPrefix}ranlib";
+        windowsCxx = "${mingw.stdenv.cc}/bin/${mingw.stdenv.cc.targetPrefix}g++";
+
+        # Small build toolchain used by naersk builds.
         buildToolchain =
           with fenix.packages.${system};
-          combine ([
-            minimal.rustc
+          combine [
             minimal.cargo
-            targets.x86_64-pc-windows-gnu.latest.rust-std
-          ]);
+            minimal.rustc
+            targets.${windowsTarget}.latest.rust-std
+          ];
 
+        # Richer toolchain for interactive development.
         devToolchain =
           with fenix.packages.${system};
           combine [
@@ -56,8 +67,7 @@
               "rustc"
               "rustfmt"
             ])
-            # Add the standard library for our windows target
-            targets.x86_64-pc-windows-gnu.latest.rust-std
+            targets.${windowsTarget}.latest.rust-std
           ];
 
         naerskLib = naersk.lib.${system}.override {
@@ -65,14 +75,49 @@
           rustc = buildToolchain;
         };
 
+        linuxRuntimeDeps = with pkgs; [
+          openssl
+          wayland
+          xorg.libX11
+          xorg.libXi
+          xorg.libXtst
+        ];
+
+        linuxBuildDeps = with pkgs; [
+          gcc
+          linuxHeaders
+          pkg-config
+        ];
+
+        # bindgen uses libclang directly rather than invoking $CC, so we have to
+        # pass the host C toolchain and Linux headers explicitly.
+        bindgenClangArgs = lib.concatStringsSep " " [
+          (builtins.readFile "${pkgs.stdenv.cc}/nix-support/libc-crt1-cflags")
+          (builtins.readFile "${pkgs.stdenv.cc}/nix-support/libc-cflags")
+          (builtins.readFile "${pkgs.stdenv.cc}/nix-support/cc-cflags")
+          (builtins.readFile "${pkgs.stdenv.cc}/nix-support/libcxx-cxxflags")
+          "-isystem ${pkgs.linuxHeaders}/include"
+          (
+            lib.optionalString pkgs.stdenv.cc.isClang
+              "-idirafter ${pkgs.stdenv.cc.cc}/lib/clang/${lib.getVersion pkgs.stdenv.cc.cc}/include"
+          )
+          (
+            lib.optionalString pkgs.stdenv.cc.isGNU
+              "-isystem ${pkgs.stdenv.cc.cc}/include/c++/${lib.getVersion pkgs.stdenv.cc.cc} -isystem ${pkgs.stdenv.cc.cc}/include/c++/${lib.getVersion pkgs.stdenv.cc.cc}/${pkgs.stdenv.hostPlatform.config} -idirafter ${pkgs.stdenv.cc.cc}/lib/gcc/${pkgs.stdenv.hostPlatform.config}/${lib.getVersion pkgs.stdenv.cc.cc}/include"
+          )
+        ];
+
+        commonBuildEnv = {
+          LIBCLANG_PATH = "${llvmPackages.libclang.lib}/lib";
+          BINDGEN_EXTRA_CLANG_ARGS = bindgenClangArgs;
+        };
+
         ciChecks = pkgs.writeShellApplication {
           name = "ci-checks";
-          runtimeInputs = [
-            pkgs.cargo-deny
-          ];
+          runtimeInputs = [ pkgs.cargo-deny ];
           text = ''
             set -euo pipefail
-            cargo fmt -- --check
+            cargo fmt --all -- --check
             cargo-deny check
           '';
         };
@@ -81,8 +126,9 @@
           name = "ci-test-build";
           text = ''
             set -euo pipefail
-            CC=gcc CXX=g++ AR=ar RANLIB=ranlib cargo test --target x86_64-unknown-linux-gnu
-            CC=gcc CXX=g++ AR=ar RANLIB=ranlib cargo build --release --target x86_64-unknown-linux-gnu
+            cargo test --target ${linuxTarget}
+            cargo build --release --target ${linuxTarget}
+            cargo check --target ${windowsTarget}
           '';
         };
 
@@ -96,122 +142,112 @@
           '';
         };
 
-        unixBuildDeps = with pkgs; [
-          sqlite
-          gcc
-          linuxHeaders
-          openssl
-          pkg-config
-          xorg.libX11
-          xorg.libXi
-          xorg.libXtst
-          wayland
-          # We need to be able to cross compile it inside a shell to have LSP capabilities
-          pkgsCross.mingwW64.stdenv.cc
-        ];
-
-        bindgenClangArgs = pkgs.lib.concatStringsSep " " [
-          (builtins.readFile "${pkgs.stdenv.cc}/nix-support/libc-crt1-cflags")
-          (builtins.readFile "${pkgs.stdenv.cc}/nix-support/libc-cflags")
-          (builtins.readFile "${pkgs.stdenv.cc}/nix-support/cc-cflags")
-          (builtins.readFile "${pkgs.stdenv.cc}/nix-support/libcxx-cxxflags")
-          "-isystem ${pkgs.linuxHeaders}/include"
-          (pkgs.lib.optionalString pkgs.stdenv.cc.isClang "-idirafter ${pkgs.stdenv.cc.cc}/lib/clang/${pkgs.lib.getVersion pkgs.stdenv.cc.cc}/include")
-          (pkgs.lib.optionalString pkgs.stdenv.cc.isGNU "-isystem ${pkgs.stdenv.cc.cc}/include/c++/${pkgs.lib.getVersion pkgs.stdenv.cc.cc} -isystem ${pkgs.stdenv.cc.cc}/include/c++/${pkgs.lib.getVersion pkgs.stdenv.cc.cc}/${pkgs.stdenv.hostPlatform.config} -idirafter ${pkgs.stdenv.cc.cc}/lib/gcc/${pkgs.stdenv.hostPlatform.config}/${pkgs.lib.getVersion pkgs.stdenv.cc.cc}/include")
-        ];
-      in
-      rec {
-        packages = {
-          linux = naerskLib.buildPackage {
+        # Native Linux package output built for the host platform.
+        mkLinuxPackage = naerskLib.buildPackage (
+          {
             src = ./.;
-            nativeBuildInputs = unixBuildDeps ++ [
-              llvmPackages.libclang
+            CARGO_BUILD_TARGET = linuxTarget;
+            nativeBuildInputs = linuxBuildDeps ++ [
               llvmPackages.clang
+              llvmPackages.libclang
             ];
-            LIBCLANG_PATH = "${llvmPackages.libclang.lib}/lib";
-            BINDGEN_EXTRA_CLANG_ARGS = bindgenClangArgs;
-          };
+            buildInputs = linuxRuntimeDeps;
+          }
+          // commonBuildEnv
+        );
 
-          windows = naerskLib.buildPackage {
+        # Cross-compiled Windows package output. This produces the Windows binary
+        # from the current host system; it is not a native Windows build job.
+        mkWindowsPackage = naerskLib.buildPackage (
+          {
             src = ./.;
-            doCheck = true;
-            singleStep = true;
-
-            nativeBuildInputs = with pkgs; [
-              pkgsCross.mingwW64.stdenv.cc
-            ];
-
-            buildInputs = with pkgs; [
-              pkgsCross.mingwW64.windows.pthreads
-              pkgsCross.mingwW64.sqlite
-            ];
-
-            # Bunch of compilation flags to make it build successfully
-            CARGO_BUILD_TARGET = "x86_64-pc-windows-gnu";
-            CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER = "${pkgs.pkgsCross.mingwW64.stdenv.cc}/bin/x86_64-w64-mingw32-gcc";
-            TARGET_CC = "${pkgs.pkgsCross.mingwW64.stdenv.cc}/bin/${pkgs.pkgsCross.mingwW64.stdenv.cc.targetPrefix}cc";
+            CARGO_BUILD_TARGET = windowsTarget;
+            CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER = windowsLinker;
+            CC_x86_64_pc_windows_gnu = windowsLinker;
+            CXX_x86_64_pc_windows_gnu = windowsCxx;
+            AR_x86_64_pc_windows_gnu = windowsAr;
+            RANLIB_x86_64_pc_windows_gnu = windowsRanlib;
+            PKG_CONFIG_ALLOW_CROSS = 1;
             CARGO_BUILD_RUSTFLAGS = [
               "-C"
               "target-feature=+crt-static"
-              # https://github.com/rust-lang/cargo/issues/4133
               "-C"
-              "linker=${pkgs.pkgsCross.mingwW64.stdenv.cc}/bin/${pkgs.pkgsCross.mingwW64.stdenv.cc.targetPrefix}cc"
+              "linker=${windowsLinker}"
             ];
-          };
+            # Package builds should emit the artifact reliably; runtime validation
+            # for Windows remains a shell/native-CI concern instead of a Nix build
+            # phase requirement.
+            doCheck = false;
+            singleStep = true;
+            nativeBuildInputs = [ mingw.stdenv.cc ];
+            buildInputs = [ mingw.windows.pthreads ];
+          }
+          // commonBuildEnv
+        );
+      in
+      {
+        formatter = pkgs.nixfmt-rfc-style;
+
+        packages = {
+          linux = mkLinuxPackage;
+          windows = mkWindowsPackage;
+          default = mkLinuxPackage;
         };
 
-        defaultPackage = packages.linux;
-
-        # Personal Development shell :D
         devShells.default = pkgs.mkShell {
-          nativeBuildInputs = unixBuildDeps;
-          buildInputs = [
-            # Required
+          packages = [
             devToolchain
-            llvmPackages.libclang
             llvmPackages.clang
+            llvmPackages.libclang
+            mingw.stdenv.cc
             pkgs.cargo-deny
             pkgs.codespell
-            ciChecks
-            ciTestBuild
-            ciLocal
-            # Optional
-            pkgs.evtest
             pkgs.rust-analyzer
             pkgs.cargo-watch
             pkgs.sqlitebrowser
+            pkgs.evtest
             pkgs.wine64
             pkgs.crush
-          ];
+            ciChecks
+            ciTestBuild
+            ciLocal
+          ] ++ linuxRuntimeDeps ++ linuxBuildDeps;
 
-          # Used by bindgen
-          LIBCLANG_PATH = "${llvmPackages.libclang.lib}/lib";
-
-          # From: https://github.com/NixOS/nixpkgs/blob/1fab95f5190d087e66a3502481e34e15d62090aa/pkgs/applications/networking/browsers/firefox/common.nix#L247-L253
-          # Set C flags for Rust's bindgen program. Unlike ordinary C
-          # compilation, bindgen does not invoke $CC directly. Instead it
-          # uses LLVM's libclang. To make sure all necessary flags are
-          # included we need to look in a few places. We also import variables that contains other libs used for build here so they
-          # are available inside the shell
           shellHook = ''
-            export WINEPREFIX=$HOME/.wine64
-            export WINEARCH=win64
-            [ ! -d "$WINEPREFIX" ] && wineboot
-            export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${pkgs.lib.makeLibraryPath unixBuildDeps}";
-            export CC=gcc
-            export CXX=g++
-            export AR=ar
-            export RANLIB=ranlib
-            export CC_x86_64_unknown_linux_gnu=gcc
-            export CXX_x86_64_unknown_linux_gnu=g++
-            export AR_x86_64_unknown_linux_gnu=ar
-            export RANLIB_x86_64_unknown_linux_gnu=ranlib
-            export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER="${pkgs.pkgsCross.mingwW64.stdenv.cc}/bin/x86_64-w64-mingw32-gcc"
-            export CC_x86_64_pc_windows_gnu="${pkgs.pkgsCross.mingwW64.stdenv.cc}/bin/x86_64-w64-mingw32-gcc"
-            export CXX_x86_64_pc_windows_gnu="${pkgs.pkgsCross.mingwW64.stdenv.cc}/bin/x86_64-w64-mingw32-g++"
-            export AR_x86_64_pc_windows_gnu="${pkgs.pkgsCross.mingwW64.stdenv.cc.bintools}/bin/x86_64-w64-mingw32-ar"
-            export RANLIB_x86_64_pc_windows_gnu="${pkgs.pkgsCross.mingwW64.stdenv.cc.bintools}/bin/x86_64-w64-mingw32-ranlib"
+            export LIBCLANG_PATH="${llvmPackages.libclang.lib}/lib"
             export BINDGEN_EXTRA_CLANG_ARGS="${bindgenClangArgs}"
+
+            # Keep host Linux builds on the host toolchain so bundled SQLite and
+            # other native C dependencies do not accidentally pick up MinGW headers.
+            export CC_${builtins.replaceStrings ["-"] ["_"] linuxTarget}=gcc
+            export CXX_${builtins.replaceStrings ["-"] ["_"] linuxTarget}=g++
+            export AR_${builtins.replaceStrings ["-"] ["_"] linuxTarget}=ar
+            export RANLIB_${builtins.replaceStrings ["-"] ["_"] linuxTarget}=ranlib
+
+            # Expose Windows cross-build tools only for the explicit Windows target.
+            export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER="${windowsLinker}"
+            export CC_${builtins.replaceStrings ["-"] ["_"] windowsTarget}="${windowsLinker}"
+            export CXX_${builtins.replaceStrings ["-"] ["_"] windowsTarget}="${windowsCxx}"
+            export AR_${builtins.replaceStrings ["-"] ["_"] windowsTarget}="${windowsAr}"
+            export RANLIB_${builtins.replaceStrings ["-"] ["_"] windowsTarget}="${windowsRanlib}"
+            export PKG_CONFIG_ALLOW_CROSS=1
+
+            export WINEPREFIX="$HOME/.wine64"
+            export WINEARCH=win64
+
+            cat <<'EOF'
+life-monitor dev shell
+  host target:    ${linuxTarget}
+  windows target: ${windowsTarget}
+
+Common commands:
+  cargo test --target ${linuxTarget}
+  cargo build --target ${linuxTarget}
+  cargo build --target ${windowsTarget}
+  cargo check --target ${windowsTarget}
+  nix build .#linux
+  nix build .#windows
+EOF
           '';
         };
       }

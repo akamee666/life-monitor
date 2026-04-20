@@ -395,11 +395,15 @@ Preferred commands:
 
 ```bash
 nix develop --command cargo fmt --all
+nix develop --command cargo build --target x86_64-unknown-linux-gnu
 nix develop --command cargo test --target x86_64-unknown-linux-gnu
+nix develop --command cargo build --target x86_64-pc-windows-gnu
 nix develop --command cargo check --target x86_64-pc-windows-gnu
 nix build .#linux
 nix build .#windows
 ```
+
+`nix build .#windows` is a cross-compiled Windows GNU package build from the current host system, not a native Windows build job.
 
 Do not assume the repo's current default target. CI explicitly passes `--target`, and local verification should do the same.
 
@@ -407,6 +411,7 @@ The default dev shell intentionally separates host Linux and Windows cross-build
 
 - host Linux builds should use the host compiler toolchain
 - Windows cross-builds should use target-specific `x86_64-pc-windows-gnu` toolchain variables
+- normal host `cargo build` / `cargo test` should work without forcing a Windows target globally
 
 Do not reintroduce Windows MinGW runtime headers or libraries into the default host build environment in a way that pollutes Linux native C builds.
 
