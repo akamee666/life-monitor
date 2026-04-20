@@ -163,6 +163,11 @@ jobs:
       - test-windows
 
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Download Linux release asset
         uses: actions/download-artifact@v4
         with:
@@ -175,13 +180,28 @@ jobs:
           name: windows-release-asset
           path: release-assets
 
+      - name: Generate release notes with git-cliff
+        id: git-cliff
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --tag ${{ github.ref_name }}
+        env:
+          OUTPUT: ${{ runner.temp }}/release-notes.md
+          GITHUB_REPO: ${{ github.repository }}
+
+      - name: Append publication note
+        run: |
+          {
+            echo
+            echo 'Published `${{ needs.validate-tag.outputs.package_name }}` `${{ needs.validate-tag.outputs.crate_version }}` to crates.io.'
+          } >> "${{ steps.git-cliff.outputs.changelog }}"
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          generate_release_notes: true
           files: |
             release-assets/life-monitor-${{ needs.validate-tag.outputs.crate_version }}-linux-x86_64.zip
             release-assets/life-monitor-${{ needs.validate-tag.outputs.crate_version }}-windows-x86_64.zip
-          body: |
-            Published `${{ needs.validate-tag.outputs.package_name }}` `${{ needs.validate-tag.outputs.crate_version }}` to crates.io.
+          body_path: ${{ steps.git-cliff.outputs.changelog }}
