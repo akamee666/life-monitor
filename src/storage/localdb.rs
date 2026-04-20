@@ -36,6 +36,7 @@ mod tests {
     use super::*;
     use crate::common::{FocusBucketRecord, InputBucketRecord, DEFAULT_SOURCE_ID};
     use chrono::{TimeZone, Utc};
+    use rusqlite::OptionalExtension;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::{Mutex, OnceLock};
@@ -375,7 +376,7 @@ mod tests {
     }
 
     /// Verifies that corrupted snapshot files fail during planning by writing invalid bytes
-    /// to a temp file and checking that the planner reports an open or integrity failure.
+    /// to a temp file and checking that the planner reports a source snapshot failure.
     #[test]
     fn plan_import_rejects_corrupted_snapshot_file() -> anyhow::Result<()> {
         let destination_path = unique_temp_db("corrupt-dest");
@@ -385,8 +386,8 @@ mod tests {
 
         let err = plan_import(&destination_path, &source_path).unwrap_err();
         assert!(
-            err.to_string().contains("Failed to open source snapshot")
-                || err.to_string().contains("integrity")
+            err.to_string().contains("source snapshot"),
+            "expected error mentioning 'source snapshot', got: {err}"
         );
 
         fs::remove_file(destination_path)?;
@@ -456,15 +457,34 @@ mod tests {
         let merged = open_con_at(&destination_path)?;
         let input_rows = scalar_query_u64(&merged, "SELECT COUNT(*) FROM input_buckets")?;
         let focus_rows = scalar_query_u64(&merged, "SELECT COUNT(*) FROM focus_buckets")?;
-        let overlapping = merged.query_row(
-            "SELECT key_presses FROM input_buckets WHERE bucket_start_utc = ?1",
+
+        // Overlapping input bucket: all counters should be summed.
+        let (key_presses, left_clicks, mouse_distance_cm) = merged.query_row(
+            "SELECT key_presses, left_clicks, mouse_distance_cm
+             FROM input_buckets WHERE bucket_start_utc = ?1",
             [sample_input_row().bucket_start_utc.to_rfc3339()],
-            |row| row.get::<_, u64>(0),
+            |row| {
+                Ok((
+                    row.get::<_, u64>(0)?,
+                    row.get::<_, u64>(1)?,
+                    row.get::<_, f64>(2)?,
+                ))
+            },
+        )?;
+
+        // Overlapping focus bucket: focus_seconds should be summed.
+        let focus_seconds: u64 = merged.query_row(
+            "SELECT focus_seconds FROM focus_buckets WHERE window_title = 'Docs'",
+            [],
+            |row| row.get(0),
         )?;
 
         assert_eq!(input_rows, 2);
         assert_eq!(focus_rows, 2);
-        assert_eq!(overlapping, 10);
+        assert_eq!(key_presses, 10); // 5 + 5
+        assert_eq!(left_clicks, 4); // 2 + 2
+        assert!((mouse_distance_cm - 6.0).abs() < 1e-6); // 3.0 + 3.0
+        assert_eq!(focus_seconds, 240); // 120 + 120
 
         drop(merged);
         drop(source);
@@ -534,13 +554,20 @@ mod tests {
 
         let sessions = session_report(&conn, 30)?;
         assert_eq!(sessions.len(), 2);
+
+        // Most-recent (open) session is first.
         assert_eq!(sessions[0].session_uuid, second);
         assert!(!sessions[0].source_uuid.is_empty());
         assert!(!sessions[0].source_name.is_empty());
         assert_eq!(sessions[0].ended_at_utc, None);
-        assert!(sessions[0].duration_seconds.is_some());
+        // Open session duration uses Utc::now() as end — should be a few seconds at most.
+        assert!(sessions[0].duration_seconds.unwrap_or(u64::MAX) < 30);
+
+        // Closed session is second.
         assert_eq!(sessions[1].session_uuid, first);
         assert!(sessions[1].ended_at_utc.is_some());
+        // Closed session was ended immediately — duration should be 0 or 1 second.
+        assert!(sessions[1].duration_seconds.unwrap_or(u64::MAX) <= 2);
 
         drop(conn);
         fs::remove_file(path)?;
@@ -549,6 +576,7 @@ mod tests {
 
     /// Verifies that app activity reporting aggregates focus time by app identifier by loading
     /// multiple focus rows and asserting the grouped totals and ordering from the query result.
+    /// Also verifies that rows outside the requested day window are excluded.
     #[test]
     fn app_activity_report_aggregates_focus_seconds_by_app() -> anyhow::Result<()> {
         let path = unique_temp_db("app-report");
@@ -569,6 +597,19 @@ mod tests {
                     focus_seconds: 10,
                     ..sample_second_focus_row()
                 },
+                // Row from 60 days ago — must be excluded when days=30.
+                FocusBucketRecord {
+                    source_id: DEFAULT_SOURCE_ID,
+                    bucket_start_utc: Utc.with_ymd_and_hms(2026, 2, 18, 10, 0, 0).unwrap(),
+                    bucket_end_utc: Utc.with_ymd_and_hms(2026, 2, 18, 10, 15, 0).unwrap(),
+                    local_date: "2026-02-18".to_string(),
+                    local_hour: 10,
+                    timezone_offset_minutes: 0,
+                    app_identifier: "ancient-app".to_string(),
+                    window_title: "Old Window".to_string(),
+                    window_class: "old".to_string(),
+                    focus_seconds: 999,
+                },
             ],
         )?;
 
@@ -579,6 +620,8 @@ mod tests {
         assert_eq!(rows[0].focus_seconds, 150);
         assert_eq!(rows[1].app_identifier, "code");
         assert_eq!(rows[1].focus_seconds, 10);
+        // The ancient-app row from 60 days ago must not appear in a 30-day window.
+        assert!(rows.iter().all(|r| r.app_identifier != "ancient-app"));
 
         drop(conn);
         fs::remove_file(path)?;
@@ -607,26 +650,193 @@ mod tests {
         Ok(())
     }
 
-    /// Verifies that session statistics summarize counts and durations per source by creating
-    /// one closed session and one open session and asserting the aggregated metrics.
+    /// Verifies that session statistics summarize counts and durations per source, including
+    /// correct average computation, by inserting sessions with known timestamps directly.
     #[test]
     fn session_stats_report_summarizes_sessions_per_source() -> anyhow::Result<()> {
         let path = unique_temp_db("session-stats");
         let conn = build_test_db(&path)?;
 
-        let first = begin_session(&conn, DEFAULT_SOURCE_ID, "windows")?;
-        end_session(&conn, &first)?;
-        let _second = begin_session(&conn, DEFAULT_SOURCE_ID, "windows")?;
+        // Insert two closed sessions with known durations: 60 s and 120 s.
+        conn.execute_batch(&format!(
+            "
+            INSERT INTO sessions (source_id, started_at_utc, ended_at_utc, session_uuid, platform)
+            VALUES ({id}, '2026-04-18T10:00:00Z', '2026-04-18T10:01:00Z', 'stats-uuid-1', 'linux');
+            INSERT INTO sessions (source_id, started_at_utc, ended_at_utc, session_uuid, platform)
+            VALUES ({id}, '2026-04-18T10:02:00Z', '2026-04-18T10:04:00Z', 'stats-uuid-2', 'linux');
+            ",
+            id = DEFAULT_SOURCE_ID
+        ))?;
 
         let rows = session_stats_report(&conn, 30)?;
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].session_count, 2);
-        assert_eq!(rows[0].open_session_count, 1);
-        assert!(rows[0].total_duration_seconds >= rows[0].longest_duration_seconds);
         assert!(!rows[0].source_uuid.is_empty());
         assert!(!rows[0].source_name.is_empty());
+        assert_eq!(rows[0].session_count, 2);
+        assert_eq!(rows[0].open_session_count, 0);
+        assert_eq!(rows[0].total_duration_seconds, 180); // 60 + 120
+        assert_eq!(rows[0].longest_duration_seconds, 120);
+        assert_eq!(rows[0].average_duration_seconds, 90); // 180 / 2
 
         drop(conn);
+        fs::remove_file(path)?;
+        Ok(())
+    }
+
+    /// Verifies that inserting an input bucket row twice with the same key accumulates counters
+    /// rather than overwriting them, which is the core UPSERT contract for local collection.
+    #[test]
+    fn insert_input_buckets_upsert_sums_existing_bucket() -> anyhow::Result<()> {
+        let path = unique_temp_db("upsert-input");
+        let conn = build_test_db(&path)?;
+
+        let row = sample_input_row();
+        insert_input_buckets(&conn, &[row.clone()])?;
+        insert_input_buckets(
+            &conn,
+            &[InputBucketRecord {
+                key_presses: 3,
+                left_clicks: 1,
+                mouse_distance_cm: 2.0,
+                ..row
+            }],
+        )?;
+
+        let (key_presses, left_clicks, mouse_distance_cm) = conn.query_row(
+            "SELECT key_presses, left_clicks, mouse_distance_cm FROM input_buckets",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, u64>(0)?,
+                    row.get::<_, u64>(1)?,
+                    row.get::<_, f64>(2)?,
+                ))
+            },
+        )?;
+        let row_count = scalar_query_u64(&conn, "SELECT COUNT(*) FROM input_buckets")?;
+
+        assert_eq!(row_count, 1); // no duplicate rows
+        assert_eq!(key_presses, 8); // 5 + 3
+        assert_eq!(left_clicks, 3); // 2 + 1
+        assert!((mouse_distance_cm - 5.0).abs() < 1e-6); // 3.0 + 2.0
+
+        drop(conn);
+        fs::remove_file(path)?;
+        Ok(())
+    }
+
+    /// Verifies that begin_session closes any previously open session for the same source before
+    /// opening a new one, preventing phantom open sessions from accumulating across restarts.
+    #[test]
+    fn begin_session_closes_previously_open_sessions() -> anyhow::Result<()> {
+        let path = unique_temp_db("begin-session-closes");
+        let conn = build_test_db(&path)?;
+
+        let first = begin_session(&conn, DEFAULT_SOURCE_ID, "linux")?;
+        // At this point the first session is open.
+        let open_count: u64 = conn.query_row(
+            "SELECT COUNT(*) FROM sessions WHERE ended_at_utc IS NULL",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(open_count, 1);
+
+        // Starting a second session must close the first.
+        let _second = begin_session(&conn, DEFAULT_SOURCE_ID, "linux")?;
+        let first_ended: Option<String> = conn
+            .query_row(
+                "SELECT ended_at_utc FROM sessions WHERE session_uuid = ?1",
+                [&first],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        assert!(
+            first_ended.is_some(),
+            "first session should have been closed"
+        );
+
+        let still_open: u64 = conn.query_row(
+            "SELECT COUNT(*) FROM sessions WHERE ended_at_utc IS NULL",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(still_open, 1, "only the new session should remain open");
+
+        drop(conn);
+        fs::remove_file(path)?;
+        Ok(())
+    }
+
+    /// Verifies that end_session does not overwrite ended_at_utc when a session is already
+    /// closed, which is the COALESCE guard that prevents double-closing a session.
+    #[test]
+    fn end_session_does_not_update_already_ended_session() -> anyhow::Result<()> {
+        let path = unique_temp_db("end-session-idempotent");
+        let conn = build_test_db(&path)?;
+
+        let uuid = begin_session(&conn, DEFAULT_SOURCE_ID, "linux")?;
+        end_session(&conn, &uuid)?;
+
+        let first_end: String = conn.query_row(
+            "SELECT ended_at_utc FROM sessions WHERE session_uuid = ?1",
+            [&uuid],
+            |row| row.get(0),
+        )?;
+
+        // Calling end_session again must not change the recorded end time.
+        end_session(&conn, &uuid)?;
+        let second_end: String = conn.query_row(
+            "SELECT ended_at_utc FROM sessions WHERE session_uuid = ?1",
+            [&uuid],
+            |row| row.get(0),
+        )?;
+
+        assert_eq!(first_end, second_end);
+
+        drop(conn);
+        fs::remove_file(path)?;
+        Ok(())
+    }
+
+    /// Verifies that daily_activity_report includes days that have focus data but no input data,
+    /// covering the BTreeMap merge path where a source_uuid key is new to the map.
+    #[test]
+    fn daily_activity_report_includes_focus_only_day() -> anyhow::Result<()> {
+        let path = unique_temp_db("focus-only-day");
+        let conn = build_test_db(&path)?;
+
+        // Insert only focus data — no input_buckets rows at all.
+        insert_focus_buckets(&conn, &[sample_focus_row()])?;
+
+        let rows = daily_activity_report(&conn, 30)?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].local_date, "2026-04-18");
+        assert_eq!(rows[0].focus_seconds, 120);
+        // Input counters must default to zero, not be missing.
+        assert_eq!(rows[0].key_presses, 0);
+        assert_eq!(rows[0].left_clicks, 0);
+        assert!((rows[0].mouse_distance_cm - 0.0).abs() < 1e-6);
+
+        drop(conn);
+        fs::remove_file(path)?;
+        Ok(())
+    }
+
+    /// Verifies that file_sha256 produces the same hash when called twice on the same file,
+    /// since the hash is used as an import dedup key and must be deterministic.
+    #[test]
+    fn file_sha256_is_deterministic() -> anyhow::Result<()> {
+        let path = unique_temp_db("sha256-test");
+        build_test_db(&path)?;
+
+        let hash1 = file_sha256(&path)?;
+        let hash2 = file_sha256(&path)?;
+
+        assert_eq!(hash1, hash2);
+        assert!(!hash1.is_empty());
+        assert_eq!(hash1.len(), 64, "SHA-256 hex digest must be 64 characters");
+
         fs::remove_file(path)?;
         Ok(())
     }

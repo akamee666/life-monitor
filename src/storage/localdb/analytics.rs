@@ -267,43 +267,57 @@ pub fn daily_activity_report(conn: &Connection, days: u32) -> Result<Vec<DailyAc
 }
 
 pub fn session_stats_report(conn: &Connection, days: u32) -> Result<Vec<SessionStatsRow>> {
-    let mut stats = BTreeMap::<String, SessionStatsRow>::new();
-    for row in session_report(conn, days)? {
-        let entry = stats
-            .entry(row.source_uuid.clone())
-            .or_insert(SessionStatsRow {
-                source_uuid: row.source_uuid.clone(),
-                source_name: row.source_name.clone(),
-                platform: row.platform.clone(),
-                session_count: 0,
-                open_session_count: 0,
-                total_duration_seconds: 0,
-                average_duration_seconds: 0,
-                longest_duration_seconds: 0,
-            });
-        entry.session_count += 1;
-        if row.ended_at_utc.is_none() {
-            entry.open_session_count += 1;
-        }
-        if let Some(duration) = row.duration_seconds {
-            entry.total_duration_seconds += duration;
-            entry.longest_duration_seconds = entry.longest_duration_seconds.max(duration);
-        }
-    }
+    let since = Utc::now() - Duration::days(days.max(1) as i64);
+    // Duration uses strftime('%s') for exact integer-second differences.
+    // Open sessions use datetime('now') as the end time, matching compute_duration_seconds.
+    let mut stmt = conn.prepare(
+        "
+        SELECT
+            src.source_uuid,
+            src.source_name,
+            src.platform,
+            COUNT(*)                                                    AS session_count,
+            SUM(CASE WHEN sess.ended_at_utc IS NULL THEN 1 ELSE 0 END) AS open_session_count,
+            COALESCE(SUM(duration_seconds), 0)                          AS total_duration_seconds,
+            COALESCE(MAX(duration_seconds), 0)                          AS longest_duration_seconds
+        FROM (
+            SELECT
+                source_id,
+                ended_at_utc,
+                max(0,
+                    CAST(strftime('%s', COALESCE(ended_at_utc, datetime('now'))) AS INTEGER)
+                    - CAST(strftime('%s', started_at_utc) AS INTEGER)
+                ) AS duration_seconds
+            FROM sessions
+            WHERE started_at_utc >= ?1
+        ) sess
+        JOIN sources src ON src.id = sess.source_id
+        GROUP BY src.source_uuid, src.source_name, src.platform
+        ORDER BY total_duration_seconds DESC, src.source_name ASC
+        ",
+    )?;
 
-    let mut rows = stats.into_values().collect::<Vec<_>>();
-    for row in &mut rows {
-        if row.session_count > 0 {
-            row.average_duration_seconds = row.total_duration_seconds / row.session_count;
-        }
-    }
-    rows.sort_by(|left, right| {
-        right
-            .total_duration_seconds
-            .cmp(&left.total_duration_seconds)
-            .then_with(|| left.source_name.cmp(&right.source_name))
-    });
-    Ok(rows)
+    let rows = stmt.query_map([since.to_rfc3339()], |row| {
+        let session_count: u64 = row.get(3)?;
+        let total_duration_seconds: u64 = row.get(5)?;
+        Ok(SessionStatsRow {
+            source_uuid: row.get(0)?,
+            source_name: row.get(1)?,
+            platform: row.get(2)?,
+            session_count,
+            open_session_count: row.get(4)?,
+            total_duration_seconds,
+            average_duration_seconds: if session_count > 0 {
+                total_duration_seconds / session_count
+            } else {
+                0
+            },
+            longest_duration_seconds: row.get(6)?,
+        })
+    })?;
+
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .with_context(|| "Failed to load session stats analytics rows")
 }
 
 fn compute_duration_seconds(started_at_utc: &str, ended_at_utc: Option<&str>) -> Option<u64> {

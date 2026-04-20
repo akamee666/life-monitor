@@ -180,7 +180,7 @@ pub fn setup_database(conn: &Connection) -> Result<()> {
         "
         INSERT INTO schema_meta (key, value)
         VALUES ('schema_version', ?1)
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        ON CONFLICT(key) DO NOTHING
         ",
         [SCHEMA_VERSION.to_string()],
     )

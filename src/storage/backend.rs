@@ -111,7 +111,9 @@ impl DataStore for LocalDb {
 
         tokio::task::spawn_blocking(move || {
             let _op_lock = acquire_db_operation_lock(&db_path)?;
-            let mut con = con.lock().unwrap();
+            let mut con = con
+                .lock()
+                .map_err(|_| anyhow!("database connection lock was poisoned"))?;
             let tx = con.transaction()?;
             #[cfg(feature = "multi-sync")]
             apply_local_input_rows(&tx, &rows)
@@ -131,7 +133,9 @@ impl DataStore for LocalDb {
 
         tokio::task::spawn_blocking(move || {
             let _op_lock = acquire_db_operation_lock(&db_path)?;
-            let mut con = con.lock().unwrap();
+            let mut con = con
+                .lock()
+                .map_err(|_| anyhow!("database connection lock was poisoned"))?;
             let tx = con.transaction()?;
             #[cfg(feature = "multi-sync")]
             apply_local_focus_rows(&tx, &rows)

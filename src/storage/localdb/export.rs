@@ -56,7 +56,6 @@ pub fn export_database(source_db_path: &Path, export_path: &Path) -> Result<Expo
     backup_database_contents(&source, export_path)?;
 
     let snapshot = open_con_at(export_path)?;
-    setup_database(&snapshot)?;
 
     let primary_source = get_source(&source, DEFAULT_SOURCE_ID)?;
     let export_uuid = Uuid::new_v4().to_string();
@@ -80,34 +79,23 @@ pub fn export_database(source_db_path: &Path, export_path: &Path) -> Result<Expo
 }
 
 pub(crate) fn latest_export_metadata(conn: &Connection) -> Result<ExportMetadata> {
-    conn.query_row(
-        "
-        SELECT export_uuid, primary_source_uuid, exported_at_utc, schema_version
-        FROM exports
-        ORDER BY id DESC
-        LIMIT 1
-        ",
-        [],
-        |row| {
-            Ok(ExportMetadata {
-                export_uuid: row.get(0)?,
-                primary_source_uuid: row.get(1)?,
-                exported_at_utc: row.get(2)?,
-                schema_version: row.get(3)?,
-            })
-        },
-    )
-    .with_context(|| "Source snapshot does not contain export metadata; only snapshots created by --export-db can be imported")
+    latest_export_metadata_from_schema(conn, "main")
+        .with_context(|| "Source snapshot does not contain export metadata; only snapshots created by --export-db can be imported")
 }
 
 pub(crate) fn latest_export_metadata_from_attached(conn: &Connection) -> Result<ExportMetadata> {
+    latest_export_metadata_from_schema(conn, "import_src")
+        .with_context(|| "Attached source snapshot does not contain export metadata")
+}
+
+fn latest_export_metadata_from_schema(conn: &Connection, schema: &str) -> Result<ExportMetadata> {
     conn.query_row(
-        "
-        SELECT export_uuid, primary_source_uuid, exported_at_utc, schema_version
-        FROM import_src.exports
-        ORDER BY id DESC
-        LIMIT 1
-        ",
+        &format!(
+            "SELECT export_uuid, primary_source_uuid, exported_at_utc, schema_version
+             FROM {schema}.exports
+             ORDER BY id DESC
+             LIMIT 1"
+        ),
         [],
         |row| {
             Ok(ExportMetadata {
@@ -118,5 +106,5 @@ pub(crate) fn latest_export_metadata_from_attached(conn: &Connection) -> Result<
             })
         },
     )
-    .with_context(|| "Attached source snapshot does not contain export metadata")
+    .with_context(|| format!("Failed to read export metadata from schema '{schema}'"))
 }

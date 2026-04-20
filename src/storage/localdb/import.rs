@@ -158,287 +158,92 @@ pub fn import_snapshot(
     let tx = destination.unchecked_transaction()?;
     tx.execute_batch(
         "
-        UPDATE main.sources
+        UPDATE sources
         SET
-            source_name = (
-                SELECT src.source_name
-                FROM import_src.sources src
-                WHERE src.source_uuid = main.sources.source_uuid
-            ),
-            platform = (
-                SELECT src.platform
-                FROM import_src.sources src
-                WHERE src.source_uuid = main.sources.source_uuid
-            )
-        WHERE EXISTS (
-            SELECT 1
-            FROM import_src.sources src
-            WHERE src.source_uuid = main.sources.source_uuid
-        );
+            source_name = src.source_name,
+            platform    = src.platform
+        FROM import_src.sources src
+        WHERE src.source_uuid = sources.source_uuid;
 
-        INSERT OR IGNORE INTO main.sources (source_uuid, source_name, platform, created_at_utc)
+        INSERT OR IGNORE INTO sources (source_uuid, source_name, platform, created_at_utc)
         SELECT source_uuid, source_name, platform, created_at_utc
         FROM import_src.sources;
 
-        UPDATE main.input_buckets
+        UPDATE input_buckets
         SET
-            bucket_end_utc = (
-                SELECT ib.bucket_end_utc
-                FROM import_src.input_buckets ib
-                JOIN import_src.sources src_src ON src_src.id = ib.source_id
-                JOIN main.sources dest_src ON dest_src.source_uuid = src_src.source_uuid
-                WHERE dest_src.id = main.input_buckets.source_id
-                  AND ib.bucket_start_utc = main.input_buckets.bucket_start_utc
-                  AND ib.granularity_minutes = main.input_buckets.granularity_minutes
-            ),
-            local_date = (
-                SELECT ib.local_date
-                FROM import_src.input_buckets ib
-                JOIN import_src.sources src_src ON src_src.id = ib.source_id
-                JOIN main.sources dest_src ON dest_src.source_uuid = src_src.source_uuid
-                WHERE dest_src.id = main.input_buckets.source_id
-                  AND ib.bucket_start_utc = main.input_buckets.bucket_start_utc
-                  AND ib.granularity_minutes = main.input_buckets.granularity_minutes
-            ),
-            local_hour = (
-                SELECT ib.local_hour
-                FROM import_src.input_buckets ib
-                JOIN import_src.sources src_src ON src_src.id = ib.source_id
-                JOIN main.sources dest_src ON dest_src.source_uuid = src_src.source_uuid
-                WHERE dest_src.id = main.input_buckets.source_id
-                  AND ib.bucket_start_utc = main.input_buckets.bucket_start_utc
-                  AND ib.granularity_minutes = main.input_buckets.granularity_minutes
-            ),
-            timezone_offset_minutes = (
-                SELECT ib.timezone_offset_minutes
-                FROM import_src.input_buckets ib
-                JOIN import_src.sources src_src ON src_src.id = ib.source_id
-                JOIN main.sources dest_src ON dest_src.source_uuid = src_src.source_uuid
-                WHERE dest_src.id = main.input_buckets.source_id
-                  AND ib.bucket_start_utc = main.input_buckets.bucket_start_utc
-                  AND ib.granularity_minutes = main.input_buckets.granularity_minutes
-            ),
-            left_clicks = main.input_buckets.left_clicks + (
-                SELECT ib.left_clicks
-                FROM import_src.input_buckets ib
-                JOIN import_src.sources src_src ON src_src.id = ib.source_id
-                JOIN main.sources dest_src ON dest_src.source_uuid = src_src.source_uuid
-                WHERE dest_src.id = main.input_buckets.source_id
-                  AND ib.bucket_start_utc = main.input_buckets.bucket_start_utc
-                  AND ib.granularity_minutes = main.input_buckets.granularity_minutes
-            ),
-            right_clicks = main.input_buckets.right_clicks + (
-                SELECT ib.right_clicks
-                FROM import_src.input_buckets ib
-                JOIN import_src.sources src_src ON src_src.id = ib.source_id
-                JOIN main.sources dest_src ON dest_src.source_uuid = src_src.source_uuid
-                WHERE dest_src.id = main.input_buckets.source_id
-                  AND ib.bucket_start_utc = main.input_buckets.bucket_start_utc
-                  AND ib.granularity_minutes = main.input_buckets.granularity_minutes
-            ),
-            middle_clicks = main.input_buckets.middle_clicks + (
-                SELECT ib.middle_clicks
-                FROM import_src.input_buckets ib
-                JOIN import_src.sources src_src ON src_src.id = ib.source_id
-                JOIN main.sources dest_src ON dest_src.source_uuid = src_src.source_uuid
-                WHERE dest_src.id = main.input_buckets.source_id
-                  AND ib.bucket_start_utc = main.input_buckets.bucket_start_utc
-                  AND ib.granularity_minutes = main.input_buckets.granularity_minutes
-            ),
-            key_presses = main.input_buckets.key_presses + (
-                SELECT ib.key_presses
-                FROM import_src.input_buckets ib
-                JOIN import_src.sources src_src ON src_src.id = ib.source_id
-                JOIN main.sources dest_src ON dest_src.source_uuid = src_src.source_uuid
-                WHERE dest_src.id = main.input_buckets.source_id
-                  AND ib.bucket_start_utc = main.input_buckets.bucket_start_utc
-                  AND ib.granularity_minutes = main.input_buckets.granularity_minutes
-            ),
-            mouse_distance_cm = main.input_buckets.mouse_distance_cm + (
-                SELECT ib.mouse_distance_cm
-                FROM import_src.input_buckets ib
-                JOIN import_src.sources src_src ON src_src.id = ib.source_id
-                JOIN main.sources dest_src ON dest_src.source_uuid = src_src.source_uuid
-                WHERE dest_src.id = main.input_buckets.source_id
-                  AND ib.bucket_start_utc = main.input_buckets.bucket_start_utc
-                  AND ib.granularity_minutes = main.input_buckets.granularity_minutes
-            ),
-            scroll_vertical_cm = main.input_buckets.scroll_vertical_cm + (
-                SELECT ib.scroll_vertical_cm
-                FROM import_src.input_buckets ib
-                JOIN import_src.sources src_src ON src_src.id = ib.source_id
-                JOIN main.sources dest_src ON dest_src.source_uuid = src_src.source_uuid
-                WHERE dest_src.id = main.input_buckets.source_id
-                  AND ib.bucket_start_utc = main.input_buckets.bucket_start_utc
-                  AND ib.granularity_minutes = main.input_buckets.granularity_minutes
-            ),
-            scroll_horizontal_cm = main.input_buckets.scroll_horizontal_cm + (
-                SELECT ib.scroll_horizontal_cm
-                FROM import_src.input_buckets ib
-                JOIN import_src.sources src_src ON src_src.id = ib.source_id
-                JOIN main.sources dest_src ON dest_src.source_uuid = src_src.source_uuid
-                WHERE dest_src.id = main.input_buckets.source_id
-                  AND ib.bucket_start_utc = main.input_buckets.bucket_start_utc
-                  AND ib.granularity_minutes = main.input_buckets.granularity_minutes
-            )
-        WHERE EXISTS (
-            SELECT 1
-            FROM import_src.input_buckets ib
-            JOIN import_src.sources src_src ON src_src.id = ib.source_id
-            JOIN main.sources dest_src ON dest_src.source_uuid = src_src.source_uuid
-            WHERE dest_src.id = main.input_buckets.source_id
-              AND ib.bucket_start_utc = main.input_buckets.bucket_start_utc
-              AND ib.granularity_minutes = main.input_buckets.granularity_minutes
-        );
-
-        INSERT INTO main.input_buckets (
-            source_id,
-            bucket_start_utc,
-            bucket_end_utc,
-            local_date,
-            local_hour,
-            timezone_offset_minutes,
-            granularity_minutes,
-            left_clicks,
-            right_clicks,
-            middle_clicks,
-            key_presses,
-            mouse_distance_cm,
-            scroll_vertical_cm,
-            scroll_horizontal_cm
-        )
-        SELECT
-            dest_src.id,
-            ib.bucket_start_utc,
-            ib.bucket_end_utc,
-            ib.local_date,
-            ib.local_hour,
-            ib.timezone_offset_minutes,
-            ib.granularity_minutes,
-            ib.left_clicks,
-            ib.right_clicks,
-            ib.middle_clicks,
-            ib.key_presses,
-            ib.mouse_distance_cm,
-            ib.scroll_vertical_cm,
-            ib.scroll_horizontal_cm
+            bucket_end_utc          = ib.bucket_end_utc,
+            local_date              = ib.local_date,
+            local_hour              = ib.local_hour,
+            timezone_offset_minutes = ib.timezone_offset_minutes,
+            left_clicks             = input_buckets.left_clicks          + ib.left_clicks,
+            right_clicks            = input_buckets.right_clicks         + ib.right_clicks,
+            middle_clicks           = input_buckets.middle_clicks        + ib.middle_clicks,
+            key_presses             = input_buckets.key_presses          + ib.key_presses,
+            mouse_distance_cm       = input_buckets.mouse_distance_cm    + ib.mouse_distance_cm,
+            scroll_vertical_cm      = input_buckets.scroll_vertical_cm   + ib.scroll_vertical_cm,
+            scroll_horizontal_cm    = input_buckets.scroll_horizontal_cm + ib.scroll_horizontal_cm
         FROM import_src.input_buckets ib
         JOIN import_src.sources src_src ON src_src.id = ib.source_id
-        JOIN main.sources dest_src ON dest_src.source_uuid = src_src.source_uuid
+        JOIN sources dest_src ON dest_src.source_uuid = src_src.source_uuid
+        WHERE input_buckets.source_id           = dest_src.id
+          AND input_buckets.bucket_start_utc    = ib.bucket_start_utc
+          AND input_buckets.granularity_minutes = ib.granularity_minutes;
+
+        INSERT INTO input_buckets (
+            source_id, bucket_start_utc, bucket_end_utc,
+            local_date, local_hour, timezone_offset_minutes, granularity_minutes,
+            left_clicks, right_clicks, middle_clicks, key_presses,
+            mouse_distance_cm, scroll_vertical_cm, scroll_horizontal_cm
+        )
+        SELECT
+            dest_src.id, ib.bucket_start_utc, ib.bucket_end_utc,
+            ib.local_date, ib.local_hour, ib.timezone_offset_minutes, ib.granularity_minutes,
+            ib.left_clicks, ib.right_clicks, ib.middle_clicks, ib.key_presses,
+            ib.mouse_distance_cm, ib.scroll_vertical_cm, ib.scroll_horizontal_cm
+        FROM import_src.input_buckets ib
+        JOIN import_src.sources src_src ON src_src.id = ib.source_id
+        JOIN sources dest_src ON dest_src.source_uuid = src_src.source_uuid
         WHERE NOT EXISTS (
-            SELECT 1
-            FROM main.input_buckets dest
-            WHERE dest.source_id = dest_src.id
-              AND dest.bucket_start_utc = ib.bucket_start_utc
+            SELECT 1 FROM input_buckets dest
+            WHERE dest.source_id           = dest_src.id
+              AND dest.bucket_start_utc    = ib.bucket_start_utc
               AND dest.granularity_minutes = ib.granularity_minutes
         );
 
-        UPDATE main.focus_buckets
+        UPDATE focus_buckets
         SET
-            bucket_end_utc = (
-                SELECT fb.bucket_end_utc
-                FROM import_src.focus_buckets fb
-                JOIN import_src.sources src_src ON src_src.id = fb.source_id
-                JOIN main.sources dest_src ON dest_src.source_uuid = src_src.source_uuid
-                WHERE dest_src.id = main.focus_buckets.source_id
-                  AND fb.bucket_start_utc = main.focus_buckets.bucket_start_utc
-                  AND fb.window_title = main.focus_buckets.window_title
-                  AND fb.window_class = main.focus_buckets.window_class
-            ),
-            local_date = (
-                SELECT fb.local_date
-                FROM import_src.focus_buckets fb
-                JOIN import_src.sources src_src ON src_src.id = fb.source_id
-                JOIN main.sources dest_src ON dest_src.source_uuid = src_src.source_uuid
-                WHERE dest_src.id = main.focus_buckets.source_id
-                  AND fb.bucket_start_utc = main.focus_buckets.bucket_start_utc
-                  AND fb.window_title = main.focus_buckets.window_title
-                  AND fb.window_class = main.focus_buckets.window_class
-            ),
-            local_hour = (
-                SELECT fb.local_hour
-                FROM import_src.focus_buckets fb
-                JOIN import_src.sources src_src ON src_src.id = fb.source_id
-                JOIN main.sources dest_src ON dest_src.source_uuid = src_src.source_uuid
-                WHERE dest_src.id = main.focus_buckets.source_id
-                  AND fb.bucket_start_utc = main.focus_buckets.bucket_start_utc
-                  AND fb.window_title = main.focus_buckets.window_title
-                  AND fb.window_class = main.focus_buckets.window_class
-            ),
-            timezone_offset_minutes = (
-                SELECT fb.timezone_offset_minutes
-                FROM import_src.focus_buckets fb
-                JOIN import_src.sources src_src ON src_src.id = fb.source_id
-                JOIN main.sources dest_src ON dest_src.source_uuid = src_src.source_uuid
-                WHERE dest_src.id = main.focus_buckets.source_id
-                  AND fb.bucket_start_utc = main.focus_buckets.bucket_start_utc
-                  AND fb.window_title = main.focus_buckets.window_title
-                  AND fb.window_class = main.focus_buckets.window_class
-            ),
-            app_identifier = (
-                SELECT fb.app_identifier
-                FROM import_src.focus_buckets fb
-                JOIN import_src.sources src_src ON src_src.id = fb.source_id
-                JOIN main.sources dest_src ON dest_src.source_uuid = src_src.source_uuid
-                WHERE dest_src.id = main.focus_buckets.source_id
-                  AND fb.bucket_start_utc = main.focus_buckets.bucket_start_utc
-                  AND fb.window_title = main.focus_buckets.window_title
-                  AND fb.window_class = main.focus_buckets.window_class
-            ),
-            focus_seconds = main.focus_buckets.focus_seconds + (
-                SELECT fb.focus_seconds
-                FROM import_src.focus_buckets fb
-                JOIN import_src.sources src_src ON src_src.id = fb.source_id
-                JOIN main.sources dest_src ON dest_src.source_uuid = src_src.source_uuid
-                WHERE dest_src.id = main.focus_buckets.source_id
-                  AND fb.bucket_start_utc = main.focus_buckets.bucket_start_utc
-                  AND fb.window_title = main.focus_buckets.window_title
-                  AND fb.window_class = main.focus_buckets.window_class
-            )
-        WHERE EXISTS (
-            SELECT 1
-            FROM import_src.focus_buckets fb
-            JOIN import_src.sources src_src ON src_src.id = fb.source_id
-            JOIN main.sources dest_src ON dest_src.source_uuid = src_src.source_uuid
-            WHERE dest_src.id = main.focus_buckets.source_id
-              AND fb.bucket_start_utc = main.focus_buckets.bucket_start_utc
-              AND fb.window_title = main.focus_buckets.window_title
-              AND fb.window_class = main.focus_buckets.window_class
-        );
-
-        INSERT INTO main.focus_buckets (
-            source_id,
-            bucket_start_utc,
-            bucket_end_utc,
-            local_date,
-            local_hour,
-            timezone_offset_minutes,
-            app_identifier,
-            window_title,
-            window_class,
-            focus_seconds
-        )
-        SELECT
-            dest_src.id,
-            fb.bucket_start_utc,
-            fb.bucket_end_utc,
-            fb.local_date,
-            fb.local_hour,
-            fb.timezone_offset_minutes,
-            fb.app_identifier,
-            fb.window_title,
-            fb.window_class,
-            fb.focus_seconds
+            bucket_end_utc          = fb.bucket_end_utc,
+            local_date              = fb.local_date,
+            local_hour              = fb.local_hour,
+            timezone_offset_minutes = fb.timezone_offset_minutes,
+            app_identifier          = fb.app_identifier,
+            focus_seconds           = focus_buckets.focus_seconds + fb.focus_seconds
         FROM import_src.focus_buckets fb
         JOIN import_src.sources src_src ON src_src.id = fb.source_id
-        JOIN main.sources dest_src ON dest_src.source_uuid = src_src.source_uuid
+        JOIN sources dest_src ON dest_src.source_uuid = src_src.source_uuid
+        WHERE focus_buckets.source_id        = dest_src.id
+          AND focus_buckets.bucket_start_utc = fb.bucket_start_utc
+          AND focus_buckets.window_title     = fb.window_title
+          AND focus_buckets.window_class     = fb.window_class;
+
+        INSERT INTO focus_buckets (
+            source_id, bucket_start_utc, bucket_end_utc,
+            local_date, local_hour, timezone_offset_minutes,
+            app_identifier, window_title, window_class, focus_seconds
+        )
+        SELECT
+            dest_src.id, fb.bucket_start_utc, fb.bucket_end_utc,
+            fb.local_date, fb.local_hour, fb.timezone_offset_minutes,
+            fb.app_identifier, fb.window_title, fb.window_class, fb.focus_seconds
+        FROM import_src.focus_buckets fb
+        JOIN import_src.sources src_src ON src_src.id = fb.source_id
+        JOIN sources dest_src ON dest_src.source_uuid = src_src.source_uuid
         WHERE NOT EXISTS (
-            SELECT 1
-            FROM main.focus_buckets dest
-            WHERE dest.source_id = dest_src.id
+            SELECT 1 FROM focus_buckets dest
+            WHERE dest.source_id        = dest_src.id
               AND dest.bucket_start_utc = fb.bucket_start_utc
-              AND dest.window_title = fb.window_title
-              AND dest.window_class = fb.window_class
+              AND dest.window_title     = fb.window_title
+              AND dest.window_class     = fb.window_class
         );
         ",
     )?;
