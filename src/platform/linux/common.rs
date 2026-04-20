@@ -133,10 +133,7 @@ fn detect_display_server_from_values(
     let session_type = xdg_session_type.map(|value| value.trim().to_ascii_lowercase());
     let has_x11_display = display.is_some_and(|value| !value.trim().is_empty());
 
-    if has_wayland_socket
-        || has_wayland_display
-        || session_type.as_deref() == Some("wayland")
-    {
+    if has_wayland_socket || has_wayland_display || session_type.as_deref() == Some("wayland") {
         DisplayServer::Wayland
     } else if has_x11_display || session_type.as_deref() == Some("x11") {
         DisplayServer::X11
@@ -232,8 +229,8 @@ fn desktop_entry_escape(value: &str) -> String {
 
 fn desktop_exec_escape(arg: &str) -> String {
     let reserved = [
-        ' ', '\t', '\n', '"', '\'', '\\', '>', '<', '~', '|', '&', ';', '$', '*', '?', '#',
-        '(', ')', '`',
+        ' ', '\t', '\n', '"', '\'', '\\', '>', '<', '~', '|', '&', ';', '$', '*', '?', '#', '(',
+        ')', '`',
     ];
     let escaped = arg
         .replace('\\', "\\\\")
@@ -389,7 +386,10 @@ fn write_systemd_startup(executable: &Path, working_dir: &Path) -> Result<PathBu
         )
     })?;
 
-    debug!("Ensured systemd user unit directory exists at '{}'.", unit_dir.display());
+    debug!(
+        "Ensured systemd user unit directory exists at '{}'.",
+        unit_dir.display()
+    );
 
     run_systemctl(["daemon-reload"]).with_context(|| {
         format!(
@@ -398,8 +398,12 @@ fn write_systemd_startup(executable: &Path, working_dir: &Path) -> Result<PathBu
         )
     })?;
 
-    run_systemctl(["enable", SERVICE_NAME])
-        .with_context(|| format!("Failed to enable service located at: {}", unit_path.display()))?;
+    run_systemctl(["enable", SERVICE_NAME]).with_context(|| {
+        format!(
+            "Failed to enable service located at: {}",
+            unit_path.display()
+        )
+    })?;
 
     Ok(unit_path)
 }
@@ -586,12 +590,7 @@ mod tests {
     #[test]
     fn detect_display_server_prefers_wayland_when_both_are_present() {
         assert_eq!(
-            detect_display_server_from_values(
-                Some("wayland-1"),
-                None,
-                Some("wayland"),
-                Some(":0"),
-            ),
+            detect_display_server_from_values(Some("wayland-1"), None, Some("wayland"), Some(":0"),),
             DisplayServer::Wayland
         );
     }
