@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, Utc, Weekday};
+use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, TimeZone, Utc, Weekday};
 use rusqlite::{Connection, OptionalExtension};
 use std::path::Path;
 
@@ -9,34 +9,43 @@ use crate::storage::localdb::{
 
 const SERIES_BUCKET_MINUTES: i64 = 15;
 const SERIES_BUCKET_COUNT: usize = 96;
-const TOP_APPS_LIMIT: usize = 5;
+
+/// Default series parameters for the 24 h window.
+pub const DEFAULT_BUCKET_MINUTES: i64 = SERIES_BUCKET_MINUTES;
+pub const DEFAULT_BUCKET_COUNT: usize = SERIES_BUCKET_COUNT;
+const CATEGORY_LIMIT: usize = 7;
+const CATEGORY_MEMBER_LIMIT: usize = 3;
 const HEATMAP_METRIC_COUNT: usize = 5;
+const APP_SPARKLINE_SAMPLES: usize = 48;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChartMetric {
     Activity,
     KeyPresses,
-    Clicks,
+    LeftClicks,
+    RightClicks,
+    MiddleClicks,
     MouseMove,
-    Focus,
 }
 
 impl ChartMetric {
-    pub const ALL: [ChartMetric; 5] = [
+    pub const ALL: [ChartMetric; 6] = [
         ChartMetric::Activity,
         ChartMetric::KeyPresses,
-        ChartMetric::Clicks,
+        ChartMetric::LeftClicks,
+        ChartMetric::RightClicks,
+        ChartMetric::MiddleClicks,
         ChartMetric::MouseMove,
-        ChartMetric::Focus,
     ];
 
     pub fn label(self) -> &'static str {
         match self {
             ChartMetric::Activity => "activity score",
-            ChartMetric::KeyPresses => "keypresses",
-            ChartMetric::Clicks => "clicks",
-            ChartMetric::MouseMove => "mouse cm",
-            ChartMetric::Focus => "focus min",
+            ChartMetric::KeyPresses => "key presses",
+            ChartMetric::LeftClicks => "left clicks",
+            ChartMetric::RightClicks => "right clicks",
+            ChartMetric::MiddleClicks => "middle clicks",
+            ChartMetric::MouseMove => "mouse movement",
         }
     }
 
@@ -46,6 +55,14 @@ impl ChartMetric {
             .position(|metric| *metric == self)
             .unwrap_or(0);
         Self::ALL[(index + 1) % Self::ALL.len()]
+    }
+
+    pub fn previous(self) -> Self {
+        let index = Self::ALL
+            .iter()
+            .position(|metric| *metric == self)
+            .unwrap_or(0);
+        Self::ALL[(index + Self::ALL.len() - 1) % Self::ALL.len()]
     }
 }
 
@@ -66,16 +83,6 @@ impl HeatmapMetric {
         HeatmapMetric::MiddleClicks,
         HeatmapMetric::MouseMove,
     ];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            HeatmapMetric::KeyPresses => "keypresses",
-            HeatmapMetric::LeftClicks => "left clicks",
-            HeatmapMetric::RightClicks => "right clicks",
-            HeatmapMetric::MiddleClicks => "middle clicks",
-            HeatmapMetric::MouseMove => "mouse movement",
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -92,7 +99,16 @@ pub struct AppShare {
     pub label: String,
     pub detail: Option<String>,
     pub focus_seconds: u64,
-    pub share_percent: f64,
+    pub share_percent: u64,
+    pub sparkline: Vec<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CategoryShare {
+    pub label: String,
+    pub focus_seconds: u64,
+    pub share_percent: u64,
+    pub top_members: Vec<AppShare>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -108,6 +124,9 @@ pub struct ActivityBucket {
     pub activity_score: f64,
     pub key_presses: f64,
     pub clicks: f64,
+    pub left_clicks: f64,
+    pub right_clicks: f64,
+    pub middle_clicks: f64,
     pub mouse_distance_cm: f64,
     pub focus_minutes: f64,
 }
@@ -132,10 +151,13 @@ pub struct DashboardStatus {
 pub struct DashboardSnapshot {
     pub generated_at_local: DateTime<Local>,
     pub range_days: u32,
+    /// Width of each chart bucket in minutes (varies by time window).
+    pub bucket_minutes: i64,
     pub summary: SummaryTotals,
     pub summary_label: String,
     pub top_activities: Vec<AppShare>,
     pub top_apps: Vec<AppShare>,
+    pub categories: Vec<CategoryShare>,
     pub series_start_utc: DateTime<Utc>,
     pub series_buckets: Vec<ActivityBucket>,
     pub heatmap_rows: Vec<DailyAverageRow>,
@@ -143,30 +165,41 @@ pub struct DashboardSnapshot {
     pub status: DashboardStatus,
 }
 
-pub fn load_dashboard_snapshot(db_path: &Path, range_days: u32) -> Result<DashboardSnapshot> {
+pub fn load_dashboard_snapshot(
+    db_path: &Path,
+    range_days: u32,
+    bucket_minutes: i64,
+    bucket_count: usize,
+) -> Result<DashboardSnapshot> {
     let conn = open_con_at(db_path)?;
     setup_database(&conn)?;
 
     let effective_days = range_days.max(1);
-    let daily_rows = daily_activity_report(&conn, effective_days)?;
+    // Heatmap always shows the last 7 calendar days so it reflects the current week
+    // regardless of which time window is selected for the chart.
+    let heatmap_days = 7;
+    let daily_rows = daily_activity_report(&conn, heatmap_days)?;
     let focus_rows = load_focus_usage_rows(&conn, effective_days)?;
-    let now = Utc::now();
-    let series_start = now - Duration::minutes(SERIES_BUCKET_MINUTES * SERIES_BUCKET_COUNT as i64);
+    let series_start = aligned_series_start(Utc::now(), bucket_minutes, bucket_count)?;
 
     let summary = load_summary_totals(&conn)?;
-    let top_activities = aggregate_top_activities(&focus_rows, TOP_APPS_LIMIT);
-    let top_apps = aggregate_top_apps(&focus_rows, TOP_APPS_LIMIT);
-    let series_buckets = load_activity_series(&conn, series_start)?;
-    let (heatmap_rows, heatmap_maxima) = build_daily_average_heatmap(&daily_rows, effective_days)?;
+    let top_activities = aggregate_top_activities(&focus_rows, 5);
+    let mut top_apps = aggregate_top_apps(&focus_rows, usize::MAX);
+    let categories = aggregate_categories(&focus_rows, CATEGORY_LIMIT, CATEGORY_MEMBER_LIMIT);
+    let series_buckets = load_activity_series(&conn, series_start, bucket_minutes, bucket_count)?;
+    let (heatmap_rows, heatmap_maxima) = build_daily_average_heatmap(&daily_rows, heatmap_days)?;
     let status = load_dashboard_status(&conn, db_path)?;
+    attach_app_sparklines(&conn, &mut top_apps, effective_days, APP_SPARKLINE_SAMPLES)?;
 
     Ok(DashboardSnapshot {
         generated_at_local: Local::now(),
         range_days: effective_days,
+        bucket_minutes,
         summary,
-        summary_label: "all-time totals from local SQLite".to_string(),
+        summary_label: "overall activity".to_string(),
         top_activities,
         top_apps,
+        categories,
         series_start_utc: series_start,
         series_buckets,
         heatmap_rows,
@@ -241,7 +274,8 @@ fn aggregate_top_activities(rows: &[FocusUsageRow], top_n: usize) -> Vec<AppShar
                 label,
                 detail: None,
                 focus_seconds,
-                share_percent: 0.0,
+                share_percent: 0,
+                sparkline: Vec::new(),
             })
             .collect(),
         top_n,
@@ -275,12 +309,73 @@ fn aggregate_top_apps(rows: &[FocusUsageRow], top_n: usize) -> Vec<AppShare> {
                     label,
                     detail,
                     focus_seconds,
-                    share_percent: 0.0,
+                    share_percent: 0,
+                    sparkline: Vec::new(),
                 }
             })
             .collect(),
         top_n,
     )
+}
+
+fn aggregate_categories(
+    rows: &[FocusUsageRow],
+    top_n: usize,
+    member_limit: usize,
+) -> Vec<CategoryShare> {
+    let total_focus = rows.iter().map(|row| row.focus_seconds).sum::<u64>().max(1);
+    let mut categories =
+        std::collections::BTreeMap::<String, (u64, std::collections::BTreeMap<String, u64>)>::new();
+
+    for row in rows {
+        let category = classify_category(&row.app_identifier, &row.window_title).to_string();
+        let member = category_member_label(&row.app_identifier, &row.window_title);
+        let entry = categories
+            .entry(category)
+            .or_insert_with(|| (0, std::collections::BTreeMap::new()));
+        entry.0 += row.focus_seconds;
+        *entry.1.entry(member).or_default() += row.focus_seconds;
+    }
+
+    let mut ranked = categories
+        .into_iter()
+        .filter(|(_, (focus_seconds, _))| *focus_seconds > 0)
+        .map(|(label, (focus_seconds, members))| {
+            let mut top_members = members
+                .into_iter()
+                .map(|(label, focus_seconds)| AppShare {
+                    label,
+                    detail: None,
+                    focus_seconds,
+                    share_percent: percent_of(focus_seconds, total_focus),
+                    sparkline: Vec::new(),
+                })
+                .collect::<Vec<_>>();
+            top_members.sort_by(|left, right| {
+                right
+                    .focus_seconds
+                    .cmp(&left.focus_seconds)
+                    .then_with(|| left.label.cmp(&right.label))
+            });
+            top_members.truncate(member_limit);
+
+            CategoryShare {
+                label,
+                focus_seconds,
+                share_percent: percent_of(focus_seconds, total_focus),
+                top_members,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    ranked.sort_by(|left, right| {
+        right
+            .focus_seconds
+            .cmp(&left.focus_seconds)
+            .then_with(|| left.label.cmp(&right.label))
+    });
+    ranked.truncate(top_n);
+    ranked
 }
 
 fn ranked_shares(mut shares: Vec<AppShare>, top_n: usize) -> Vec<AppShare> {
@@ -300,7 +395,7 @@ fn ranked_shares(mut shares: Vec<AppShare>, top_n: usize) -> Vec<AppShare> {
         .into_iter()
         .take(top_n)
         .map(|mut entry| {
-            entry.share_percent = entry.focus_seconds as f64 * 100.0 / total_focus as f64;
+            entry.share_percent = percent_of(entry.focus_seconds, total_focus);
             entry
         })
         .collect::<Vec<_>>();
@@ -312,11 +407,83 @@ fn ranked_shares(mut shares: Vec<AppShare>, top_n: usize) -> Vec<AppShare> {
             label: "Other".to_string(),
             detail: None,
             focus_seconds: other_focus,
-            share_percent: other_focus as f64 * 100.0 / total_focus as f64,
+            share_percent: percent_of(other_focus, total_focus),
+            sparkline: Vec::new(),
         });
     }
 
     ranked
+}
+
+fn percent_of(value: u64, total: u64) -> u64 {
+    if total == 0 {
+        return 0;
+    }
+
+    ((value * 100) + (total / 2)) / total
+}
+
+fn attach_app_sparklines(
+    conn: &Connection,
+    apps: &mut [AppShare],
+    days: u32,
+    sample_count: usize,
+) -> Result<()> {
+    if apps.is_empty() || sample_count == 0 {
+        return Ok(());
+    }
+
+    let since = Utc::now() - Duration::days(days.max(1) as i64);
+    let until = Utc::now();
+    let total_seconds = (until - since).num_seconds().max(1) as u64;
+    let mut series_by_label = apps
+        .iter()
+        .map(|app| (app.label.clone(), vec![0_u64; sample_count]))
+        .collect::<std::collections::BTreeMap<_, _>>();
+
+    let mut stmt = conn.prepare(
+        "
+        SELECT app_identifier, bucket_start_utc, COALESCE(SUM(focus_seconds), 0)
+        FROM focus_buckets
+        WHERE bucket_start_utc >= ?1
+        GROUP BY app_identifier, bucket_start_utc
+        ORDER BY bucket_start_utc ASC
+        ",
+    )?;
+    let rows = stmt.query_map([since.to_rfc3339()], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<u64>>(2)?.unwrap_or(0),
+        ))
+    })?;
+
+    for row in rows {
+        let (app_identifier, bucket_start_raw, focus_seconds) = row?;
+        let label = friendly_app_name(&app_identifier);
+        let Some(series) = series_by_label.get_mut(&label) else {
+            continue;
+        };
+        let Ok(bucket_start) = DateTime::parse_from_rfc3339(&bucket_start_raw) else {
+            continue;
+        };
+        let bucket_start = bucket_start.with_timezone(&Utc);
+        let elapsed = bucket_start
+            .signed_duration_since(since)
+            .num_seconds()
+            .clamp(0, total_seconds as i64) as u64;
+        let index = ((elapsed * sample_count as u64) / total_seconds)
+            .min(sample_count.saturating_sub(1) as u64) as usize;
+        series[index] = series[index].saturating_add(focus_seconds);
+    }
+
+    for app in apps {
+        app.sparkline = series_by_label
+            .remove(&app.label)
+            .unwrap_or_else(|| vec![0; sample_count]);
+    }
+
+    Ok(())
 }
 
 fn normalize_app_id(app_identifier: &str) -> String {
@@ -458,6 +625,96 @@ fn browser_context_label(window_title: &str) -> Option<String> {
     None
 }
 
+fn classify_category(app_identifier: &str, window_title: &str) -> &'static str {
+    let normalized = normalize_app_id(app_identifier);
+    if let Some(site) = browser_category_site(window_title) {
+        return match site {
+            "github.com" | "docs.rs" | "stackoverflow.com" => "Coding",
+            "youtube.com" | "tiktok.com" | "instagram.com" | "x.com" | "reddit.com"
+            | "facebook.com" | "twitch.tv" => "Social Media",
+            "gmail.com" | "mail" | "calendar" => "Productivity",
+            _ => "Other",
+        };
+    }
+
+    match normalized.as_str() {
+        "nvim" | "neovim" | "code" | "code.exe" | "codium" | "codium.exe" | "cursor"
+        | "cursor.exe" | "zed" | "zed.exe" | "rider" | "rider64.exe" | "clion" | "clion64.exe" => {
+            "Coding"
+        }
+        "com.mitchellh.ghostty"
+        | "ghostty"
+        | "ghostty.exe"
+        | "kitty"
+        | "kitty.exe"
+        | "wezterm"
+        | "wezterm-gui"
+        | "wezterm.exe"
+        | "alacritty"
+        | "alacritty.exe"
+        | "konsole"
+        | "konsole.exe"
+        | "xterm"
+        | "gnome-terminal-server"
+        | "gnome-terminal"
+        | "windows terminal"
+        | "windowsterminal.exe"
+        | "wt.exe" => "Terminal",
+        "discord" | "discord.exe" | "slack" | "slack.exe" | "telegram-desktop" | "telegram"
+        | "telegram.exe" | "whatsapp" | "whatsapp.exe" | "teams" | "teams.exe" | "ms-teams.exe"
+        | "element" | "element.exe" => "Communication",
+        "spotify" | "spotify.exe" | "mpv" | "mpv.exe" | "vlc" | "vlc.exe" | "steam"
+        | "steam.exe" | "lutris" | "lutris.exe" | "heroic" | "heroic.exe" => "Entertainment",
+        "obsidian" | "obsidian.exe" | "libreoffice" | "soffice.bin" | "soffice" | "thunderbird"
+        | "thunderbird.exe" | "calendar" => "Productivity",
+        _ => "Other",
+    }
+}
+
+fn category_member_label(app_identifier: &str, window_title: &str) -> String {
+    browser_category_site(window_title)
+        .map(String::from)
+        .unwrap_or_else(|| friendly_app_name(app_identifier))
+}
+
+fn browser_category_site(window_title: &str) -> Option<&'static str> {
+    let title = window_title.trim();
+    if title.is_empty() {
+        return None;
+    }
+
+    let lowered = title.to_ascii_lowercase();
+    if lowered.contains("github") {
+        Some("github.com")
+    } else if lowered.contains("docs.rs") {
+        Some("docs.rs")
+    } else if lowered.contains("stackoverflow") || lowered.contains("stack overflow") {
+        Some("stackoverflow.com")
+    } else if lowered.contains("youtube") {
+        Some("youtube.com")
+    } else if lowered.contains("tiktok") {
+        Some("tiktok.com")
+    } else if lowered.contains("instagram") {
+        Some("instagram.com")
+    } else if lowered.contains("twitter") || lowered.contains("x.com") || lowered == "x" {
+        Some("x.com")
+    } else if lowered.contains("reddit") {
+        Some("reddit.com")
+    } else if lowered.contains("facebook") {
+        Some("facebook.com")
+    } else if lowered.contains("twitch") {
+        Some("twitch.tv")
+    } else if lowered.contains("gmail") {
+        Some("gmail.com")
+    } else if lowered.contains("calendar") {
+        Some("calendar")
+    } else if lowered.contains("mail") {
+        Some("mail")
+    } else {
+        None
+    }
+}
+
 fn friendly_window_title(window_title: &str) -> String {
     let title = window_title.trim();
     if title.is_empty() {
@@ -496,8 +753,10 @@ fn title_case_identifier(value: &str) -> String {
 fn load_activity_series(
     conn: &Connection,
     series_start: DateTime<Utc>,
+    bucket_minutes: i64,
+    bucket_count: usize,
 ) -> Result<Vec<ActivityBucket>> {
-    let mut buckets = empty_series(series_start);
+    let mut buckets = empty_series(series_start, bucket_minutes, bucket_count);
 
     let mut input_stmt = conn.prepare(
         "
@@ -521,10 +780,14 @@ fn load_activity_series(
         let (started_at_utc, key_presses, left_clicks, right_clicks, middle_clicks, mouse_cm) =
             row?;
         let started_at_utc = parse_rfc3339(&started_at_utc)?;
-        if let Some(bucket) = bucket_mut(&mut buckets, series_start, started_at_utc) {
+        if let Some(bucket) = bucket_mut(&mut buckets, series_start, started_at_utc, bucket_minutes)
+        {
             let clicks = (left_clicks + right_clicks + middle_clicks) as f64;
             bucket.key_presses += key_presses as f64;
             bucket.clicks += clicks;
+            bucket.left_clicks += left_clicks as f64;
+            bucket.right_clicks += right_clicks as f64;
+            bucket.middle_clicks += middle_clicks as f64;
             bucket.mouse_distance_cm += mouse_cm;
             bucket.activity_score += key_presses as f64 + clicks * 6.0 + mouse_cm * 8.0;
         }
@@ -544,7 +807,8 @@ fn load_activity_series(
     for row in focus_rows {
         let (started_at_utc, focus_seconds) = row?;
         let started_at_utc = parse_rfc3339(&started_at_utc)?;
-        if let Some(bucket) = bucket_mut(&mut buckets, series_start, started_at_utc) {
+        if let Some(bucket) = bucket_mut(&mut buckets, series_start, started_at_utc, bucket_minutes)
+        {
             let focus_minutes = focus_seconds as f64 / 60.0;
             bucket.focus_minutes += focus_minutes;
             bucket.activity_score += focus_minutes * 2.5;
@@ -554,15 +818,30 @@ fn load_activity_series(
     Ok(buckets)
 }
 
+fn aligned_series_start(
+    now: DateTime<Utc>,
+    bucket_minutes: i64,
+    bucket_count: usize,
+) -> Result<DateTime<Utc>> {
+    let bucket_seconds = bucket_minutes * 60;
+    let aligned_end_seconds = now.timestamp().div_euclid(bucket_seconds) * bucket_seconds;
+    let aligned_end = Utc
+        .timestamp_opt(aligned_end_seconds, 0)
+        .single()
+        .context("Failed to align dashboard series window to bucket boundary")?;
+    Ok(aligned_end - Duration::minutes(bucket_minutes * bucket_count as i64))
+}
+
 fn bucket_mut(
     buckets: &mut [ActivityBucket],
     series_start: DateTime<Utc>,
     bucket_start: DateTime<Utc>,
+    bucket_minutes: i64,
 ) -> Option<&mut ActivityBucket> {
     let delta = bucket_start
         .signed_duration_since(series_start)
         .num_minutes();
-    let slot = delta.div_euclid(SERIES_BUCKET_MINUTES);
+    let slot = delta.div_euclid(bucket_minutes);
     if slot < 0 || slot as usize >= buckets.len() {
         return None;
     }
@@ -570,13 +849,20 @@ fn bucket_mut(
     buckets.get_mut(slot as usize)
 }
 
-fn empty_series(series_start: DateTime<Utc>) -> Vec<ActivityBucket> {
-    (0..SERIES_BUCKET_COUNT)
+fn empty_series(
+    series_start: DateTime<Utc>,
+    bucket_minutes: i64,
+    bucket_count: usize,
+) -> Vec<ActivityBucket> {
+    (0..bucket_count)
         .map(|index| ActivityBucket {
-            started_at_utc: series_start + Duration::minutes(index as i64 * SERIES_BUCKET_MINUTES),
+            started_at_utc: series_start + Duration::minutes(index as i64 * bucket_minutes),
             activity_score: 0.0,
             key_presses: 0.0,
             clicks: 0.0,
+            left_clicks: 0.0,
+            right_clicks: 0.0,
+            middle_clicks: 0.0,
             mouse_distance_cm: 0.0,
             focus_minutes: 0.0,
         })
@@ -670,19 +956,15 @@ fn load_dashboard_status(conn: &Connection, db_path: &Path) -> Result<DashboardS
         });
 
     let last_input_activity = conn
-        .query_row(
-            "SELECT MAX(bucket_start_utc) FROM input_buckets",
-            [],
-            |row| row.get::<_, Option<String>>(0),
-        )
+        .query_row("SELECT MAX(bucket_end_utc) FROM input_buckets", [], |row| {
+            row.get::<_, Option<String>>(0)
+        })
         .optional()?
         .flatten();
     let last_focus_activity = conn
-        .query_row(
-            "SELECT MAX(bucket_start_utc) FROM focus_buckets",
-            [],
-            |row| row.get::<_, Option<String>>(0),
-        )
+        .query_row("SELECT MAX(bucket_end_utc) FROM focus_buckets", [], |row| {
+            row.get::<_, Option<String>>(0)
+        })
         .optional()?
         .flatten();
 
@@ -854,12 +1136,47 @@ mod tests {
         assert_eq!(apps[0].detail.as_deref(), Some("TikTok"));
     }
 
+    #[test]
+    fn aggregate_categories_groups_focus_into_static_product_buckets() {
+        let rows = vec![
+            FocusUsageRow {
+                app_identifier: "nvim".to_string(),
+                window_title: "main.rs".to_string(),
+                focus_seconds: 200,
+            },
+            FocusUsageRow {
+                app_identifier: "firefox".to_string(),
+                window_title: "GitHub - Mozilla Firefox".to_string(),
+                focus_seconds: 120,
+            },
+            FocusUsageRow {
+                app_identifier: "ghostty".to_string(),
+                window_title: "shell".to_string(),
+                focus_seconds: 100,
+            },
+            FocusUsageRow {
+                app_identifier: "discord".to_string(),
+                window_title: "general".to_string(),
+                focus_seconds: 80,
+            },
+        ];
+
+        let categories = aggregate_categories(&rows, 7, 3);
+
+        assert_eq!(categories[0].label, "Coding");
+        assert_eq!(categories[0].focus_seconds, 320);
+        assert_eq!(categories[0].top_members[0].label, "Neovim");
+        assert_eq!(categories[0].top_members[1].label, "github.com");
+        assert_eq!(categories[1].label, "Terminal");
+        assert_eq!(categories[2].label, "Communication");
+    }
+
     /// Proves the 24-hour series builder preserves quarter-hour slot alignment and fills missing
     /// slots with zero-valued buckets so the chart stays stable even on sparse datasets.
     #[test]
     fn empty_series_creates_full_zero_filled_window() {
         let start = Utc::now() - Duration::hours(24);
-        let buckets = empty_series(start);
+        let buckets = empty_series(start, SERIES_BUCKET_MINUTES, SERIES_BUCKET_COUNT);
 
         assert_eq!(buckets.len(), SERIES_BUCKET_COUNT);
         assert_eq!(buckets[0].started_at_utc, start);
