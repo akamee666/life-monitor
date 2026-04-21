@@ -28,6 +28,32 @@ pub fn ensure_single_instance() -> Result<()> {
     Ok(())
 }
 
+/// Tries to acquire the single-instance lock without blocking or erroring.
+/// Returns `true` if the lock was acquired (this process is now the collector),
+/// `false` if another collector is already running or the lock path is inaccessible.
+#[allow(dead_code)]
+pub fn try_ensure_single_instance() -> bool {
+    if should_skip_instance_lock() {
+        return true;
+    }
+    let path = match program_data_dir().ok() {
+        Some(dir) => dir.join("life.lock"),
+        None => return false,
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match acquire_instance_lock(&path).ok() {
+        Some(mut file) => {
+            let _ = file.set_len(0);
+            let _ = write!(file, "{}", process::id());
+            std::mem::forget(file);
+            true
+        }
+        None => false,
+    }
+}
+
 fn should_skip_instance_lock() -> bool {
     std::env::var("LIFE_MONITOR_SKIP_INSTANCE_LOCK")
         .map(|value| value == "1")
