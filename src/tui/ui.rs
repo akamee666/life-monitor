@@ -606,11 +606,15 @@ fn render_heatmap(frame: &mut Frame, area: Rect, app: &DashboardApp) {
             let actual_index = scroll.offset + row_index;
             let row = row.1;
             let row_is_today = row.weekday == today;
+            let is_future_this_week =
+                row.weekday.num_days_from_monday() > today.num_days_from_monday();
             let heatmap_focused = app.focused_section == FocusSection::Heatmap;
             let row_is_selected = heatmap_focused && actual_index == app.selected_heatmap_index;
             let row_has_highlight = row_is_selected || (row_is_today && !heatmap_focused);
             let row_bg = if row_has_highlight { DIM } else { BG };
-            let day_style = if row_has_highlight {
+            let day_style = if is_future_this_week {
+                Style::default().fg(MUTED).bg(row_bg)
+            } else if row_has_highlight {
                 Style::default()
                     .fg(TODAY_HIGHLIGHT)
                     .bg(row_bg)
@@ -634,7 +638,9 @@ fn render_heatmap(frame: &mut Frame, area: Rect, app: &DashboardApp) {
                 let is_zero = *value < f64::EPSILON;
                 let col_width = column_widths[mi];
 
-                let (text, color) = if is_zero {
+                let (text, color) = if is_future_this_week {
+                    (center_align_str("–", col_width), MUTED)
+                } else if is_zero {
                     (center_align_str("0", col_width), MUTED)
                 } else {
                     let num = if HeatmapMetric::ALL[mi] == HeatmapMetric::MouseMove {
