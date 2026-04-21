@@ -638,9 +638,7 @@ fn render_heatmap(frame: &mut Frame, area: Rect, app: &DashboardApp) {
                 let is_zero = *value < f64::EPSILON;
                 let col_width = column_widths[mi];
 
-                let (text, color) = if is_future_this_week {
-                    (center_align_str("–", col_width), MUTED)
-                } else if is_zero {
+                let (text, color) = if is_zero {
                     (center_align_str("0", col_width), MUTED)
                 } else {
                     let num = if HeatmapMetric::ALL[mi] == HeatmapMetric::MouseMove {
@@ -649,7 +647,9 @@ fn render_heatmap(frame: &mut Frame, area: Rect, app: &DashboardApp) {
                         format_compact_number(*value)
                     };
                     let t = center_align_str(&num, col_width);
-                    let c = if row_has_highlight {
+                    let c = if is_future_this_week {
+                        MUTED
+                    } else if row_has_highlight {
                         brighten_color(heatmap_color(intensity))
                     } else {
                         heatmap_color(intensity)
