@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, TimeZone, Utc, Weekday};
 use rusqlite::{Connection, OptionalExtension};
+use std::collections::HashMap;
 use std::path::Path;
 
 use crate::storage::localdb::{
@@ -158,6 +159,7 @@ pub struct DashboardSnapshot {
     pub summary_label: String,
     pub top_activities: Vec<AppShare>,
     pub top_apps: Vec<AppShare>,
+    pub top_app_details: Vec<AppShare>,
     pub categories: Vec<CategoryShare>,
     pub series_start_utc: DateTime<Utc>,
     pub series_buckets: Vec<ActivityBucket>,
@@ -174,6 +176,7 @@ pub fn load_dashboard_snapshot(
 ) -> Result<DashboardSnapshot> {
     let conn = open_con_at(db_path)?;
     setup_database(&conn)?;
+    let desktop_entries = load_desktop_entries();
 
     let history_days = if range_days == 0 {
         None
@@ -190,8 +193,9 @@ pub fn load_dashboard_snapshot(
         resolve_series_window(&conn, bucket_minutes, bucket_count)?;
 
     let summary = load_summary_totals(&conn, history_days)?;
-    let top_activities = aggregate_top_activities(&focus_rows, 5);
-    let mut top_apps = aggregate_top_apps(&focus_rows, usize::MAX);
+    let top_activities = aggregate_top_activities(&focus_rows, 5, &desktop_entries);
+    let mut top_apps = aggregate_top_apps(&focus_rows, usize::MAX, &desktop_entries);
+    let mut top_app_details = aggregate_top_app_details(&focus_rows, usize::MAX, &desktop_entries);
     let categories = aggregate_categories(&focus_rows, CATEGORY_LIMIT, CATEGORY_MEMBER_LIMIT);
     let series_buckets = load_activity_series(
         &conn,
@@ -200,8 +204,21 @@ pub fn load_dashboard_snapshot(
         effective_bucket_count,
     )?;
     let (heatmap_rows, heatmap_maxima) = build_daily_average_heatmap(&daily_rows, heatmap_days)?;
-    let status = load_dashboard_status(&conn, db_path)?;
-    attach_app_sparklines(&conn, &mut top_apps, history_days, APP_SPARKLINE_SAMPLES)?;
+    let status = load_dashboard_status(&conn, db_path, &desktop_entries)?;
+    attach_app_sparklines(
+        &conn,
+        &mut top_apps,
+        history_days,
+        APP_SPARKLINE_SAMPLES,
+        &desktop_entries,
+    )?;
+    attach_specific_app_sparklines(
+        &conn,
+        &mut top_app_details,
+        history_days,
+        APP_SPARKLINE_SAMPLES,
+        &desktop_entries,
+    )?;
 
     Ok(DashboardSnapshot {
         generated_at_local: Local::now(),
@@ -211,6 +228,7 @@ pub fn load_dashboard_snapshot(
         summary_label: "overall activity".to_string(),
         top_activities,
         top_apps,
+        top_app_details,
         categories,
         series_start_utc: series_start,
         series_buckets,
@@ -218,6 +236,33 @@ pub fn load_dashboard_snapshot(
         heatmap_maxima,
         status,
     })
+}
+
+fn aggregate_top_app_details(
+    rows: &[FocusUsageRow],
+    top_n: usize,
+    desktop_entries: &DesktopEntries,
+) -> Vec<AppShare> {
+    let mut aggregated = std::collections::BTreeMap::<String, u64>::new();
+    for row in rows {
+        let label =
+            specific_app_display_label(&row.app_identifier, &row.window_title, desktop_entries);
+        *aggregated.entry(label).or_default() += row.focus_seconds;
+    }
+
+    ranked_shares(
+        aggregated
+            .into_iter()
+            .map(|(label, focus_seconds)| AppShare {
+                label,
+                detail: None,
+                focus_seconds,
+                share_percent: 0,
+                sparkline: Vec::new(),
+            })
+            .collect(),
+        top_n,
+    )
 }
 
 fn load_summary_totals(conn: &Connection, days: Option<u32>) -> Result<SummaryTotals> {
@@ -268,13 +313,18 @@ fn load_focus_usage_rows(conn: &Connection, days: Option<u32>) -> Result<Vec<Foc
         .with_context(|| "Failed to load focus usage rows for dashboard")
 }
 
-fn aggregate_top_activities(rows: &[FocusUsageRow], top_n: usize) -> Vec<AppShare> {
+fn aggregate_top_activities(
+    rows: &[FocusUsageRow],
+    top_n: usize,
+    desktop_entries: &DesktopEntries,
+) -> Vec<AppShare> {
     let mut aggregated = std::collections::BTreeMap::<String, u64>::new();
     for row in rows {
         *aggregated
             .entry(classify_activity_label(
                 &row.app_identifier,
                 &row.window_title,
+                desktop_entries,
             ))
             .or_default() += row.focus_seconds;
     }
@@ -293,12 +343,16 @@ fn aggregate_top_activities(rows: &[FocusUsageRow], top_n: usize) -> Vec<AppShar
     )
 }
 
-fn aggregate_top_apps(rows: &[FocusUsageRow], top_n: usize) -> Vec<AppShare> {
+fn aggregate_top_apps(
+    rows: &[FocusUsageRow],
+    top_n: usize,
+    desktop_entries: &DesktopEntries,
+) -> Vec<AppShare> {
     let mut aggregated =
         std::collections::BTreeMap::<String, (u64, std::collections::BTreeMap<String, u64>)>::new();
     for row in rows {
-        let label = app_display_label(&row.app_identifier, &row.window_title);
-        let detail = activity_context(&row.app_identifier, &row.window_title);
+        let label = app_display_label(&row.app_identifier, &row.window_title, desktop_entries);
+        let detail = activity_context(&row.app_identifier, &row.window_title, desktop_entries);
         let entry = aggregated
             .entry(label)
             .or_insert_with(|| (0, std::collections::BTreeMap::new()));
@@ -440,6 +494,7 @@ fn attach_app_sparklines(
     apps: &mut [AppShare],
     days: Option<u32>,
     sample_count: usize,
+    desktop_entries: &DesktopEntries,
 ) -> Result<()> {
     if apps.is_empty() || sample_count == 0 {
         return Ok(());
@@ -476,7 +531,75 @@ fn attach_app_sparklines(
 
     for row in rows {
         let (app_identifier, window_title, bucket_start_raw, focus_seconds) = row?;
-        let label = app_display_label(&app_identifier, &window_title);
+        let label = app_display_label(&app_identifier, &window_title, desktop_entries);
+        let Some(series) = series_by_label.get_mut(&label) else {
+            continue;
+        };
+        let Ok(bucket_start) = DateTime::parse_from_rfc3339(&bucket_start_raw) else {
+            continue;
+        };
+        let bucket_start = bucket_start.with_timezone(&Utc);
+        let elapsed = bucket_start
+            .signed_duration_since(since)
+            .num_seconds()
+            .clamp(0, total_seconds as i64) as u64;
+        let index = ((elapsed * sample_count as u64) / total_seconds)
+            .min(sample_count.saturating_sub(1) as u64) as usize;
+        series[index] = series[index].saturating_add(focus_seconds);
+    }
+
+    for app in apps {
+        app.sparkline = series_by_label
+            .remove(&app.label)
+            .unwrap_or_else(|| vec![0; sample_count]);
+    }
+
+    Ok(())
+}
+
+fn attach_specific_app_sparklines(
+    conn: &Connection,
+    apps: &mut [AppShare],
+    days: Option<u32>,
+    sample_count: usize,
+    desktop_entries: &DesktopEntries,
+) -> Result<()> {
+    if apps.is_empty() || sample_count == 0 {
+        return Ok(());
+    }
+
+    let since = match days {
+        Some(days) => Utc::now() - Duration::days(days.max(1) as i64),
+        None => earliest_activity_at(conn)?.unwrap_or_else(|| Utc::now() - Duration::days(1)),
+    };
+    let until = Utc::now();
+    let total_seconds = (until - since).num_seconds().max(1) as u64;
+    let mut series_by_label = apps
+        .iter()
+        .map(|app| (app.label.clone(), vec![0_u64; sample_count]))
+        .collect::<std::collections::BTreeMap<_, _>>();
+
+    let mut stmt = conn.prepare(
+        "
+        SELECT app_identifier, window_title, bucket_start_utc, COALESCE(SUM(focus_seconds), 0)
+        FROM focus_buckets
+        WHERE bucket_start_utc >= ?1
+        GROUP BY app_identifier, window_title, bucket_start_utc
+        ORDER BY bucket_start_utc ASC
+        ",
+    )?;
+    let rows = stmt.query_map([since.to_rfc3339()], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, Option<u64>>(3)?.unwrap_or(0),
+        ))
+    })?;
+
+    for row in rows {
+        let (app_identifier, window_title, bucket_start_raw, focus_seconds) = row?;
+        let label = specific_app_display_label(&app_identifier, &window_title, desktop_entries);
         let Some(series) = series_by_label.get_mut(&label) else {
             continue;
         };
@@ -558,6 +681,150 @@ fn earliest_activity_at(conn: &Connection) -> Result<Option<DateTime<Utc>>> {
         .map(|values| values.into_iter().min())
 }
 
+type DesktopEntries = HashMap<String, String>;
+
+#[cfg(target_os = "linux")]
+fn load_desktop_entries() -> DesktopEntries {
+    let mut entries = DesktopEntries::new();
+
+    let data_home = std::env::var("XDG_DATA_HOME").unwrap_or_else(|_| {
+        let home = std::env::var("HOME").unwrap_or_default();
+        format!("{home}/.local/share")
+    });
+
+    let data_dirs_raw = std::env::var("XDG_DATA_DIRS")
+        .unwrap_or_else(|_| "/usr/local/share:/usr/share".to_string());
+
+    let mut dirs = vec![data_home];
+    dirs.extend(data_dirs_raw.split(':').map(String::from));
+
+    for dir in dirs {
+        let app_dir = std::path::Path::new(&dir).join("applications");
+        let Ok(read_dir) = std::fs::read_dir(&app_dir) else {
+            continue;
+        };
+
+        for entry in read_dir.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|ext| ext == "desktop") {
+                parse_desktop_entry(&path, &mut entries);
+            }
+        }
+    }
+
+    entries
+}
+
+#[cfg(target_os = "linux")]
+fn parse_desktop_entry(path: &std::path::Path, entries: &mut DesktopEntries) {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return;
+    };
+
+    let mut name = None;
+    let mut wm_class = None;
+    let mut exec = None;
+    let mut in_desktop_entry = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            if in_desktop_entry && name.is_some() {
+                break;
+            }
+            in_desktop_entry = trimmed == "[Desktop Entry]";
+            continue;
+        }
+        if !in_desktop_entry {
+            continue;
+        }
+        if let Some(value) = trimmed.strip_prefix("Name=") {
+            if name.is_none() {
+                name = Some(value.to_string());
+            }
+        } else if let Some(value) = trimmed.strip_prefix("StartupWMClass=") {
+            wm_class = Some(value.to_string());
+        } else if let Some(value) = trimmed.strip_prefix("Exec=") {
+            if exec.is_none() {
+                exec = Some(value.to_string());
+            }
+        }
+    }
+
+    let Some(name) = name else { return };
+
+    if let Some(wm_class) = wm_class {
+        entries
+            .entry(wm_class.to_ascii_lowercase())
+            .or_insert_with(|| name.clone());
+    }
+
+    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+        entries
+            .entry(stem.to_ascii_lowercase())
+            .or_insert_with(|| name.clone());
+    }
+
+    if let Some(exec) = exec.and_then(|value| desktop_exec_basename(&value)) {
+        entries.entry(exec).or_insert(name);
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn load_desktop_entries() -> DesktopEntries {
+    DesktopEntries::new()
+}
+
+fn resolve_display_name(
+    app_identifier: &str,
+    window_title: &str,
+    desktop_entries: &DesktopEntries,
+) -> String {
+    let normalized = normalize_app_id(app_identifier);
+    if normalized.is_empty() || normalized == "unknown" {
+        return "unknown".to_string();
+    }
+    for key in app_lookup_keys(&normalized) {
+        if let Some(name) = desktop_entries.get(&key) {
+            return name.clone();
+        }
+    }
+    if let Some(name) = desktop_name_from_title(window_title, desktop_entries) {
+        return name;
+    }
+    fallback_display_name(&normalized)
+}
+
+fn desktop_exec_basename(value: &str) -> Option<String> {
+    let mut parts = value
+        .split_whitespace()
+        .filter(|part| !part.starts_with('%'))
+        .peekable();
+
+    let mut command = parts.next()?.trim_matches('"').trim_matches('\'');
+    if command.eq_ignore_ascii_case("env") {
+        for part in parts {
+            let trimmed = part.trim_matches('"').trim_matches('\'');
+            if trimmed.starts_with('%') || trimmed.contains('=') {
+                continue;
+            }
+            command = trimmed;
+            break;
+        }
+    }
+
+    let basename = command
+        .rsplit_once(['/', '\\'])
+        .map(|(_, suffix)| suffix)
+        .unwrap_or(command)
+        .trim();
+    if basename.is_empty() {
+        None
+    } else {
+        Some(basename.to_ascii_lowercase())
+    }
+}
+
 fn normalize_app_id(app_identifier: &str) -> String {
     let trimmed = app_identifier.trim();
     if trimmed.is_empty() {
@@ -571,8 +838,8 @@ fn normalize_app_id(app_identifier: &str) -> String {
         .to_ascii_lowercase()
 }
 
-fn friendly_app_name(app_identifier: &str) -> String {
-    match normalize_app_id(app_identifier).as_str() {
+fn fallback_display_name(normalized: &str) -> String {
+    match normalized {
         "brave-browser" | "brave.exe" => "Brave Browser".to_string(),
         "firefox" | "firefox.exe" => "Firefox".to_string(),
         "chromium" | "chromium-browser" | "chrome" | "chrome.exe" => "Chromium".to_string(),
@@ -588,14 +855,21 @@ fn friendly_app_name(app_identifier: &str) -> String {
         "slack" | "slack.exe" => "Slack".to_string(),
         "discord" | "discord.exe" => "Discord".to_string(),
         "steam" | "steam.exe" => "Steam".to_string(),
-        other => title_case_identifier(other),
+        other => {
+            let suffix = other.rsplit('.').next().unwrap_or(other);
+            title_case_identifier(suffix)
+        }
     }
 }
 
-fn app_display_label(app_identifier: &str, window_title: &str) -> String {
+fn app_display_label(
+    app_identifier: &str,
+    window_title: &str,
+    desktop_entries: &DesktopEntries,
+) -> String {
     let normalized = normalize_app_id(app_identifier);
     if !normalized.is_empty() && normalized != "unknown" {
-        return friendly_app_name(app_identifier);
+        return resolve_display_name(app_identifier, window_title, desktop_entries);
     }
     let title = friendly_window_title(window_title);
     if !title.is_empty() {
@@ -604,7 +878,23 @@ fn app_display_label(app_identifier: &str, window_title: &str) -> String {
     "unknown".to_string()
 }
 
-fn classify_activity_label(app_identifier: &str, window_title: &str) -> String {
+fn specific_app_display_label(
+    app_identifier: &str,
+    window_title: &str,
+    desktop_entries: &DesktopEntries,
+) -> String {
+    let label = resolve_display_name(app_identifier, window_title, desktop_entries);
+    match activity_context(app_identifier, window_title, desktop_entries) {
+        Some(context) if context != label => format!("{label} · {context}"),
+        _ => label,
+    }
+}
+
+fn classify_activity_label(
+    app_identifier: &str,
+    window_title: &str,
+    desktop_entries: &DesktopEntries,
+) -> String {
     let normalized = normalize_app_id(app_identifier);
     let title = window_title.trim();
 
@@ -632,23 +922,31 @@ fn classify_activity_label(app_identifier: &str, window_title: &str) -> String {
         "discord" | "discord.exe" | "slack" | "slack.exe" => "chat".to_string(),
         "steam" | "steam.exe" => "gaming".to_string(),
         other => {
-            if !title.is_empty() && title != friendly_app_name(other) {
+            if !title.is_empty()
+                && title != resolve_display_name(app_identifier, window_title, desktop_entries)
+            {
                 friendly_window_title(title)
             } else {
-                title_case_identifier(other)
+                fallback_display_name(other)
             }
         }
     }
 }
 
-fn activity_context(app_identifier: &str, window_title: &str) -> Option<String> {
+fn activity_context(
+    app_identifier: &str,
+    window_title: &str,
+    desktop_entries: &DesktopEntries,
+) -> Option<String> {
     let normalized = normalize_app_id(app_identifier);
     if is_browser_app(&normalized) {
         return browser_context_label(window_title);
     }
 
     let title = friendly_window_title(window_title);
-    if title.is_empty() || title == friendly_app_name(app_identifier) {
+    if title.is_empty()
+        || title == resolve_display_name(app_identifier, window_title, desktop_entries)
+    {
         None
     } else {
         Some(title)
@@ -758,7 +1056,7 @@ fn classify_category(app_identifier: &str, window_title: &str) -> &'static str {
 fn category_member_label(app_identifier: &str, window_title: &str) -> String {
     browser_category_site(window_title)
         .map(String::from)
-        .unwrap_or_else(|| friendly_app_name(app_identifier))
+        .unwrap_or_else(|| fallback_display_name(&normalize_app_id(app_identifier)))
 }
 
 fn browser_category_site(window_title: &str) -> Option<&'static str> {
@@ -811,6 +1109,50 @@ fn friendly_window_title(window_title: &str) -> String {
         .filter(|part| !part.is_empty())
         .unwrap_or(title)
         .to_string()
+}
+
+fn app_lookup_keys(normalized: &str) -> Vec<String> {
+    let mut keys = Vec::new();
+    keys.push(normalized.to_string());
+
+    if let Some(stripped) = normalized.strip_suffix(".desktop") {
+        keys.push(stripped.to_string());
+    }
+    if let Some(stripped) = normalized.strip_suffix(".exe") {
+        keys.push(stripped.to_string());
+    }
+    if let Some((_, suffix)) = normalized.rsplit_once('.') {
+        keys.push(suffix.to_string());
+    }
+
+    keys.sort();
+    keys.dedup();
+    keys
+}
+
+fn desktop_name_from_title(window_title: &str, desktop_entries: &DesktopEntries) -> Option<String> {
+    let title = window_title.trim();
+    if title.is_empty() {
+        return None;
+    }
+
+    let fragments = title
+        .split(" - ")
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+
+    for fragment in fragments.iter().rev() {
+        let lowered_fragment = fragment.to_ascii_lowercase();
+        if let Some((_, name)) = desktop_entries
+            .iter()
+            .find(|(_, name)| name.to_ascii_lowercase() == lowered_fragment)
+        {
+            return Some(name.clone());
+        }
+    }
+
+    None
 }
 
 fn title_case_identifier(value: &str) -> String {
@@ -1019,7 +1361,11 @@ fn ordered_weekdays() -> [Weekday; 7] {
     ]
 }
 
-fn load_dashboard_status(conn: &Connection, db_path: &Path) -> Result<DashboardStatus> {
+fn load_dashboard_status(
+    conn: &Connection,
+    db_path: &Path,
+    desktop_entries: &DesktopEntries,
+) -> Result<DashboardStatus> {
     let source_names = load_source_names(conn)?;
     let current_app = conn
         .query_row(
@@ -1034,9 +1380,10 @@ fn load_dashboard_status(conn: &Connection, db_path: &Path) -> Result<DashboardS
         )
         .optional()?
         .map(|(app_identifier, window_title)| {
-            activity_context(&app_identifier, &window_title)
-                .map(|context| format!("{} · {}", friendly_app_name(&app_identifier), context))
-                .unwrap_or_else(|| friendly_app_name(&app_identifier))
+            let label = resolve_display_name(&app_identifier, &window_title, desktop_entries);
+            activity_context(&app_identifier, &window_title, desktop_entries)
+                .map(|context| format!("{label} · {context}"))
+                .unwrap_or(label)
         });
 
     let last_input_activity = conn
@@ -1131,6 +1478,15 @@ mod tests {
     use super::*;
     use crate::storage::localdb::DailyActivityRow;
 
+    fn sample_desktop_entries() -> DesktopEntries {
+        HashMap::from([
+            ("brave-browser".to_string(), "Brave Browser".to_string()),
+            ("ghostty".to_string(), "Ghostty".to_string()),
+            ("com.mitchellh.ghostty".to_string(), "Ghostty".to_string()),
+            ("discord".to_string(), "Discord".to_string()),
+        ])
+    }
+
     fn sample_daily_row(local_date: &str, weekday: Weekday) -> DailyActivityRow {
         let date = match weekday {
             Weekday::Sun => "2026-04-19",
@@ -1189,7 +1545,7 @@ mod tests {
             },
         ];
 
-        let apps = aggregate_top_activities(&rows, 2);
+        let apps = aggregate_top_activities(&rows, 2, &sample_desktop_entries());
 
         assert_eq!(apps[0].label, "YouTube");
         assert_eq!(apps[1].label, "terminal");
@@ -1214,10 +1570,60 @@ mod tests {
             },
         ];
 
-        let apps = aggregate_top_apps(&rows, 5);
+        let apps = aggregate_top_apps(&rows, 5, &sample_desktop_entries());
 
         assert_eq!(apps[0].label, "Brave Browser");
         assert_eq!(apps[0].detail.as_deref(), Some("TikTok"));
+    }
+
+    #[test]
+    fn aggregate_top_app_details_splits_same_app_into_specific_context_rows() {
+        let rows = vec![
+            FocusUsageRow {
+                app_identifier: "brave-browser".to_string(),
+                window_title: "TikTok - Brave".to_string(),
+                focus_seconds: 120,
+            },
+            FocusUsageRow {
+                app_identifier: "brave-browser".to_string(),
+                window_title: "GitHub - Brave".to_string(),
+                focus_seconds: 30,
+            },
+        ];
+
+        let apps = aggregate_top_app_details(&rows, 5, &sample_desktop_entries());
+
+        assert_eq!(apps.len(), 2);
+        assert_eq!(apps[0].label, "Brave Browser · TikTok");
+        assert_eq!(apps[0].focus_seconds, 120);
+        assert_eq!(apps[1].label, "Brave Browser · GitHub");
+    }
+
+    #[test]
+    fn resolve_display_name_prefers_desktop_entry_and_reverse_dns_suffix() {
+        let entries = sample_desktop_entries();
+
+        assert_eq!(
+            resolve_display_name("com.mitchellh.ghostty", "", &entries),
+            "Ghostty"
+        );
+        assert_eq!(resolve_display_name("discord", "", &entries), "Discord");
+        assert_eq!(
+            resolve_display_name("org.example.some-app", "", &DesktopEntries::new()),
+            "Some App"
+        );
+    }
+
+    #[test]
+    fn desktop_exec_basename_ignores_placeholders_and_quotes() {
+        assert_eq!(
+            desktop_exec_basename("\"/usr/bin/brave-browser\" --profile-directory=%U"),
+            Some("brave-browser".to_string())
+        );
+        assert_eq!(
+            desktop_exec_basename("env BAMF_DESKTOP_FILE_HINT=%k /app/bin/discord --start"),
+            Some("discord".to_string())
+        );
     }
 
     #[test]

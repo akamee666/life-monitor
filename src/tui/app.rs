@@ -14,6 +14,28 @@ pub enum ChartMode {
     Scope,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppListMode {
+    Generic,
+    Specific,
+}
+
+impl AppListMode {
+    pub fn next(self) -> Self {
+        match self {
+            AppListMode::Generic => AppListMode::Specific,
+            AppListMode::Specific => AppListMode::Generic,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            AppListMode::Generic => "generic",
+            AppListMode::Specific => "specific",
+        }
+    }
+}
+
 impl ChartMode {
     pub fn next(self) -> Self {
         match self {
@@ -146,6 +168,7 @@ pub struct DashboardApp {
     pub heatmap_scroll_offset: usize,
     pub chart_metric: ChartMetric,
     pub chart_mode: ChartMode,
+    pub app_list_mode: AppListMode,
     pub time_window: TimeWindow,
     pub show_help: bool,
     pub status_message: String,
@@ -177,6 +200,7 @@ impl DashboardApp {
             heatmap_scroll_offset: 0,
             chart_metric: ChartMetric::Activity,
             chart_mode: ChartMode::Single,
+            app_list_mode: AppListMode::Generic,
             time_window,
             show_help: false,
             status_message: "dashboard opened".to_string(),
@@ -280,6 +304,12 @@ impl DashboardApp {
                 self.status_message = format!("chart mode: {}", self.chart_mode.label());
                 AppAction::None
             }
+            KeyCode::Char('a') if self.focused_section == FocusSection::Apps => {
+                self.app_list_mode = self.app_list_mode.next();
+                self.clamp_app_selection();
+                self.status_message = format!("apps mode: {}", self.app_list_mode.label());
+                AppAction::None
+            }
             KeyCode::Char('u') => {
                 self.ascii = !self.ascii;
                 self.status_message = if self.ascii {
@@ -323,7 +353,7 @@ impl DashboardApp {
     }
 
     fn move_app_selection(&mut self, delta: isize) {
-        let len = self.snapshot.top_apps.len();
+        let len = self.current_app_list().len();
         if len == 0 {
             self.selected_app_index = 0;
             self.app_scroll_offset = 0;
@@ -335,7 +365,7 @@ impl DashboardApp {
     }
 
     fn clamp_app_selection(&mut self) {
-        let len = self.snapshot.top_apps.len();
+        let len = self.current_app_list().len();
         if len == 0 {
             self.selected_app_index = 0;
             self.app_scroll_offset = 0;
@@ -369,6 +399,13 @@ impl DashboardApp {
         self.selected_heatmap_index = self.selected_heatmap_index.min(len.saturating_sub(1));
         self.heatmap_scroll_offset = self.heatmap_scroll_offset.min(self.selected_heatmap_index);
     }
+
+    pub fn current_app_list(&self) -> &[crate::tui::data::AppShare] {
+        match self.app_list_mode {
+            AppListMode::Generic => &self.snapshot.top_apps,
+            AppListMode::Specific => &self.snapshot.top_app_details,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -399,6 +436,7 @@ mod tests {
                 summary_label: "overall activity".to_string(),
                 top_activities: Vec::new(),
                 top_apps: Vec::new(),
+                top_app_details: Vec::new(),
                 categories: Vec::new(),
                 series_start_utc: Utc::now(),
                 series_buckets: Vec::new(),
@@ -421,6 +459,7 @@ mod tests {
             heatmap_scroll_offset: 0,
             chart_metric: ChartMetric::Activity,
             chart_mode: ChartMode::Single,
+            app_list_mode: AppListMode::Generic,
             time_window: TimeWindow::TwentyFourHours,
             show_help: false,
             status_message: String::new(),
@@ -528,11 +567,63 @@ mod tests {
                 sparkline: vec![0, 0, 1, 1, 0, 0, 0, 0],
             },
         ];
+        app.snapshot.top_app_details = vec![
+            crate::tui::data::AppShare {
+                label: "Ghostty · shell".to_string(),
+                detail: None,
+                focus_seconds: 10,
+                share_percent: 66,
+                sparkline: vec![1, 2, 3, 4, 5, 4, 3, 2],
+            },
+            crate::tui::data::AppShare {
+                label: "Firefox · Docs".to_string(),
+                detail: None,
+                focus_seconds: 5,
+                share_percent: 33,
+                sparkline: vec![0, 0, 1, 1, 0, 0, 0, 0],
+            },
+        ];
 
         app.handle_key(key(KeyCode::Down));
         assert_eq!(app.selected_app_index, 1);
         app.handle_key(key(KeyCode::Up));
         assert_eq!(app.selected_app_index, 0);
+    }
+
+    #[test]
+    fn a_toggles_app_list_mode_on_apps_panel() {
+        let mut app = sample_app();
+        app.focused_section = FocusSection::Apps;
+        assert_eq!(app.app_list_mode, AppListMode::Generic);
+
+        app.handle_key(key(KeyCode::Char('a')));
+        assert_eq!(app.app_list_mode, AppListMode::Specific);
+        assert!(app.status_message.contains("specific"));
+
+        app.handle_key(key(KeyCode::Char('a')));
+        assert_eq!(app.app_list_mode, AppListMode::Generic);
+    }
+
+    #[test]
+    fn app_selection_clamps_against_current_mode_list() {
+        let mut app = sample_app();
+        app.focused_section = FocusSection::Apps;
+        app.snapshot.top_apps = vec![crate::tui::data::AppShare {
+            label: "Ghostty".to_string(),
+            detail: None,
+            focus_seconds: 10,
+            share_percent: 100,
+            sparkline: vec![1; 8],
+        }];
+        app.snapshot.top_app_details = Vec::new();
+        app.app_list_mode = AppListMode::Specific;
+        app.selected_app_index = 4;
+        app.app_scroll_offset = 2;
+
+        app.clamp_app_selection();
+
+        assert_eq!(app.selected_app_index, 0);
+        assert_eq!(app.app_scroll_offset, 0);
     }
 
     #[test]

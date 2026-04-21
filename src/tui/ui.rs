@@ -11,7 +11,7 @@ use ratatui::{
 };
 
 use crate::tui::{
-    app::{ChartMode, DashboardApp, FocusSection, TimeWindow},
+    app::{AppListMode, ChartMode, DashboardApp, FocusSection, TimeWindow},
     data::{ChartMetric, DashboardSnapshot, HeatmapMetric},
 };
 
@@ -254,26 +254,29 @@ fn render_activity_overview(frame: &mut Frame, area: Rect, app: &DashboardApp) {
 }
 
 fn render_activity_bars(frame: &mut Frame, area: Rect, app: &DashboardApp) {
-    let title = format!("apps activity—{}", time_window_phrase(app.time_window));
+    let title = format!(
+        "apps activity — {} — {}",
+        app_list_mode_label(app.app_list_mode),
+        time_window_phrase(app.time_window)
+    );
     let block = panel_block(&title, app.focused_section == FocusSection::Apps);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    if app.snapshot.top_apps.is_empty() {
+    let apps = app.current_app_list();
+    if apps.is_empty() {
         render_empty_panel(frame, inner, "No focused-app data in the selected range.");
         return;
     }
 
-    let metrics = app
-        .snapshot
-        .top_apps
+    let metrics = apps
         .iter()
         .map(|share| RowMetrics {
             label: share.label.as_str(),
             duration: Some(format_duration(share.focus_seconds)),
         })
         .collect::<Vec<_>>();
-    let needs_scrollbar = app.snapshot.top_apps.len() > inner.height as usize;
+    let needs_scrollbar = apps.len() > inner.height as usize;
     let sections = if needs_scrollbar && inner.width > 9 {
         Layout::default()
             .direction(Direction::Horizontal)
@@ -299,12 +302,10 @@ fn render_activity_bars(frame: &mut Frame, area: Rect, app: &DashboardApp) {
     let scroll = visible_app_window(
         app.selected_app_index,
         app.app_scroll_offset,
-        app.snapshot.top_apps.len(),
+        apps.len(),
         visible_rows,
     );
-    let visible_apps = app
-        .snapshot
-        .top_apps
+    let visible_apps = apps
         .iter()
         .skip(scroll.offset)
         .take(scroll.visible_rows)
@@ -335,13 +336,7 @@ fn render_activity_bars(frame: &mut Frame, area: Rect, app: &DashboardApp) {
         frame.render_widget(Block::default().style(Style::default().bg(BG)), sections[1]);
     }
     if needs_scrollbar && sections[2].width > 0 {
-        render_scrollbar(
-            frame,
-            sections[2],
-            scroll.offset,
-            visible_rows,
-            app.snapshot.top_apps.len(),
-        );
+        render_scrollbar(frame, sections[2], scroll.offset, visible_rows, apps.len());
     }
 }
 
@@ -797,6 +792,7 @@ fn render_help_modal(frame: &mut Frame, area: Rect, app: &DashboardApp) {
         Line::from("q / Esc        quit or close help"),
         Line::from("Tab / Shift-Tab  cycle focus sections"),
         Line::from("1..4           jump: totals, apps, chart, daily"),
+        Line::from("a              toggle apps list mode"),
         Line::from("m / j / k      next / advance / reverse chart metric"),
         Line::from("v              toggle chart mode"),
         Line::from("[ / ]          previous / next time window"),
@@ -1512,7 +1508,10 @@ fn focused_panel_hint(app: &DashboardApp) -> String {
             "summary \u{2190}\u{2192} cards  u ascii/unicode  tab focus".to_string()
         }
         FocusSection::Apps => {
-            "\u{2191}\u{2193} scroll apps  u ascii/unicode  tab focus".to_string()
+            format!(
+                "\u{2191}\u{2193} scroll apps  a {} mode  u ascii/unicode  tab focus",
+                app_list_mode_label(app.app_list_mode)
+            )
         }
         FocusSection::Activity => {
             format!(
@@ -1523,6 +1522,13 @@ fn focused_panel_hint(app: &DashboardApp) -> String {
         FocusSection::Heatmap => {
             "\u{2191}\u{2193} select day  u ascii/unicode  tab focus".to_string()
         }
+    }
+}
+
+fn app_list_mode_label(mode: AppListMode) -> &'static str {
+    match mode {
+        AppListMode::Generic => "generic",
+        AppListMode::Specific => "specific",
     }
 }
 

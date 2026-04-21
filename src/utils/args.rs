@@ -281,3 +281,46 @@ impl CollectorCli {
         println!();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn collector_subcommand_accepts_collector_only_flags() {
+        let cli = Cli::try_parse_from([
+            "vigil",
+            "collector",
+            "--db-path",
+            "/tmp/vigil.db",
+            "--debug",
+            "--dpi",
+            "1200",
+        ])
+        .expect("collector command should parse");
+
+        let Command::Collector(args) = cli.command else {
+            panic!("expected collector command");
+        };
+        assert_eq!(args.db_path, Some(PathBuf::from("/tmp/vigil.db")));
+        assert!(args.debug);
+        assert_eq!(args.dpi, Some(1200));
+    }
+
+    #[test]
+    fn dashboard_subcommand_rejects_collector_only_flags() {
+        let err = Cli::try_parse_from(["vigil", "dashboard", "--dpi", "1200"])
+            .expect_err("dashboard should reject collector-only flags");
+        let rendered = err.to_string();
+        assert!(rendered.contains("--dpi"));
+    }
+
+    #[test]
+    fn root_command_requires_explicit_subcommand() {
+        let err =
+            Cli::try_parse_from(["vigil"]).expect_err("root command should require subcommand");
+        let rendered = err.to_string();
+        assert!(rendered.contains("Usage:"));
+    }
+}

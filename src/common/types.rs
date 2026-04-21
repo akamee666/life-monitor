@@ -92,3 +92,18 @@ pub struct WindowsSpecific {
     pub last_abs_x: Option<i32>,
     pub last_abs_y: Option<i32>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Window;
+
+    #[test]
+    fn app_identifier_is_trimmed_and_lowercased() {
+        let window = Window {
+            name: "Ghostty".to_string(),
+            class: "  Com.Mitchellh.Ghostty  ".to_string(),
+        };
+
+        assert_eq!(window.app_identifier(), "com.mitchellh.ghostty");
+    }
+}
