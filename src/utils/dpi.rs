@@ -49,19 +49,19 @@ pub fn resolve_mouse_dpi(cli_dpi: Option<u32>) -> Result<MouseDpiConfig> {
 fn prompt_and_store_mouse_dpi() -> Result<MouseDpiConfig> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         bail!(
-            "Life Monitor could not determine a mouse DPI value automatically and no saved DPI is available.\n\
+            "Vigil could not determine a mouse DPI value automatically and no saved DPI is available.\n\
              Mouse DPI is needed to estimate real mouse travel in centimeters from raw input counts.\n\
              What you can do:\n\
-             - run Life Monitor once with --dpi <VALUE>\n\
+             - run Vigil once with --dpi <VALUE>\n\
              - or run it in a terminal once and enter the DPI when prompted\n\
-             - after that, Life Monitor will remember the value for future runs\n\
+             - after that, Vigil will remember the value for future runs\n\
              - if you do not know your mouse DPI, start with {} and calibrate later",
             DEFAULT_MOUSE_DPI
         );
     }
 
     eprintln!(
-        "Life Monitor could not determine your mouse DPI from the operating system.\n\
+        "Vigil could not determine your mouse DPI from the operating system.\n\
          Enter the DPI/CPI used by your mouse. This value will be remembered for later runs.\n\
          Example: {}",
         DEFAULT_MOUSE_DPI

@@ -84,13 +84,13 @@ jobs:
       - name: Package Linux binary
         run: |
           mkdir -p "${RUNNER_TEMP}/release-assets"
-          zip -j "${RUNNER_TEMP}/release-assets/life-monitor-${{ needs.validate-tag.outputs.crate_version }}-linux-x86_64.zip" target/x86_64-unknown-linux-gnu/release/life-monitor
+          zip -j "${RUNNER_TEMP}/release-assets/vigil-${{ needs.validate-tag.outputs.crate_version }}-linux-x86_64.zip" target/x86_64-unknown-linux-gnu/release/vigil
 
       - name: Upload Linux release asset
         uses: actions/upload-artifact@v4
         with:
           name: linux-release-asset
-          path: ${{ runner.temp }}/release-assets/life-monitor-${{ needs.validate-tag.outputs.crate_version }}-linux-x86_64.zip
+          path: ${{ runner.temp }}/release-assets/vigil-${{ needs.validate-tag.outputs.crate_version }}-linux-x86_64.zip
 
   test-windows:
     runs-on: windows-latest
@@ -116,13 +116,13 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP/release-assets" | Out-Null
-          Compress-Archive -Path target/x86_64-pc-windows-msvc/release/life-monitor.exe -DestinationPath "$env:RUNNER_TEMP/release-assets/life-monitor-${{ needs.validate-tag.outputs.crate_version }}-windows-x86_64.zip" -Force
+          Compress-Archive -Path target/x86_64-pc-windows-msvc/release/vigil.exe -DestinationPath "$env:RUNNER_TEMP/release-assets/vigil-${{ needs.validate-tag.outputs.crate_version }}-windows-x86_64.zip" -Force
 
       - name: Upload Windows release asset
         uses: actions/upload-artifact@v4
         with:
           name: windows-release-asset
-          path: ${{ runner.temp }}/release-assets/life-monitor-${{ needs.validate-tag.outputs.crate_version }}-windows-x86_64.zip
+          path: ${{ runner.temp }}/release-assets/vigil-${{ needs.validate-tag.outputs.crate_version }}-windows-x86_64.zip
 
   publish-crate:
     runs-on: ubuntu-latest
@@ -202,6 +202,6 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           files: |
-            release-assets/life-monitor-${{ needs.validate-tag.outputs.crate_version }}-linux-x86_64.zip
-            release-assets/life-monitor-${{ needs.validate-tag.outputs.crate_version }}-windows-x86_64.zip
+            release-assets/vigil-${{ needs.validate-tag.outputs.crate_version }}-linux-x86_64.zip
+            release-assets/vigil-${{ needs.validate-tag.outputs.crate_version }}-windows-x86_64.zip
           body_path: ${{ steps.git-cliff.outputs.changelog }}

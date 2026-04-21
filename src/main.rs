@@ -93,7 +93,7 @@ async fn run_sync_command(action: SyncCommand, args: SyncCli) -> Result<()> {
         300,
     )?
     .with_context(|| {
-        "Sync is not configured. Pass --sync-remote-url or set LIFE_MONITOR_SYNC_REMOTE_URL."
+        "Sync is not configured. Pass --sync-remote-url or set VIGIL_SYNC_REMOTE_URL."
     })?;
     let remote = SqldRemote::new(&sync_config.remote_url, &sync_config.auth_token).await?;
 
@@ -125,7 +125,7 @@ async fn run_collector(mut args: CollectorCli) -> Result<()> {
         configure_startup(&args).with_context(|| format!("Failed to {} startup", state))?;
 
         info!(
-            "Startup {}d successfully. This command only installs or removes the startup entry and then exits. If you want to keep collecting in this session, run `life-monitor collector` again without the startup flags.",
+            "Startup {}d successfully. This command only installs or removes the startup entry and then exits. If you want to keep collecting in this session, run `vigil collector` again without the startup flags.",
             state
         );
         return Ok(());
@@ -297,11 +297,11 @@ mod tests {
     use uuid::Uuid;
 
     fn unique_temp_db(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("life-monitor-main-{name}-{}.db", Uuid::new_v4()))
+        std::env::temp_dir().join(format!("vigil-main-{name}-{}.db", Uuid::new_v4()))
     }
 
     fn unique_temp_dir(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("life-monitor-main-{name}-{}", Uuid::new_v4()))
+        std::env::temp_dir().join(format!("vigil-main-{name}-{}", Uuid::new_v4()))
     }
 
     fn env_lock() -> &'static Mutex<()> {
@@ -376,8 +376,8 @@ mod tests {
         let _guard = env_lock().lock().unwrap();
         let data_dir = unique_temp_dir("data-dir");
         std::fs::create_dir_all(&data_dir)?;
-        std::env::set_var("LIFE_MONITOR_SKIP_INSTANCE_LOCK", "1");
-        std::env::set_var("LIFE_MONITOR_DATA_DIR", &data_dir);
+        std::env::set_var("VIGIL_SKIP_INSTANCE_LOCK", "1");
+        std::env::set_var("VIGIL_DATA_DIR", &data_dir);
         let db_path = unique_temp_db("export-source");
         let export_path = unique_temp_db("export-out");
         let conn = open_con_at(&db_path)?;
@@ -401,8 +401,8 @@ mod tests {
         drop(conn);
         std::fs::remove_file(db_path)?;
         std::fs::remove_file(export_path)?;
-        std::env::remove_var("LIFE_MONITOR_SKIP_INSTANCE_LOCK");
-        std::env::remove_var("LIFE_MONITOR_DATA_DIR");
+        std::env::remove_var("VIGIL_SKIP_INSTANCE_LOCK");
+        std::env::remove_var("VIGIL_DATA_DIR");
         std::fs::remove_dir_all(data_dir)?;
         Ok(())
     }
@@ -414,8 +414,8 @@ mod tests {
         let _guard = env_lock().lock().unwrap();
         let data_dir = unique_temp_dir("data-dir");
         std::fs::create_dir_all(&data_dir)?;
-        std::env::set_var("LIFE_MONITOR_SKIP_INSTANCE_LOCK", "1");
-        std::env::set_var("LIFE_MONITOR_DATA_DIR", &data_dir);
+        std::env::set_var("VIGIL_SKIP_INSTANCE_LOCK", "1");
+        std::env::set_var("VIGIL_DATA_DIR", &data_dir);
         let dest_path = unique_temp_db("dry-run-dest");
         let source_path = unique_temp_db("dry-run-source");
         let export_path = unique_temp_db("dry-run-export");
@@ -460,8 +460,8 @@ mod tests {
         std::fs::remove_file(dest_path)?;
         std::fs::remove_file(source_path)?;
         std::fs::remove_file(export_path)?;
-        std::env::remove_var("LIFE_MONITOR_SKIP_INSTANCE_LOCK");
-        std::env::remove_var("LIFE_MONITOR_DATA_DIR");
+        std::env::remove_var("VIGIL_SKIP_INSTANCE_LOCK");
+        std::env::remove_var("VIGIL_DATA_DIR");
         std::fs::remove_dir_all(data_dir)?;
         Ok(())
     }
@@ -473,8 +473,8 @@ mod tests {
         let _guard = env_lock().lock().unwrap();
         let data_dir = unique_temp_dir("data-dir");
         std::fs::create_dir_all(&data_dir)?;
-        std::env::set_var("LIFE_MONITOR_SKIP_INSTANCE_LOCK", "1");
-        std::env::set_var("LIFE_MONITOR_DATA_DIR", &data_dir);
+        std::env::set_var("VIGIL_SKIP_INSTANCE_LOCK", "1");
+        std::env::set_var("VIGIL_DATA_DIR", &data_dir);
         let dest_path = unique_temp_db("custom-dest");
         let source_path = unique_temp_db("custom-source");
         let export_path = unique_temp_db("custom-export");
@@ -536,8 +536,8 @@ mod tests {
                 let _ = std::fs::remove_file(entry.path());
             }
         }
-        std::env::remove_var("LIFE_MONITOR_SKIP_INSTANCE_LOCK");
-        std::env::remove_var("LIFE_MONITOR_DATA_DIR");
+        std::env::remove_var("VIGIL_SKIP_INSTANCE_LOCK");
+        std::env::remove_var("VIGIL_DATA_DIR");
         std::fs::remove_dir_all(data_dir)?;
         Ok(())
     }

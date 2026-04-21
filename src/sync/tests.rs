@@ -25,7 +25,7 @@ use super::types::{
 };
 
 fn unique_temp_db(name: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("life-monitor-sync-{name}-{}.db", Uuid::new_v4()))
+    std::env::temp_dir().join(format!("vigil-sync-{name}-{}.db", Uuid::new_v4()))
 }
 
 fn build_test_db(path: &Path) -> Result<Connection> {

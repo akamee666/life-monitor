@@ -32,7 +32,7 @@ pub struct CollectorCli {
         help_heading = "Collection",
         value_name = "SECS",
         help = "How often buffered activity is flushed to the database.",
-        long_help = "Choose how often Life Monitor writes buffered activity buckets to SQLite.\n\nDefault: 300 seconds.\nDebug mode uses 5 seconds if you do not set an interval yourself.\n\nShorter intervals reduce the amount of data waiting in memory. Longer intervals reduce database writes."
+        long_help = "Choose how often Vigil writes buffered activity buckets to SQLite.\n\nDefault: 300 seconds.\nDebug mode uses 5 seconds if you do not set an interval yourself.\n\nShorter intervals reduce the amount of data waiting in memory. Longer intervals reduce database writes."
     )]
     pub interval: Option<u32>,
 
@@ -62,7 +62,7 @@ pub struct CollectorCli {
         help_heading = "Database",
         value_name = "PATH",
         help = "Store or read the collector SQLite database from a custom path.",
-        long_help = "Use a specific SQLite database file instead of the default location.\n\nThis can point to:\n- a local file\n- another disk or partition\n- a mounted network share such as Samba or NFS\n\nWhen you provide this option, Life Monitor remembers the path and uses it again on later runs until you provide a different one.\n\nLife Monitor only uses paths that the operating system can already access. It does not mount remote shares or prompt for share credentials."
+        long_help = "Use a specific SQLite database file instead of the default location.\n\nThis can point to:\n- a local file\n- another disk or partition\n- a mounted network share such as Samba or NFS\n\nWhen you provide this option, Vigil remembers the path and uses it again on later runs until you provide a different one.\n\nVigil only uses paths that the operating system can already access. It does not mount remote shares or prompt for share credentials."
     )]
     pub db_path: Option<PathBuf>,
 
@@ -109,7 +109,7 @@ pub struct CollectorCli {
         help_heading = "Collection",
         value_name = "DPI",
         help = "Mouse DPI/CPI used for estimating physical mouse distance in centimeters.",
-        long_help = "Sets the mouse DPI/CPI used when converting raw mouse counts into estimated real-world distance.\n\nIf you provide this once, Life Monitor remembers it and reuses it on later runs until you provide a new value.\n\nIf you do not provide it and no remembered value exists, Life Monitor will ask for it on interactive runs.\n\nStart with 800 if you do not know your mouse DPI yet, then adjust later if needed.",
+        long_help = "Sets the mouse DPI/CPI used when converting raw mouse counts into estimated real-world distance.\n\nIf you provide this once, Vigil remembers it and reuses it on later runs until you provide a new value.\n\nIf you do not provide it and no remembered value exists, Vigil will ask for it on interactive runs.\n\nStart with 800 if you do not know your mouse DPI yet, then adjust later if needed.",
         value_parser = value_parser!(u32).range(1..),
     )]
     pub dpi: Option<u32>,
@@ -128,7 +128,7 @@ pub struct CollectorCli {
         long,
         help_heading = "Startup",
         help = "Enable automatic startup for the current user session.",
-        long_help = "Configures Life Monitor to start automatically in collector mode for the current user.\n\nOn Windows, this creates a shortcut in the Startup folder.\nOn Linux, Life Monitor will ask you to choose between the recommended XDG autostart mode and the advanced systemd --user fallback mode, then explain when to pick each one.",
+        long_help = "Configures Vigil to start automatically in collector mode for the current user.\n\nOn Windows, this creates a shortcut in the Startup folder.\nOn Linux, Vigil will ask you to choose between the recommended XDG autostart mode and the advanced systemd --user fallback mode, then explain when to pick each one.",
         conflicts_with = "disable_startup"
     )]
     pub enable_startup: bool,
@@ -137,7 +137,7 @@ pub struct CollectorCli {
         long,
         help_heading = "Startup",
         help = "Disable automatic startup for the current user session.",
-        long_help = "Removes Life Monitor collector startup for the current user.\n\nOn Windows, this removes the Startup shortcut.\nOn Linux, this removes the XDG autostart entry and disables/removes the optional systemd --user fallback unit.",
+        long_help = "Removes Vigil collector startup for the current user.\n\nOn Windows, this removes the Startup shortcut.\nOn Linux, this removes the XDG autostart entry and disables/removes the optional systemd --user fallback unit.",
         conflicts_with = "enable_startup"
     )]
     pub disable_startup: bool,
@@ -227,14 +227,14 @@ pub enum Command {
 }
 
 #[derive(Parser, Debug, Clone)]
-#[command(name = "Life Monitor")]
+#[command(name = "vigil")]
 #[command(subcommand_required = true, arg_required_else_help = true)]
 #[command(about = "Track keyboard, mouse, and focused-window activity into a SQLite database.")]
 #[command(
-    long_about = "Life Monitor records keyboard, mouse, scroll, and focused-window activity into a local SQLite database.\n\nUse `collector` to run the background collector and maintenance commands.\nUse `dashboard` to inspect the database through the interactive terminal dashboard."
+    long_about = "Vigil records keyboard, mouse, scroll, and focused-window activity into a local SQLite database.\n\nUse `collector` to run the background collector and maintenance commands.\nUse `dashboard` to inspect the database through the interactive terminal dashboard."
 )]
 #[command(
-    after_long_help = "Examples:\n  life-monitor collector\n  life-monitor collector --debug --interval 10\n  life-monitor collector --db-path /mnt/shared/life-monitor/data.db\n  life-monitor collector --export-db ./snapshot.sqlite\n  life-monitor collector --import-db ./snapshot.sqlite --dry-run\n  life-monitor dashboard"
+    after_long_help = "Examples:\n  vigil collector\n  vigil collector --debug --interval 10\n  vigil collector --db-path /mnt/shared/vigil/data.db\n  vigil collector --export-db ./snapshot.sqlite\n  vigil collector --import-db ./snapshot.sqlite --dry-run\n  vigil dashboard"
 )]
 pub struct Cli {
     #[command(subcommand)]

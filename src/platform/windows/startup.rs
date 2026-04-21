@@ -11,7 +11,7 @@ use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
 
 use crate::utils::args::CollectorCli;
 
-const SHORTCUT_NAME: &str = "life-monitor.lnk";
+const SHORTCUT_NAME: &str = "vigil.lnk";
 const COLLECTOR_SUBCOMMAND: &str = "collector";
 
 #[allow(dead_code)]
@@ -239,7 +239,7 @@ mod tests {
             startup_dir: PathBuf::from(
                 r"C:\Users\me\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup",
             ),
-            current_exe: PathBuf::from(r"C:\tools\life-monitor.exe"),
+            current_exe: PathBuf::from(r"C:\tools\vigil.exe"),
         };
         let manager = FakeShortcutManager::default();
 
@@ -262,7 +262,7 @@ mod tests {
             startup_dir: PathBuf::from(
                 r"C:\Users\me\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup",
             ),
-            current_exe: PathBuf::from(r"C:\tools\life-monitor.exe"),
+            current_exe: PathBuf::from(r"C:\tools\vigil.exe"),
         };
         let manager = FakeShortcutManager::default();
         manager.existing.borrow_mut().push(ctx.shortcut_path());
@@ -282,7 +282,7 @@ mod tests {
             startup_dir: PathBuf::from(
                 r"C:\Users\me\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup",
             ),
-            current_exe: PathBuf::from(r"C:\tools\life-monitor.exe"),
+            current_exe: PathBuf::from(r"C:\tools\vigil.exe"),
         };
         let manager = FakeShortcutManager::default();
 

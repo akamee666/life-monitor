@@ -1,5 +1,5 @@
 {
-  description = "Development and build flake for life-monitor";
+  description = "Development and build flake for vigil";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";

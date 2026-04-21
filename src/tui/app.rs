@@ -383,7 +383,7 @@ mod tests {
 
     fn sample_app() -> DashboardApp {
         DashboardApp {
-            db_path: PathBuf::from("/tmp/life-monitor.db"),
+            db_path: PathBuf::from("/tmp/vigil.db"),
             ascii: false,
             snapshot: DashboardSnapshot {
                 generated_at_local: Local::now(),
@@ -410,7 +410,7 @@ mod tests {
                     current_app: None,
                     last_activity_at_utc: None,
                     sync_summary: "local-only".to_string(),
-                    db_path_display: "/tmp/life-monitor.db".to_string(),
+                    db_path_display: "/tmp/vigil.db".to_string(),
                 },
             },
             focused_section: FocusSection::Summary,

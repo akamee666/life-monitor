@@ -55,7 +55,7 @@ pub fn try_ensure_single_instance() -> bool {
 }
 
 fn should_skip_instance_lock() -> bool {
-    std::env::var("LIFE_MONITOR_SKIP_INSTANCE_LOCK")
+    std::env::var("VIGIL_SKIP_INSTANCE_LOCK")
         .map(|value| value == "1")
         .unwrap_or(false)
 }
@@ -65,7 +65,7 @@ pub fn db_operation_lock_path(db_path: &Path) -> PathBuf {
         .file_name()
         .and_then(|name| name.to_str())
         .map(|name| format!("{name}.oplock"))
-        .unwrap_or_else(|| "life-monitor.db.oplock".to_string());
+        .unwrap_or_else(|| "vigil.db.oplock".to_string());
 
     db_path
         .parent()
@@ -121,7 +121,7 @@ fn acquire_instance_lock(lock_f_path: &PathBuf) -> Result<File> {
             let _ = file.read_to_string(&mut buf);
             let pid = buf.trim();
             let pid = if pid.is_empty() { "N/A" } else { pid };
-            anyhow::bail!("Another instance is already running with pid: {pid}, you shouldn't start more than one instance of life-monitor");
+            anyhow::bail!("Another instance is already running with pid: {pid}, you shouldn't start more than one instance of vigil");
         }
     }
     Ok(file)
@@ -215,12 +215,12 @@ mod tests {
     /// by deriving the lock path from a fixed path instead of touching the real filesystem.
     #[test]
     fn db_operation_lock_path_uses_database_directory() {
-        let path = Path::new("/tmp/life-monitor/shared.db");
+        let path = Path::new("/tmp/vigil/shared.db");
         let lock_path = db_operation_lock_path(path);
 
         assert_eq!(
             lock_path,
-            PathBuf::from("/tmp/life-monitor/shared.db.oplock")
+            PathBuf::from("/tmp/vigil/shared.db.oplock")
         );
     }
 }

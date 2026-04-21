@@ -962,32 +962,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "life-monitor"
-version = "0.1.7"
-dependencies = [
- "anyhow",
- "bindgen",
- "chrono",
- "clap",
- "crossterm",
- "embed-resource",
- "libsql",
- "nix",
- "ratatui",
- "rusqlite",
- "sha2",
- "sysinfo",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "wayland-client",
- "wayland-protocols-wlr",
- "windows",
- "x11rb",
-]
-
-[[package]]
 name = "linux-raw-sys"
 version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2086,6 +2060,32 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "vigil"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "bindgen",
+ "chrono",
+ "clap",
+ "crossterm",
+ "embed-resource",
+ "libsql",
+ "nix",
+ "ratatui",
+ "rusqlite",
+ "sha2",
+ "sysinfo",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "wayland-client",
+ "wayland-protocols-wlr",
+ "windows",
+ "x11rb",
+]
 
 [[package]]
 name = "vswhom"

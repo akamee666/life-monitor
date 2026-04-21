@@ -98,7 +98,7 @@ impl LocalDb {
 
 fn format_remembered_db_open_error(path: &std::path::Path) -> String {
     format!(
-        "Failed to open the remembered database path '{}'.\nThis usually means the path is no longer available, such as an unmounted or disconnected network share.\nWhat you can do:\n- mount or reconnect the share again so Life Monitor can access it\n- run Life Monitor with --db-path <NEW_PATH> to switch to another database now\n- later, import the old database or a snapshot once it is available again",
+        "Failed to open the remembered database path '{}'.\nThis usually means the path is no longer available, such as an unmounted or disconnected network share.\nWhat you can do:\n- mount or reconnect the share again so Vigil can access it\n- run Vigil with --db-path <NEW_PATH> to switch to another database now\n- later, import the old database or a snapshot once it is available again",
         path.display()
     )
 }

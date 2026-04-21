@@ -25,8 +25,8 @@ use ratatui::{
 };
 use tracing::*;
 
-const SERVICE_NAME: &str = "life-monitor.service";
-const DESKTOP_ENTRY_NAME: &str = "life-monitor.desktop";
+const SERVICE_NAME: &str = "vigil.service";
+const DESKTOP_ENTRY_NAME: &str = "vigil.desktop";
 const COLLECTOR_SUBCOMMAND: &str = "collector";
 const SESSION_ENV_VARS: [&str; 5] = [
     "DISPLAY",
@@ -72,7 +72,7 @@ impl XdgAutostartProbe {
 
         if self.display_server == DisplayServer::Unknown {
             warnings.push(
-                "The current process does not look like it is running inside a recognizable graphical Wayland or X11 session. Enable startup from the desktop session where you normally run Life Monitor.".to_string(),
+                "The current process does not look like it is running inside a recognizable graphical Wayland or X11 session. Enable startup from the desktop session where you normally run Vigil.".to_string(),
             );
         }
 
@@ -267,7 +267,7 @@ fn render_desktop_entry(executable: &Path, working_dir: &Path) -> String {
         "[Desktop Entry]\n\
 Type=Application\n\
 Version=1.0\n\
-Name=Life Monitor\n\
+Name=Vigil\n\
 Comment=Track keyboard, mouse, and focused-window activity\n\
 Exec={}\n\
 TryExec={}\n\
@@ -288,7 +288,7 @@ X-GNOME-Autostart-enabled=true\n",
 fn render_service_unit(executable: &Path, working_dir: &Path) -> String {
     format!(
         "[Unit]\n\
-Description=Life Monitor activity tracker\n\
+Description=Vigil activity tracker\n\
 After=graphical-session.target\n\
 PartOf=graphical-session.target\n\
 \n\
@@ -314,7 +314,7 @@ WantedBy=graphical-session.target\n",
 fn prompt_startup_mode() -> Result<LinuxStartupMode> {
     if !io::stdin().is_terminal() {
         return Err(anyhow!(
-            "Enabling Linux startup now requires an interactive choice between XDG and systemd --user modes. Run `life-monitor collector --enable-startup` from a terminal and choose a mode there."
+            "Enabling Linux startup now requires an interactive choice between XDG and systemd --user modes. Run `vigil collector --enable-startup` from a terminal and choose a mode there."
         ));
     }
     run_startup_mode_picker()
@@ -474,7 +474,7 @@ fn startup_mode_choices() -> [StartupModeChoice; 2] {
         StartupModeChoice {
             mode: LinuxStartupMode::Xdg,
             title: "XDG autostart (recommended)",
-            description: "Choose this if you use a normal desktop environment where login-session autostart already works for other applications. This is the standard path for GNOME, KDE Plasma, Xfce, Cinnamon, LXQt, MATE, Budgie and most mainstream desktop sessions. Life Monitor writes a .desktop entry into your XDG autostart directory and your desktop launches it after graphical login.",
+            description: "Choose this if you use a normal desktop environment where login-session autostart already works for other applications. This is the standard path for GNOME, KDE Plasma, Xfce, Cinnamon, LXQt, MATE, Budgie and most mainstream desktop sessions. Vigil writes a .desktop entry into your XDG autostart directory and your desktop launches it after graphical login.",
         },
         StartupModeChoice {
             mode: LinuxStartupMode::Systemd,
@@ -648,14 +648,14 @@ fn remove_systemd_startup() -> Result<()> {
     let unit_path = service_unit_path();
     if !unit_path.exists() {
         debug!(
-            "No Life Monitor systemd user unit exists at '{}'; nothing to remove.",
+            "No Vigil systemd user unit exists at '{}'; nothing to remove.",
             unit_path.display()
         );
         return Ok(());
     }
 
     info!(
-        "Removing Life Monitor systemd --user startup unit at '{}'.",
+        "Removing Vigil systemd --user startup unit at '{}'.",
         unit_path.display()
     );
 
@@ -702,7 +702,7 @@ pub fn configure_startup(args: &CollectorCli) -> Result<()> {
             current_exe.display()
         );
         debug!(
-            "Removing any existing Life Monitor startup artifacts before creating the new startup entry."
+            "Removing any existing Vigil startup artifacts before creating the new startup entry."
         );
         remove_xdg_autostart()?;
         remove_systemd_startup()?;
@@ -715,10 +715,10 @@ pub fn configure_startup(args: &CollectorCli) -> Result<()> {
                     entry_path.display()
                 );
                 info!(
-                    "Startup was configured successfully. Life Monitor will auto-start on the next graphical login."
+                    "Startup was configured successfully. Vigil will auto-start on the next graphical login."
                 );
                 info!(
-                    "This command does not launch a second Life Monitor instance immediately. If you want to keep collecting now, run Life Monitor again without the startup flags."
+                    "This command does not launch a second Vigil instance immediately. If you want to keep collecting now, run Vigil again without the startup flags."
                 );
 
                 for warning in XdgAutostartProbe::gather().warnings() {
@@ -733,13 +733,13 @@ pub fn configure_startup(args: &CollectorCli) -> Result<()> {
                     unit_path.display()
                 );
                 info!(
-                    "Startup was configured successfully. Life Monitor will auto-start on future graphical logins when your systemd user session reaches the graphical session target."
+                    "Startup was configured successfully. Vigil will auto-start on future graphical logins when your systemd user session reaches the graphical session target."
                 );
                 info!(
-                    "The startup unit was not started immediately. This avoids racing the current Life Monitor instance against its single-instance lock."
+                    "The startup unit was not started immediately. This avoids racing the current Vigil instance against its single-instance lock."
                 );
                 info!(
-                    "If you want to keep collecting now, run Life Monitor again without the startup flags. If you want to test the systemd startup unit itself, stop the current Life Monitor process first and then run: systemctl --user start {}",
+                    "If you want to keep collecting now, run Vigil again without the startup flags. If you want to test the systemd startup unit itself, stop the current Vigil process first and then run: systemctl --user start {}",
                     SERVICE_NAME
                 );
 
@@ -758,7 +758,7 @@ pub fn configure_startup(args: &CollectorCli) -> Result<()> {
 
         if looks_like_repo_build_output(&current_exe) {
             warn!(
-                "Startup was enabled from a repository build output at '{}'. This works, but it is fragile if you clean, rebuild, or move the repository. Prefer enabling startup from a stable installed binary such as '~/.cargo/bin/life-monitor'.",
+                "Startup was enabled from a repository build output at '{}'. This works, but it is fragile if you clean, rebuild, or move the repository. Prefer enabling startup from a stable installed binary such as '~/.cargo/bin/vigil'.",
                 current_exe.display()
             );
         }
@@ -769,7 +769,7 @@ pub fn configure_startup(args: &CollectorCli) -> Result<()> {
     }
 
     if args.disable_startup {
-        info!("Disabling all Life Monitor Linux startup artifacts for the current user.");
+        info!("Disabling all Vigil Linux startup artifacts for the current user.");
         remove_xdg_autostart()?;
         remove_systemd_startup()?;
     }
@@ -840,7 +840,7 @@ mod tests {
     /// keeps service startup free of hardcoded graphical-session environment values.
     #[test]
     fn render_service_unit_includes_graphical_session_binding_without_env_snapshot() {
-        let unit = render_service_unit(Path::new("/tmp/life-monitor"), Path::new("/tmp"));
+        let unit = render_service_unit(Path::new("/tmp/vigil"), Path::new("/tmp"));
 
         assert!(unit.contains("Restart=on-failure"));
         assert!(unit.contains("After=graphical-session.target"));
@@ -848,7 +848,7 @@ mod tests {
         assert!(unit.contains("WantedBy=graphical-session.target"));
         assert!(!unit.contains("Environment="));
         assert!(unit.contains("WorkingDirectory=/tmp"));
-        assert!(unit.contains("ExecStart=/tmp/life-monitor collector"));
+        assert!(unit.contains("ExecStart=/tmp/vigil collector"));
     }
 
     /// Verifies that the generated desktop entry uses XDG autostart conventions and
@@ -856,14 +856,14 @@ mod tests {
     #[test]
     fn render_desktop_entry_uses_absolute_exec_and_working_directory() {
         let entry = render_desktop_entry(
-            Path::new("/tmp/with spaces/life-monitor"),
+            Path::new("/tmp/with spaces/vigil"),
             Path::new("/tmp/with spaces"),
         );
 
         assert!(entry.contains("Type=Application"));
-        assert!(entry.contains("Name=Life Monitor"));
-        assert!(entry.contains("Exec=\"/tmp/with spaces/life-monitor\" collector"));
-        assert!(entry.contains("TryExec=/tmp/with spaces/life-monitor"));
+        assert!(entry.contains("Name=Vigil"));
+        assert!(entry.contains("Exec=\"/tmp/with spaces/vigil\" collector"));
+        assert!(entry.contains("TryExec=/tmp/with spaces/vigil"));
         assert!(entry.contains("Path=/tmp/with spaces"));
         assert!(entry.contains("Terminal=false"));
     }
@@ -873,8 +873,8 @@ mod tests {
     #[test]
     fn systemd_path_escape_escapes_whitespace_without_adding_quotes() {
         assert_eq!(
-            systemd_path_escape("/tmp/with spaces/life-monitor"),
-            "/tmp/with\\ spaces/life-monitor"
+            systemd_path_escape("/tmp/with spaces/vigil"),
+            "/tmp/with\\ spaces/vigil"
         );
         assert_eq!(systemd_path_escape("/tmp/plain"), "/tmp/plain");
     }
@@ -885,8 +885,8 @@ mod tests {
     fn desktop_exec_escape_quotes_only_when_required() {
         assert_eq!(desktop_exec_escape("/tmp/plain"), "/tmp/plain");
         assert_eq!(
-            desktop_exec_escape("/tmp/with spaces/life-monitor"),
-            "\"/tmp/with spaces/life-monitor\""
+            desktop_exec_escape("/tmp/with spaces/vigil"),
+            "\"/tmp/with spaces/vigil\""
         );
         assert_eq!(
             desktop_exec_escape("/tmp/with$cash"),
@@ -933,13 +933,13 @@ mod tests {
     #[test]
     fn looks_like_repo_build_output_matches_target_profiles() {
         assert!(looks_like_repo_build_output(Path::new(
-            "/home/me/project/target/debug/life-monitor"
+            "/home/me/project/target/debug/vigil"
         )));
         assert!(looks_like_repo_build_output(Path::new(
-            "/home/me/project/target/release/life-monitor"
+            "/home/me/project/target/release/vigil"
         )));
         assert!(!looks_like_repo_build_output(Path::new(
-            "/home/me/.cargo/bin/life-monitor"
+            "/home/me/.cargo/bin/vigil"
         )));
     }
 }

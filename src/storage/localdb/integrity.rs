@@ -32,7 +32,7 @@ pub(crate) fn validate_schema_version(conn: &Connection, label: &str) -> Result<
 
     if version != SCHEMA_VERSION {
         bail!(
-            "{label} uses schema version {version}, but life-monitor expects {}",
+            "{label} uses schema version {version}, but vigil expects {}",
             SCHEMA_VERSION
         );
     }

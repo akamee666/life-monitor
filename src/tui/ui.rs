@@ -797,7 +797,7 @@ fn render_help_modal(frame: &mut Frame, area: Rect, app: &DashboardApp) {
         Line::from("r / F5         reload data from SQLite"),
         Line::from("u              toggle unicode / ascii glyphs"),
         Line::from(""),
-        Line::from("Dashboard is read-only. Run `life-monitor` as a separate"),
+        Line::from("Dashboard is read-only. Run `vigil collector` as a separate"),
         Line::from("process (or configure autostart) to collect live data."),
         Line::from("The ⚠ indicator in the status bar means the collector"),
         Line::from("has not written new data in the last 20 minutes."),

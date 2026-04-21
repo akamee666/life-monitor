@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 /// Returns a platform-specific path for storing program-related files and ensures the directory exists.
 pub fn program_data_dir() -> io::Result<PathBuf> {
-    if let Ok(path) = env::var("LIFE_MONITOR_DATA_DIR") {
+    if let Ok(path) = env::var("VIGIL_DATA_DIR") {
         let path = PathBuf::from(path);
         std::fs::create_dir_all(&path)?;
         return Ok(path);
@@ -12,8 +12,8 @@ pub fn program_data_dir() -> io::Result<PathBuf> {
 
     #[cfg(test)]
     {
-        if env::var_os("LIFE_MONITOR_DATA_DIR").is_none() {
-            let path = std::env::temp_dir().join("life_monitor_test_data");
+        if env::var_os("VIGIL_DATA_DIR").is_none() {
+            let path = std::env::temp_dir().join("vigil_test_data");
             std::fs::create_dir_all(&path)?;
             return Ok(path);
         }
@@ -41,7 +41,7 @@ pub fn program_data_dir() -> io::Result<PathBuf> {
         ));
     };
 
-    let path = base_dir.join("life_monitor");
+    let path = base_dir.join("vigil");
     std::fs::create_dir_all(&path)?;
     Ok(path)
 }

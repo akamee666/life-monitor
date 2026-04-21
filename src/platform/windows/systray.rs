@@ -40,7 +40,7 @@ pub async fn init_tray() -> Result<()> {
 fn run_tray_loop() -> Result<()> {
     unsafe {
         let instance = GetModuleHandleW(None)?;
-        let class_name = w!("LIFE_MONITOR_TRAY");
+        let class_name = w!("VIGIL_TRAY");
 
         register_tray_class(instance.into(), class_name)?;
 
@@ -85,7 +85,7 @@ unsafe fn create_tray_window(hinstance: HINSTANCE, class_name: PCWSTR) -> Result
     let hwnd = CreateWindowExW(
         WINDOW_EX_STYLE::default(),
         class_name,
-        w!("Life Monitor"),
+        w!("Vigil"),
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT,
         CW_USEDEFAULT,
@@ -119,7 +119,7 @@ unsafe fn create_notify_icon(hwnd: HWND, h_icon: HICON) -> Result<NOTIFYICONDATA
         ..Default::default()
     };
 
-    let tip = "Life Monitor"
+    let tip = "Vigil"
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect::<Vec<u16>>();
@@ -193,7 +193,7 @@ fn handle_command(cmd: u16) {
                     "/C",
                     "start",
                     "",
-                    "https://github.com/akamee666/life-monitor",
+                    "https://github.com/akamee666/vigil",
                 ])
                 .spawn();
         }

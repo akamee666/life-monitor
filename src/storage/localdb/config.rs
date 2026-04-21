@@ -85,7 +85,7 @@ fn normalize_custom_db_path(path: &Path) -> Result<PathBuf> {
 
         if is_empty {
             info!(
-                "--db-path pointed to the empty directory '{}'. Life Monitor will create a new SQLite database at '{}'.",
+                "--db-path pointed to the empty directory '{}'. Vigil will create a new SQLite database at '{}'.",
                 path.display(),
                 db_path.display()
             );
@@ -97,7 +97,7 @@ fn normalize_custom_db_path(path: &Path) -> Result<PathBuf> {
             );
         } else {
             info!(
-                "--db-path pointed to the directory '{}'. Life Monitor will create a SQLite database file at '{}'.",
+                "--db-path pointed to the directory '{}'. Vigil will create a SQLite database file at '{}'.",
                 path.display(),
                 db_path.display()
             );
@@ -115,7 +115,7 @@ fn normalize_custom_db_path(path: &Path) -> Result<PathBuf> {
         })?;
         let db_path = path.join("data.db");
         info!(
-            "--db-path looked like a directory path that did not exist yet. Life Monitor created '{}' and will use '{}'.",
+            "--db-path looked like a directory path that did not exist yet. Vigil created '{}' and will use '{}'.",
             path.display(),
             db_path.display()
         );
@@ -174,7 +174,7 @@ fn store_remembered_db_path(path: &Path) -> Result<()> {
 
 fn format_remembered_path_error(path: &Path, reason: &str) -> String {
     format!(
-        "{reason}.\nRemembered database path: '{}'\nWhat you can do:\n- mount or reconnect the share again so Life Monitor can access it\n- run Life Monitor with --db-path <NEW_PATH> to use another database location now\n- if needed, import old data later once the original database or a snapshot is available",
+        "{reason}.\nRemembered database path: '{}'\nWhat you can do:\n- mount or reconnect the share again so Vigil can access it\n- run Vigil with --db-path <NEW_PATH> to use another database location now\n- if needed, import old data later once the original database or a snapshot is available",
         path.display()
     )
 }

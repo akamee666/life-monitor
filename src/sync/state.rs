@@ -25,13 +25,13 @@ pub fn resolve_sync_runtime_config(
     let own_source = get_source(conn, crate::common::DEFAULT_SOURCE_ID)?;
 
     let explicit_remote_url = sync_remote_url.map(str::to_string).or_else(|| {
-        std::env::var("LIFE_MONITOR_SYNC_REMOTE_URL")
+        std::env::var("VIGIL_SYNC_REMOTE_URL")
             .ok()
             .filter(|value| !value.trim().is_empty())
     });
     let auth_token = sync_auth_token
         .map(str::to_string)
-        .or_else(|| std::env::var("LIFE_MONITOR_SYNC_AUTH_TOKEN").ok())
+        .or_else(|| std::env::var("VIGIL_SYNC_AUTH_TOKEN").ok())
         .unwrap_or_default();
 
     let existing = explicit_remote_url

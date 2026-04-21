@@ -1,17 +1,17 @@
 [package]
-name = "life-monitor"
-version = "0.1.7"
+name = "vigil"
+version = "1.0.0"
 edition = "2021"
 authors = ["Davi Aguiar moraes@akmee.xyz"]
-description = "A tool to track your daily activities"
+description = "A local-first activity tracker for keyboard, mouse, and focused-window activity"
 license = "MIT"
 readme = "README.md"
-repository = "https://github.com/akamee666/life-monitor"
-keywords = ["cli", "tracker", "productivy"]
+repository = "https://github.com/akamee666/vigil"
+keywords = ["cli", "tracker", "productivity", "activity"]
 categories = ["command-line-utilities"]
 
 [[bin]]
-name = "life-monitor"
+name = "vigil"
 path = "src/main.rs"
 
 [features]
