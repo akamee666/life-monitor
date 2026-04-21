@@ -1,8 +1,8 @@
-# life-monitor — Claude Code Guide
+# Vigil — Claude Code Guide
 
 ## Project Summary
 
-`life-monitor` is a cross-platform Rust activity tracker for Linux and Windows.
+`vigil` is a cross-platform Rust activity tracker for Linux and Windows.
 
 Tracks: keyboard activity, mouse movement/clicks/scroll, and active window focus over time.
 
@@ -10,7 +10,7 @@ Storage: local SQLite using bucketed records (`InputBucketRecord`, `FocusBucketR
 
 Optional feature-gated multi-device sync (`--features multi-sync`) uses a remote `sqld`/libSQL endpoint as the canonical merged store. Disabled and not compiled by default.
 
-Current release: `0.1.6` / tags: `vX.Y.Z`
+Current release: `1.0.0` / tags: `vX.Y.Z`
 
 ---
 
@@ -31,7 +31,7 @@ src/
 │   └── types.rs
 ├── platform/
 │   ├── linux/
-│   │   ├── common.rs              # startup generation
+│   │   ├── common.rs              # startup generation + interactive mode picker
 │   │   ├── inputs.rs              # raw input — measurement-sensitive
 │   │   ├── process.rs
 │   │   ├── wayland.rs
@@ -63,6 +63,11 @@ src/
 │   ├── status.rs
 │   ├── tests.rs
 │   └── types.rs
+├── tui/                           # read-only ratatui dashboard
+│   ├── app.rs
+│   ├── data.rs
+│   ├── mod.rs
+│   └── ui.rs
 └── utils/
     ├── args.rs
     ├── dpi.rs
@@ -84,9 +89,10 @@ src/
 | CLI behavior, command routing                            | `src/main.rs`, `src/utils/args.rs`                |
 | Bucket logic, motion math, focus buffering, path helpers | `src/common/*`                                    |
 | DB schema, migrations, import/export, analytics          | `src/storage/localdb/*`, `src/storage/backend.rs` |
+| Read-only dashboard                                      | `src/tui/*`                                       |
 | Multi-device sync (feature-gated)                        | `src/sync/*`, `src/main.rs`, `src/utils/args.rs`  |
 | Linux raw input                                          | `src/platform/linux/inputs.rs`                    |
-| Linux startup generation                                 | `src/platform/linux/common.rs`                    |
+| Linux startup generation + picker UI                     | `src/platform/linux/common.rs`                    |
 | Windows raw input, focus, startup, systray               | `src/platform/windows/`                           |
 | DPI persistence                                          | `src/utils/dpi.rs`                                |
 | Lock and multi-process coordination                      | `src/utils/lock.rs`                               |
@@ -96,26 +102,34 @@ src/
 
 ## Runtime Flow
 
-`main.rs` has two distinct execution modes. Keep them clean — do not blur the boundary.
+`main.rs` has three distinct execution paths. Keep them clean — do not blur the boundaries.
 
-**Short-circuit commands** (do work, then exit):
+### 1. `vigil collector` — long-running writer
 
-- startup enable/disable
-- export / import / import dry-run
-- analytics reports (`sessions`, `session-stats`, `apps`, `daily`)
-- sync push/pull/status (when `multi-sync` enabled)
+1. Handle short-circuit flags first (startup enable/disable, export, import) — these do work and exit
+2. Acquire single-instance lock
+3. Resolve DB path
+4. Resolve DPI
+5. Initialize local DB backend
+6. Spawn input collection
+7. Spawn focus/process collection
+8. Spawn Windows systray (when enabled)
+9. Spawn background sync loop (only when `multi-sync` compiled and configured)
 
-**Long-running collector**:
+### 2. `vigil dashboard` — read-only inspection
 
-1. Resolve DB path
-2. Resolve DPI
-3. Initialize local DB backend
-4. Spawn input collection
-5. Spawn focus/process collection
-6. Spawn Windows systray (when enabled)
-7. Spawn background sync loop (only when `multi-sync` compiled and configured)
+- Opens the ratatui dashboard
+- Reads from local SQLite
+- Refreshes periodically
+- Does not acquire the collector lock
+- Does not start collection
 
-Short-circuit commands must not start the collector and exit later. Long-running mode must not do analytics work inline.
+### 3. `vigil sync` — short-circuit sync commands (multi-sync only)
+
+- push / pull / status
+- Exits after the operation
+
+Short-circuit commands must not start the collector and exit later. The dashboard must never implicitly start collection.
 
 ---
 
@@ -160,10 +174,40 @@ The release workflow enforces this. Do not alter release logic in a way that all
 
 - Default: XDG autostart desktop entry
 - Fallback: `systemd --user` unit tied to graphical session (explicit, advanced)
-- Startup artifacts must point to the executable used at enable time
+- Startup artifacts must point to the executable used at enable time and launch `vigil collector`
 - Do not bake volatile variables like `WAYLAND_DISPLAY` into the systemd unit
 - Do not mutate the wider systemd user manager environment
 - Warn when startup is enabled from a `target/debug` or `target/release` path
+
+**13. The dashboard is inspection-only.**
+The dashboard may read and refresh from SQLite while a collector runs. It must not acquire the collector lock, mutate data, or start collection implicitly.
+
+---
+
+## Dashboard Architecture
+
+The TUI lives in `src/tui/`:
+
+- **`mod.rs`** — terminal setup/teardown, alternate screen, event loop, refresh timer
+- **`app.rs`** — dashboard state machine, focus sections, keyboard handling, time window and chart mode state, selection/scroll
+- **`data.rs`** — SQLite-backed data loading; aggregates app usage, chart series, summary totals, heatmap rows; dashboard-facing presentation models
+- **`ui.rs`** — ratatui layout and rendering (charts, app list, heatmap, header/footer/help)
+
+Dashboard behavior:
+
+- Time windows: `All`, `1h`, `6h`, `24h`, `7d`, `30d` — affect summary cards, app list, chart
+- Chart modes: single metric / scope overlay
+- App activity panel: app names, per-app histograms, scroll, scrollbar
+- Week activity grid: daily metric breakdown, row selection, current-day highlighting
+- Footer: focused-panel hints, ASCII/Unicode toggle hint
+- Header: time range, collector status (collecting / idle / stale), sync status
+
+When editing TUI code:
+- Keep rendering in `ui.rs`
+- Keep state transitions in `app.rs`
+- Keep SQL and aggregation in `data.rs`
+- Prefer deriving new views from existing bucket data; avoid changing storage semantics for a UI feature
+- Check wide and narrow terminal layouts; most regressions are visual, not compiler errors
 
 ---
 
@@ -188,11 +232,26 @@ When changing schema: update schema setup, migrations, and bootstrap logic. Upda
 
 ---
 
+## Environment Variables
+
+| Variable | Purpose |
+|----------|---------|
+| `VIGIL_DATA_DIR` | Override the default data directory |
+| `VIGIL_SKIP_INSTANCE_LOCK` | Set to `1` to skip the single-instance lock (testing only) |
+| `VIGIL_SYNC_REMOTE_URL` | Remote sqld/libSQL endpoint (`multi-sync` feature) |
+| `VIGIL_SYNC_AUTH_TOKEN` | Auth token for the sync remote (`multi-sync` feature) |
+
+Default data directories:
+- Linux: `~/.local/share/vigil/`
+- Windows: `%LOCALAPPDATA%\vigil\`
+
+---
+
 ## Build and Test
 
 ### Flake environments
 
-Always build and test from the `flake.nix` environment. Always pass `--target` explicitly — do not rely on the repo's default target.
+Always build and test from the `flake.nix` environment. Always pass `--target` explicitly.
 
 ```bash
 # Format
@@ -210,8 +269,6 @@ nix develop --command cargo check --target x86_64-pc-windows-gnu
 nix build .#linux
 nix build .#windows   # cross-compiled, not native Windows
 ```
-
-The dev shell separates host Linux and Windows cross-build toolchains. Do not introduce Windows MinGW headers into the host build environment in a way that pollutes Linux native C builds.
 
 ### SQLite bundling
 
@@ -231,8 +288,6 @@ Write tests that verify: observable behavior, ownership rules, state transitions
 
 Do not write tests that primarily verify: OS behavior, static message strings, broad smoke paths with many unrelated failure points, or timing-sensitive behavior where a direct unit test would be clearer.
 
-When sync behavior changes, add targeted tests for: offline/startup behavior, source ownership, foreign row pull behavior, outbox safety, convergence and retry.
-
 Use the lowest stable test level that proves the behavior.
 
 ---
@@ -241,9 +296,9 @@ Use the lowest stable test level that proves the behavior.
 
 ### Before making changes
 
-1. Identify the task area: collection, storage/import/export, sync, CLI/config, platform-specific, CI/release.
+1. Identify the task area: collection, storage/import/export, sync, CLI/config, TUI/dashboard, platform-specific, CI/release.
 2. Read the narrowest responsible files first.
-3. Confirm the change preserves: local-first operation, bucket-based storage, explicit snapshot import/export, feature-gated sync, user-visible recovery messages.
+3. Confirm the change preserves: local-first operation, bucket-based storage, explicit snapshot import/export, feature-gated sync, dashboard read-only contract.
 
 ### Commits
 
@@ -253,8 +308,6 @@ Each commit message:
 
 - **Title**: concise description of what changed
 - **Body**: what changed, how it changed, why it changed
-
-This matters for release notes and repo archaeology.
 
 ### Claude Code tool use
 
@@ -277,6 +330,7 @@ Extra care required:
 | `src/platform/linux/inputs.rs`   | Measurement accuracy can regress silently                |
 | `src/platform/windows/inputs.rs` | Raw input and message-loop behavior are fragile          |
 | `src/utils/lock.rs`              | Filesystem semantics vary across environments and mounts |
+| `src/tui/ui.rs`                  | Visual/layout regressions are not compiler errors        |
 | `.github/workflows/release.yml`  | Publishing and asset attachment are easy to break        |
 
 ---
@@ -291,6 +345,8 @@ Extra care required:
 - Weakening import/export hash or UUID checks
 - Assuming Linux-only validation is sufficient for Windows behavior
 - Bundling unrelated feature, schema, CI, and docs changes into one commit
+- Starting collection from the dashboard path
+- Adding CLI analytics flags — the dashboard is the analytics surface
 
 ---
 
@@ -299,10 +355,9 @@ Extra care required:
 - Wine cannot replace native Windows runtime validation
 - Remote share behavior depends on OS mount semantics and is best-effort
 - Some sync/outbox seams still have room for simplification without changing module boundaries
-- No built-in dashboard or TUI currently exists
 
 ---
 
 ## Mental Model
 
-`life-monitor` is a local-first, bucket-based activity recorder. Core guarantees: accurate input collection, safe SQLite persistence, explicit snapshot movement of history, and optional feature-gated multi-device convergence that never interrupts local collection.
+`vigil` is a local-first, bucket-based activity recorder with three surfaces: a long-running **collector** that writes to local SQLite, a read-only **dashboard** for inspection, and optional feature-gated **sync/import-export** for history movement. Core guarantees: accurate input collection, safe SQLite persistence, explicit snapshot movement of history, and optional multi-device convergence that never interrupts local collection.
