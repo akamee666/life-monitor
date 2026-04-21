@@ -2,16 +2,32 @@
 use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::fs::{self, create_dir_all, write};
+use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
-use crate::utils::args::{Cli, LinuxStartupMode};
+use crate::utils::args::{CollectorCli, LinuxStartupMode};
 
 use anyhow::*;
+use crossterm::{
+    event::{self, Event, KeyCode},
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    ExecutableCommand,
+};
+use ratatui::{
+    backend::CrosstermBackend,
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
+    Terminal,
+};
 use tracing::*;
 
 const SERVICE_NAME: &str = "life-monitor.service";
 const DESKTOP_ENTRY_NAME: &str = "life-monitor.desktop";
+const COLLECTOR_SUBCOMMAND: &str = "collector";
 const SESSION_ENV_VARS: [&str; 5] = [
     "DISPLAY",
     "WAYLAND_DISPLAY",
@@ -259,7 +275,11 @@ Path={}\n\
 Terminal=false\n\
 StartupNotify=false\n\
 X-GNOME-Autostart-enabled=true\n",
-        desktop_exec_escape(&executable.display().to_string()),
+        format!(
+            "{} {}",
+            desktop_exec_escape(&executable.display().to_string()),
+            desktop_exec_escape(COLLECTOR_SUBCOMMAND)
+        ),
         desktop_entry_escape(&executable.display().to_string()),
         desktop_entry_escape(&working_dir.display().to_string()),
     )
@@ -283,8 +303,205 @@ Slice=app.slice\n\
 [Install]\n\
 WantedBy=graphical-session.target\n",
         systemd_path_escape(&working_dir.display().to_string()),
-        systemd_path_escape(&executable.display().to_string()),
+        format!(
+            "{} {}",
+            systemd_path_escape(&executable.display().to_string()),
+            systemd_path_escape(COLLECTOR_SUBCOMMAND)
+        ),
     )
+}
+
+fn prompt_startup_mode() -> Result<LinuxStartupMode> {
+    if !io::stdin().is_terminal() {
+        return Err(anyhow!(
+            "Enabling Linux startup now requires an interactive choice between XDG and systemd --user modes. Run `life-monitor collector --enable-startup` from a terminal and choose a mode there."
+        ));
+    }
+    run_startup_mode_picker()
+}
+
+fn run_startup_mode_picker() -> Result<LinuxStartupMode> {
+    let mut terminal = init_startup_picker_terminal()?;
+    let result = run_startup_mode_picker_loop(&mut terminal);
+    restore_startup_picker_terminal(&mut terminal)?;
+    result
+}
+
+fn init_startup_picker_terminal() -> Result<Terminal<CrosstermBackend<std::io::Stdout>>> {
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    stdout.execute(EnterAlternateScreen)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+    terminal.hide_cursor()?;
+    Ok(terminal)
+}
+
+fn restore_startup_picker_terminal(
+    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+) -> Result<()> {
+    disable_raw_mode()?;
+    terminal.backend_mut().execute(LeaveAlternateScreen)?;
+    terminal.show_cursor()?;
+    Ok(())
+}
+
+fn run_startup_mode_picker_loop(
+    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+) -> Result<LinuxStartupMode> {
+    let choices = startup_mode_choices();
+    let mut state = ListState::default();
+    state.select(Some(0));
+
+    loop {
+        terminal.draw(|frame| {
+            let area = centered_popup(frame.area());
+            frame.render_widget(Clear, area);
+            let sections = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3),
+                    Constraint::Length(6),
+                    Constraint::Min(8),
+                ])
+                .split(area);
+
+            let header = Paragraph::new(vec![
+                Line::from(Span::styled(
+                    "Choose Startup Mode",
+                    Style::default()
+                        .fg(Color::Rgb(120, 255, 140))
+                        .add_modifier(Modifier::BOLD),
+                )),
+                Line::from(Span::styled(
+                    "Use ↑/↓ to choose and Enter to confirm",
+                    Style::default().fg(Color::Rgb(120, 180, 130)),
+                )),
+            ])
+            .block(
+                Block::default()
+                    .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT)
+                    .style(Style::default().bg(Color::Black))
+                    .border_style(Style::default().fg(Color::Rgb(35, 80, 40))),
+            )
+            .alignment(Alignment::Center);
+
+            let items = choices
+                .iter()
+                .enumerate()
+                .map(|choice| {
+                    let index = choice.0;
+                    let choice = choice.1;
+                    let selected = state.selected() == Some(index);
+                    ListItem::new(Line::from(vec![
+                        Span::styled(
+                            if selected { "[x] " } else { "[ ] " },
+                            Style::default().fg(Color::Rgb(100, 255, 120)),
+                        ),
+                        Span::styled(choice.title, Style::default().add_modifier(Modifier::BOLD)),
+                    ]))
+                })
+                .collect::<Vec<_>>();
+
+            let chooser = List::new(items)
+                .block(
+                    Block::default()
+                        .borders(Borders::LEFT | Borders::RIGHT)
+                        .style(Style::default().bg(Color::Black))
+                        .border_style(Style::default().fg(Color::Rgb(35, 80, 40))),
+                )
+                .highlight_style(
+                    Style::default()
+                        .fg(Color::Rgb(150, 255, 170))
+                        .bg(Color::Rgb(25, 45, 25))
+                        .add_modifier(Modifier::BOLD),
+                )
+                .highlight_symbol("> ");
+
+            let selected = state
+                .selected()
+                .unwrap_or(0)
+                .min(choices.len().saturating_sub(1));
+            let details = Paragraph::new(choices[selected].description)
+                .wrap(Wrap { trim: true })
+                .block(
+                    Block::default()
+                        .title("When To Choose This")
+                        .borders(Borders::ALL)
+                        .style(Style::default().bg(Color::Black))
+                        .border_style(Style::default().fg(Color::Rgb(35, 80, 40))),
+                );
+
+            frame.render_widget(header, sections[0]);
+            frame.render_stateful_widget(chooser, sections[1], &mut state);
+            frame.render_widget(details, sections[2]);
+        })?;
+
+        if event::poll(Duration::from_millis(250))? {
+            if let Event::Key(key) = event::read()? {
+                match key.code {
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        let current = state.selected().unwrap_or(0);
+                        state.select(Some(current.saturating_sub(1)));
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        let current = state.selected().unwrap_or(0);
+                        state.select(Some((current + 1).min(choices.len().saturating_sub(1))));
+                    }
+                    KeyCode::Enter => {
+                        let selected = state.selected().unwrap_or(0);
+                        return Ok(choices[selected].mode);
+                    }
+                    KeyCode::Esc | KeyCode::Char('q') => {
+                        return Err(anyhow!("Startup selection cancelled by user"));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct StartupModeChoice {
+    mode: LinuxStartupMode,
+    title: &'static str,
+    description: &'static str,
+}
+
+fn startup_mode_choices() -> [StartupModeChoice; 2] {
+    [
+        StartupModeChoice {
+            mode: LinuxStartupMode::Xdg,
+            title: "XDG autostart (recommended)",
+            description: "Choose this if you use a normal desktop environment where login-session autostart already works for other applications. This is the standard path for GNOME, KDE Plasma, Xfce, Cinnamon, LXQt, MATE, Budgie and most mainstream desktop sessions. Life Monitor writes a .desktop entry into your XDG autostart directory and your desktop launches it after graphical login.",
+        },
+        StartupModeChoice {
+            mode: LinuxStartupMode::Systemd,
+            title: "systemd user service",
+            description: "Choose this only if you deliberately run a minimal or custom session where you manage startup yourself and know your graphical environment is integrated with systemd --user. This is more likely in setups built around i3, sway, Hyprland, bspwm, river, awesome, dwm or other hand-configured window-manager/compositor sessions. If you are unsure, do not choose this one first.",
+        },
+    ]
+}
+
+fn centered_popup(area: Rect) -> Rect {
+    let vertical = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Fill(1),
+            Constraint::Length(area.height.min(20)),
+            Constraint::Fill(1),
+        ])
+        .split(area);
+    let horizontal = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Fill(1),
+            Constraint::Length(area.width.min(90)),
+            Constraint::Fill(1),
+        ])
+        .split(vertical[1]);
+    horizontal[1]
 }
 
 fn run_systemctl<I, S>(args: I) -> Result<()>
@@ -470,7 +687,7 @@ fn remove_systemd_startup() -> Result<()> {
 }
 
 /// Configures or removes Linux user-session startup.
-pub fn configure_startup(args: &Cli) -> Result<()> {
+pub fn configure_startup(args: &CollectorCli) -> Result<()> {
     let current_exe = std::env::current_exe()
         .with_context(|| "Could not determine the filesystem path of the application")?;
     let working_dir = current_exe
@@ -478,9 +695,10 @@ pub fn configure_startup(args: &Cli) -> Result<()> {
         .with_context(|| "Current executable path did not have a parent directory")?;
 
     if args.enable_startup {
+        let startup_mode = prompt_startup_mode()?;
         info!(
             "Enabling Linux startup in {:?} mode for executable '{}'.",
-            args.startup_mode,
+            startup_mode,
             current_exe.display()
         );
         debug!(
@@ -489,7 +707,7 @@ pub fn configure_startup(args: &Cli) -> Result<()> {
         remove_xdg_autostart()?;
         remove_systemd_startup()?;
 
-        match args.startup_mode {
+        match startup_mode {
             LinuxStartupMode::Xdg => {
                 let entry_path = write_xdg_autostart(&current_exe, working_dir)?;
                 info!(
@@ -630,7 +848,7 @@ mod tests {
         assert!(unit.contains("WantedBy=graphical-session.target"));
         assert!(!unit.contains("Environment="));
         assert!(unit.contains("WorkingDirectory=/tmp"));
-        assert!(unit.contains("ExecStart=/tmp/life-monitor"));
+        assert!(unit.contains("ExecStart=/tmp/life-monitor collector"));
     }
 
     /// Verifies that the generated desktop entry uses XDG autostart conventions and
@@ -644,7 +862,7 @@ mod tests {
 
         assert!(entry.contains("Type=Application"));
         assert!(entry.contains("Name=Life Monitor"));
-        assert!(entry.contains("Exec=\"/tmp/with spaces/life-monitor\""));
+        assert!(entry.contains("Exec=\"/tmp/with spaces/life-monitor\" collector"));
         assert!(entry.contains("TryExec=/tmp/with spaces/life-monitor"));
         assert!(entry.contains("Path=/tmp/with spaces"));
         assert!(entry.contains("Terminal=false"));

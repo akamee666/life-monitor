@@ -33,6 +33,7 @@ impl ChartMode {
 /// Time window for the activity chart and top-apps range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimeWindow {
+    All,
     OneHour,
     SixHours,
     TwentyFourHours,
@@ -41,7 +42,8 @@ pub enum TimeWindow {
 }
 
 impl TimeWindow {
-    pub const ALL: [TimeWindow; 5] = [
+    pub const ALL: [TimeWindow; 6] = [
+        TimeWindow::All,
         TimeWindow::OneHour,
         TimeWindow::SixHours,
         TimeWindow::TwentyFourHours,
@@ -51,6 +53,7 @@ impl TimeWindow {
 
     pub fn label(self) -> &'static str {
         match self {
+            TimeWindow::All => "All",
             TimeWindow::OneHour => "1h",
             TimeWindow::SixHours => "6h",
             TimeWindow::TwentyFourHours => "24h",
@@ -62,6 +65,7 @@ impl TimeWindow {
     /// Days of focus/activity history to query for top-apps and heatmap.
     pub fn range_days(self) -> u32 {
         match self {
+            TimeWindow::All => 0,
             TimeWindow::OneHour | TimeWindow::SixHours | TimeWindow::TwentyFourHours => 1,
             TimeWindow::SevenDays => 7,
             TimeWindow::ThirtyDays => 30,
@@ -71,6 +75,7 @@ impl TimeWindow {
     /// (bucket_minutes, bucket_count) for the activity chart.
     pub fn series_params(self) -> (i64, usize) {
         match self {
+            TimeWindow::All => (0, 0),
             // 1 h  → 4 × 15-min buckets (SQLite resolution limit)
             TimeWindow::OneHour => (15, 4),
             // 6 h  → 24 × 15-min buckets
@@ -149,6 +154,7 @@ pub struct DashboardApp {
 impl DashboardApp {
     pub fn load(db_path: &Path, range_days: u32, ascii: bool) -> Result<Self> {
         let time_window = match range_days {
+            0 => TimeWindow::All,
             30 => TimeWindow::ThirtyDays,
             7..=29 => TimeWindow::SevenDays,
             _ => TimeWindow::TwentyFourHours,
@@ -390,7 +396,7 @@ mod tests {
                     key_presses: 0,
                     mouse_distance_cm: 0.0,
                 },
-                summary_label: "all-time totals from local SQLite".to_string(),
+                summary_label: "overall activity".to_string(),
                 top_activities: Vec::new(),
                 top_apps: Vec::new(),
                 categories: Vec::new(),
@@ -476,6 +482,19 @@ mod tests {
         assert_eq!(app.time_window, TimeWindow::SevenDays);
         app.handle_key(key(KeyCode::Char('[')));
         assert_eq!(app.time_window, TimeWindow::TwentyFourHours);
+        app.handle_key(key(KeyCode::Char('[')));
+        assert_eq!(app.time_window, TimeWindow::SixHours);
+    }
+
+    #[test]
+    fn all_window_is_part_of_time_window_cycle() {
+        let mut app = sample_app();
+        app.time_window = TimeWindow::ThirtyDays;
+
+        app.handle_key(key(KeyCode::Char(']')));
+        assert_eq!(app.time_window, TimeWindow::All);
+        app.handle_key(key(KeyCode::Char('[')));
+        assert_eq!(app.time_window, TimeWindow::ThirtyDays);
     }
 
     #[test]

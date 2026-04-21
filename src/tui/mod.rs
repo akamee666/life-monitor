@@ -16,8 +16,10 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 
 use crate::tui::app::{AppAction, DashboardApp};
 
-pub fn run_dashboard(db_path: &Path, range_days: u32, ascii: bool) -> Result<()> {
-    let mut app = DashboardApp::load(db_path, range_days, ascii)?;
+const DASHBOARD_DEFAULT_RANGE_DAYS: u32 = 7;
+
+pub fn run_dashboard(db_path: &Path) -> Result<()> {
+    let mut app = DashboardApp::load(db_path, DASHBOARD_DEFAULT_RANGE_DAYS, false)?;
     let mut terminal = init_terminal()?;
     let result = run_event_loop(&mut terminal, &mut app);
     restore_terminal(&mut terminal)?;

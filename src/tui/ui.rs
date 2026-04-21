@@ -254,7 +254,7 @@ fn render_activity_overview(frame: &mut Frame, area: Rect, app: &DashboardApp) {
 }
 
 fn render_activity_bars(frame: &mut Frame, area: Rect, app: &DashboardApp) {
-    let title = format!("my activity — {}", time_window_phrase(app.time_window));
+    let title = format!("apps activity—{}", time_window_phrase(app.time_window));
     let block = panel_block(&title, app.focused_section == FocusSection::Apps);
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -273,20 +273,28 @@ fn render_activity_bars(frame: &mut Frame, area: Rect, app: &DashboardApp) {
             duration: Some(format_duration(share.focus_seconds)),
         })
         .collect::<Vec<_>>();
-    let columns = list_columns(inner.width as usize, &metrics, 18, 22, 18);
     let needs_scrollbar = app.snapshot.top_apps.len() > inner.height as usize;
-    let sections = if needs_scrollbar && inner.width > 8 {
+    let sections = if needs_scrollbar && inner.width > 9 {
         Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Min(1), Constraint::Length(1)])
+            .constraints([
+                Constraint::Min(1),
+                Constraint::Length(2),
+                Constraint::Length(1),
+            ])
             .split(inner)
     } else {
         Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Min(1), Constraint::Length(0)])
+            .constraints([
+                Constraint::Min(1),
+                Constraint::Length(0),
+                Constraint::Length(0),
+            ])
             .split(inner)
     };
     let list_area = sections[0];
+    let columns = list_columns(list_area.width as usize, &metrics, 18, 22, 14);
     let visible_rows = list_area.height as usize;
     let scroll = visible_app_window(
         app.selected_app_index,
@@ -324,9 +332,12 @@ fn render_activity_bars(frame: &mut Frame, area: Rect, app: &DashboardApp) {
 
     frame.render_widget(Paragraph::new(lines), list_area);
     if needs_scrollbar && sections[1].width > 0 {
+        frame.render_widget(Block::default().style(Style::default().bg(BG)), sections[1]);
+    }
+    if needs_scrollbar && sections[2].width > 0 {
         render_scrollbar(
             frame,
-            sections[1],
+            sections[2],
             scroll.offset,
             visible_rows,
             app.snapshot.top_apps.len(),
@@ -472,7 +483,7 @@ fn render_activity_chart(frame: &mut Frame, area: Rect, app: &DashboardApp) {
 
 fn render_heatmap(frame: &mut Frame, area: Rect, app: &DashboardApp) {
     let block = panel_block(
-        "avg daily activity",
+        "week activity",
         app.focused_section == FocusSection::Heatmap,
     );
     let inner = block.inner(area);
@@ -521,12 +532,20 @@ fn render_heatmap(frame: &mut Frame, area: Rect, app: &DashboardApp) {
     let extra_row_space = row_slots.saturating_sub(visible_rows);
 
     // Choose header label length based on available column width.
-    let col_labels: [&str; 5] = if min_col_w >= 10 {
+    let col_labels: [&str; 5] = if min_col_w >= 13 {
         [
             "key presses",
-            "l.clicks",
-            "r.clicks",
-            "m.clicks",
+            "left clicks",
+            "right clicks",
+            "middle clicks",
+            "mouse mov",
+        ]
+    } else if min_col_w >= 10 {
+        [
+            "key press",
+            "left clk",
+            "right clk",
+            "mid click",
             "mouse mov",
         ]
     } else if min_col_w >= 8 {
@@ -1021,6 +1040,18 @@ fn chart_x_labels(snapshot: &DashboardSnapshot, window: TimeWindow) -> Vec<Span<
         .with_timezone(&Local);
 
     let (label_count, gap_minutes, format): (usize, i64, &str) = match window {
+        TimeWindow::All => {
+            let total_minutes = snapshot.bucket_minutes * snapshot.series_buckets.len() as i64;
+            let gap = (total_minutes / 5).max(snapshot.bucket_minutes);
+            let format = if total_minutes >= 60 * 24 * 365 {
+                "%m/%y"
+            } else if total_minutes >= 60 * 24 * 30 {
+                "%m/%d"
+            } else {
+                "%m/%d"
+            };
+            (6, gap, format)
+        }
         TimeWindow::OneHour => (5, 15, "%H:%M"),
         TimeWindow::SixHours => (7, 60, "%H:%M"),
         TimeWindow::TwentyFourHours => (8, 180, "%H:%M"),
@@ -1445,6 +1476,7 @@ fn visible_window(
 
 fn time_window_phrase(window: TimeWindow) -> String {
     match window {
+        TimeWindow::All => "all time".to_string(),
         TimeWindow::OneHour => "last 1 hour".to_string(),
         TimeWindow::SixHours => "last 6 hours".to_string(),
         TimeWindow::TwentyFourHours => "last 24 hours".to_string(),
@@ -1470,12 +1502,21 @@ fn collector_state(last_activity_at_utc: Option<DateTime<Utc>>) -> (&'static str
 
 fn focused_panel_hint(app: &DashboardApp) -> String {
     match app.focused_section {
-        FocusSection::Summary => "summary \u{2190}\u{2192} cards  tab focus".to_string(),
-        FocusSection::Apps => "\u{2191}\u{2193} scroll apps  tab focus".to_string(),
-        FocusSection::Activity => {
-            format!("m/k metric  v mode  [{}] window", app.time_window.label())
+        FocusSection::Summary => {
+            "summary \u{2190}\u{2192} cards  u ascii/unicode  tab focus".to_string()
         }
-        FocusSection::Heatmap => "\u{2191}\u{2193} select day  tab focus".to_string(),
+        FocusSection::Apps => {
+            "\u{2191}\u{2193} scroll apps  u ascii/unicode  tab focus".to_string()
+        }
+        FocusSection::Activity => {
+            format!(
+                "m/k metric  v mode  u ascii/unicode  [{}] window",
+                app.time_window.label()
+            )
+        }
+        FocusSection::Heatmap => {
+            "\u{2191}\u{2193} select day  u ascii/unicode  tab focus".to_string()
+        }
     }
 }
 

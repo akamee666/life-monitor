@@ -17,6 +17,7 @@ const CATEGORY_LIMIT: usize = 7;
 const CATEGORY_MEMBER_LIMIT: usize = 3;
 const HEATMAP_METRIC_COUNT: usize = 5;
 const APP_SPARKLINE_SAMPLES: usize = 48;
+const ALL_SERIES_BUCKET_COUNT: usize = 180;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChartMetric {
@@ -174,27 +175,38 @@ pub fn load_dashboard_snapshot(
     let conn = open_con_at(db_path)?;
     setup_database(&conn)?;
 
-    let effective_days = range_days.max(1);
+    let history_days = if range_days == 0 {
+        None
+    } else {
+        Some(range_days.max(1))
+    };
+    let effective_days = history_days.unwrap_or(0);
     // Heatmap always shows the last 7 calendar days so it reflects the current week
     // regardless of which time window is selected for the chart.
     let heatmap_days = 7;
     let daily_rows = daily_activity_report(&conn, heatmap_days)?;
-    let focus_rows = load_focus_usage_rows(&conn, effective_days)?;
-    let series_start = aligned_series_start(Utc::now(), bucket_minutes, bucket_count)?;
+    let focus_rows = load_focus_usage_rows(&conn, history_days)?;
+    let (series_start, effective_bucket_minutes, effective_bucket_count) =
+        resolve_series_window(&conn, bucket_minutes, bucket_count)?;
 
-    let summary = load_summary_totals(&conn)?;
+    let summary = load_summary_totals(&conn, history_days)?;
     let top_activities = aggregate_top_activities(&focus_rows, 5);
     let mut top_apps = aggregate_top_apps(&focus_rows, usize::MAX);
     let categories = aggregate_categories(&focus_rows, CATEGORY_LIMIT, CATEGORY_MEMBER_LIMIT);
-    let series_buckets = load_activity_series(&conn, series_start, bucket_minutes, bucket_count)?;
+    let series_buckets = load_activity_series(
+        &conn,
+        series_start,
+        effective_bucket_minutes,
+        effective_bucket_count,
+    )?;
     let (heatmap_rows, heatmap_maxima) = build_daily_average_heatmap(&daily_rows, heatmap_days)?;
     let status = load_dashboard_status(&conn, db_path)?;
-    attach_app_sparklines(&conn, &mut top_apps, effective_days, APP_SPARKLINE_SAMPLES)?;
+    attach_app_sparklines(&conn, &mut top_apps, history_days, APP_SPARKLINE_SAMPLES)?;
 
     Ok(DashboardSnapshot {
         generated_at_local: Local::now(),
         range_days: effective_days,
-        bucket_minutes,
+        bucket_minutes: effective_bucket_minutes,
         summary,
         summary_label: "overall activity".to_string(),
         top_activities,
@@ -208,9 +220,8 @@ pub fn load_dashboard_snapshot(
     })
 }
 
-fn load_summary_totals(conn: &Connection) -> Result<SummaryTotals> {
-    conn.query_row(
-        "
+fn load_summary_totals(conn: &Connection, days: Option<u32>) -> Result<SummaryTotals> {
+    let query = "
         SELECT
             COALESCE(SUM(left_clicks), 0),
             COALESCE(SUM(right_clicks), 0),
@@ -218,34 +229,34 @@ fn load_summary_totals(conn: &Connection) -> Result<SummaryTotals> {
             COALESCE(SUM(key_presses), 0),
             COALESCE(SUM(mouse_distance_cm), 0.0)
         FROM input_buckets
-        ",
-        [],
-        |row| {
-            Ok(SummaryTotals {
-                left_clicks: row.get(0)?,
-                right_clicks: row.get(1)?,
-                middle_clicks: row.get(2)?,
-                key_presses: row.get(3)?,
-                mouse_distance_cm: row.get(4)?,
-            })
-        },
-    )
-    .with_context(|| "Failed to load all-time summary totals for dashboard")
+        WHERE (?1 IS NULL OR bucket_start_utc >= ?1)
+        ";
+    let since = days.map(|d| (Utc::now() - Duration::days(d as i64)).to_rfc3339());
+    conn.query_row(query, [since.as_deref()], |row| {
+        Ok(SummaryTotals {
+            left_clicks: row.get(0)?,
+            right_clicks: row.get(1)?,
+            middle_clicks: row.get(2)?,
+            key_presses: row.get(3)?,
+            mouse_distance_cm: row.get(4)?,
+        })
+    })
+    .with_context(|| "Failed to load summary totals for dashboard")
 }
 
-fn load_focus_usage_rows(conn: &Connection, days: u32) -> Result<Vec<FocusUsageRow>> {
-    let since = (Utc::now() - Duration::days(days.max(1) as i64)).to_rfc3339();
+fn load_focus_usage_rows(conn: &Connection, days: Option<u32>) -> Result<Vec<FocusUsageRow>> {
+    let since = days.map(|d| (Utc::now() - Duration::days(d.max(1) as i64)).to_rfc3339());
     let mut stmt = conn.prepare(
         "
         SELECT app_identifier, window_title, SUM(focus_seconds) AS total_focus_seconds
         FROM focus_buckets
-        WHERE bucket_start_utc >= ?1
+        WHERE (?1 IS NULL OR bucket_start_utc >= ?1)
         GROUP BY app_identifier, window_title
         ORDER BY total_focus_seconds DESC, app_identifier ASC, window_title ASC
         ",
     )?;
 
-    let rows = stmt.query_map([since], |row| {
+    let rows = stmt.query_map([since.as_deref()], |row| {
         Ok(FocusUsageRow {
             app_identifier: row.get(0)?,
             window_title: row.get(1)?,
@@ -426,14 +437,17 @@ fn percent_of(value: u64, total: u64) -> u64 {
 fn attach_app_sparklines(
     conn: &Connection,
     apps: &mut [AppShare],
-    days: u32,
+    days: Option<u32>,
     sample_count: usize,
 ) -> Result<()> {
     if apps.is_empty() || sample_count == 0 {
         return Ok(());
     }
 
-    let since = Utc::now() - Duration::days(days.max(1) as i64);
+    let since = match days {
+        Some(days) => Utc::now() - Duration::days(days.max(1) as i64),
+        None => earliest_activity_at(conn)?.unwrap_or_else(|| Utc::now() - Duration::days(1)),
+    };
     let until = Utc::now();
     let total_seconds = (until - since).num_seconds().max(1) as u64;
     let mut series_by_label = apps
@@ -484,6 +498,62 @@ fn attach_app_sparklines(
     }
 
     Ok(())
+}
+
+fn resolve_series_window(
+    conn: &Connection,
+    bucket_minutes: i64,
+    bucket_count: usize,
+) -> Result<(DateTime<Utc>, i64, usize)> {
+    if bucket_minutes > 0 && bucket_count > 0 {
+        let start = aligned_series_start(Utc::now(), bucket_minutes, bucket_count)?;
+        return Ok((start, bucket_minutes, bucket_count));
+    }
+
+    let now = Utc::now();
+    let earliest = earliest_activity_at(conn)?.unwrap_or_else(|| now - Duration::days(1));
+    let span_minutes = now
+        .signed_duration_since(earliest)
+        .num_minutes()
+        .max(SERIES_BUCKET_MINUTES);
+    let raw_bucket_minutes = ((span_minutes + ALL_SERIES_BUCKET_COUNT as i64 - 1)
+        / ALL_SERIES_BUCKET_COUNT as i64)
+        .max(1);
+    let bucket_minutes = align_bucket_minutes(raw_bucket_minutes);
+    let bucket_count = ((span_minutes + bucket_minutes - 1) / bucket_minutes).max(1) as usize;
+    let start = aligned_series_start(now, bucket_minutes, bucket_count)?;
+    Ok((start, bucket_minutes, bucket_count))
+}
+
+fn align_bucket_minutes(raw_minutes: i64) -> i64 {
+    let aligned = ((raw_minutes + 14) / 15) * 15;
+    aligned.max(15)
+}
+
+fn earliest_activity_at(conn: &Connection) -> Result<Option<DateTime<Utc>>> {
+    let first_input = conn
+        .query_row(
+            "SELECT MIN(bucket_start_utc) FROM input_buckets",
+            [],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()?
+        .flatten();
+    let first_focus = conn
+        .query_row(
+            "SELECT MIN(bucket_start_utc) FROM focus_buckets",
+            [],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()?
+        .flatten();
+
+    [first_input, first_focus]
+        .into_iter()
+        .flatten()
+        .map(|value| parse_rfc3339(&value))
+        .collect::<Result<Vec<_>>>()
+        .map(|values| values.into_iter().min())
 }
 
 fn normalize_app_id(app_identifier: &str) -> String {

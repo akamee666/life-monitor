@@ -1,17 +1,17 @@
-# Life-Monitor - Agent Guide
+# life-monitor — Agent Guide
 
 ## Purpose
 
-This file helps coding agents work in `life-monitor` without regressing the storage model, platform collectors, or release flow.
+Use this file to get oriented quickly in `life-monitor` and avoid breaking the parts of the product that are easy to regress:
 
-Use it as:
+- local-first collection
+- bucket-based storage
+- import/export merge safety
+- feature-gated multi-device sync
+- platform-specific collectors
+- the read-only ratatui dashboard
 
-- a map of the current architecture
-- a list of product and runtime invariants
-- a guide for where changes should go
-- a warning list for high-risk parts of the repo
-
-This guide optimizes for correctness and velocity, not completeness.
+This guide is intentionally practical. It is optimized for helping the next model find the right files, preserve product invariants, and choose the right verification steps.
 
 ---
 
@@ -19,79 +19,48 @@ This guide optimizes for correctness and velocity, not completeness.
 
 `life-monitor` is a cross-platform Rust activity tracker for Linux and Windows.
 
-It collects:
+It records:
 
 - keyboard activity
-- mouse movement, clicks, and scroll activity
-- active or focused window information over time
+- mouse movement, clicks, and scroll
+- focused-window / active-app activity over time
 
-It stores data in a local SQLite database using bucketed records.
-
-The project is local-first by default:
-
-- SQLite is the collector database
-- snapshot export/import is supported for explicit history movement
-- custom database paths can point to local disks or already-mounted shares
-
-There is now an optional, feature-gated multi-device sync mode:
-
-- disabled by default
-- compiled only with `--features multi-sync`
-- keeps local SQLite as the writable collector DB
-- uses a remote `sqld` / libSQL endpoint as the canonical merged store
-
-Current release line:
-
-- crate version: `0.1.6`
-- release tags: `vX.Y.Z`
-
----
-
-## Core Product Model
-
-### Default storage strategy
-
-The default product model is still:
-
-- collect locally
-- inspect locally
-- export a consistent SQLite snapshot when needed
-- import and merge that snapshot somewhere else
-
-### Optional multi-device sync strategy
-
-When built with `--features multi-sync` and explicitly configured by the user:
-
-- each device keeps its own local SQLite database
-- each device owns exactly one `source_uuid`
-- the remote `sqld` database is the canonical merged store
-- devices push only their own source-owned rows
-- devices pull foreign rows and keep them locally queryable
-- if remote sync fails, local collection must continue
-- if remote sync is unavailable at startup, the collector must still start and keep writing locally
-
-### Data model
-
-The primary stored activity model is bucket-based:
+It stores data in a local SQLite database using bucketed rows:
 
 - `InputBucketRecord`
 - `FocusBucketRecord`
 
-Those bucket rows are the source of truth for:
+It also supports:
 
-- totals
-- analytics
-- import/export merging
-- sync convergence
+- snapshot export/import
+- built-in CLI analytics reports
+- a read-only ratatui dashboard (`--tui`)
+- optional feature-gated multi-device sync (`--features multi-sync`)
 
-Current built-in analytics are CLI-first:
+Current release line:
 
-- `sessions`
-- `session-stats`
-- `apps`
-- `daily`
+- crate version: `0.1.7`
+- release tags: `vX.Y.Z`
 
-Do not replace bucket storage with ad hoc cumulative counters unless the product model is being deliberately redesigned.
+---
+
+## Mental Model
+
+The product has three distinct surfaces:
+
+1. collector
+   - long-running process that writes activity into local SQLite
+
+2. inspection tools
+   - CLI analytics reports
+   - ratatui dashboard
+   - these are read-only and must not start a second collector
+
+3. history movement / convergence
+   - export/import snapshots
+   - optional sync with a remote canonical store
+
+If you keep those surfaces separate, most changes fall into place.
 
 ---
 
@@ -115,17 +84,20 @@ src/
 │   ├── linux/
 │   │   ├── common.rs
 │   │   ├── inputs.rs
+│   │   ├── mod.rs
 │   │   ├── process.rs
 │   │   ├── wayland.rs
 │   │   └── x11.rs
 │   └── windows/
 │       ├── common.rs
 │       ├── inputs.rs
+│       ├── mod.rs
 │       ├── process.rs
 │       ├── startup.rs
 │       └── systray.rs
 ├── storage/
 │   ├── backend.rs
+│   ├── mod.rs
 │   └── localdb/
 │       ├── analytics.rs
 │       ├── config.rs
@@ -145,208 +117,239 @@ src/
 │   ├── status.rs
 │   ├── tests.rs
 │   └── types.rs
+├── tui/
+│   ├── app.rs
+│   ├── data.rs
+│   ├── mod.rs
+│   └── ui.rs
 └── utils/
     ├── args.rs
     ├── dpi.rs
     ├── lock.rs
-    └── logger.rs
-
-.github/workflows/
-├── nix.yml
-├── no-nix.yml
-└── release.yml
+    ├── logger.rs
+    └── mod.rs
 ```
 
 ---
 
 ## Where To Look First
 
-If the task is about:
-
-- CLI behavior or command routing:
-  - `src/main.rs`
-  - `src/utils/args.rs`
-
-- shared bucket logic, motion math, focus buffering, or path helpers:
-  - `src/common/*`
-
-- database schema, import/export, analytics, or DB path behavior:
-  - `src/storage/localdb/*`
-  - `src/storage/backend.rs`
-
-- feature-gated multi-device sync:
-  - `src/sync/*`
-  - `src/main.rs`
-  - `src/utils/args.rs`
-
-- Linux raw input:
-  - `src/platform/linux/inputs.rs`
-
-- Windows raw input, focus, startup, or systray:
-  - `src/platform/windows/inputs.rs`
-  - `src/platform/windows/common.rs`
-  - `src/platform/windows/process.rs`
-  - `src/platform/windows/startup.rs`
-
-- Linux startup generation:
-  - `src/platform/linux/common.rs`
-
-- DPI persistence:
-  - `src/utils/dpi.rs`
-
-- locking and multi-process coordination:
-  - `src/utils/lock.rs`
-
-- CI and release flow:
-  - `.github/workflows/no-nix.yml`
-  - `.github/workflows/nix.yml`
-  - `.github/workflows/release.yml`
+| Task | Files |
+| --- | --- |
+| CLI flags, command routing, startup flow | `src/main.rs`, `src/utils/args.rs` |
+| Shared bucket logic, focus buffering, motion math | `src/common/*` |
+| SQLite schema, import/export, analytics | `src/storage/localdb/*`, `src/storage/backend.rs` |
+| Read-only terminal dashboard | `src/tui/mod.rs`, `src/tui/app.rs`, `src/tui/data.rs`, `src/tui/ui.rs` |
+| Linux raw input collection | `src/platform/linux/inputs.rs` |
+| Linux startup generation | `src/platform/linux/common.rs` |
+| Windows raw input / focus / startup / tray | `src/platform/windows/*` |
+| Sync implementation | `src/sync/*`, `src/main.rs`, `src/utils/args.rs` |
+| Locking and multi-process coordination | `src/utils/lock.rs` |
+| DPI persistence and resolution | `src/utils/dpi.rs` |
+| CI / packaging / release | `.github/workflows/*`, `flake.nix` |
 
 ---
 
-## Main Runtime Flow
+## Current Runtime Flow
 
-`src/main.rs` has two major execution modes:
+`src/main.rs` has three practical execution paths.
 
-1. short-circuit commands
-   - startup enable/disable
-   - export
-   - import
-   - import dry-run
-   - analytics reports
-   - sync push/pull/status when `multi-sync` is enabled
+### 1. Short-circuit commands
 
-2. long-running collection
-   - resolve DB path
-   - resolve DPI
-   - initialize local DB backend
-   - spawn input collection
-   - spawn focus/process collection
-   - spawn Windows systray when enabled
-   - spawn background sync loop only when `multi-sync` is compiled and configured
+These do work and exit:
 
-Keep that split clear. Commands that do work and exit should not start the long-running collector and then special-case later.
+- startup enable/disable
+- `--export-db`
+- `--import-db`
+- `--import-db --dry-run`
+- `--report`
+- `sync push/pull/status` when `multi-sync` is enabled
+
+### 2. Read-only dashboard
+
+`--tui`:
+
+- opens the ratatui dashboard
+- reads from the local SQLite DB
+- refreshes periodically
+- does not start the collector
+- does not require the single-instance lock
+
+This separation matters. The dashboard is an inspection tool, not a collection mode.
+
+### 3. Long-running collector
+
+Normal run without short-circuit flags:
+
+1. resolve DB path
+2. acquire single-instance lock
+3. resolve mouse DPI
+4. initialize the local SQLite backend
+5. start platform input collection
+6. start focus/process collection
+7. start Windows systray if enabled
+8. start opportunistic sync loop only when compiled and configured
+
+Do not blur these paths together.
 
 ---
 
-## Important Invariants
+## TUI Structure
 
-### 1. Local SQLite remains the collector database
+The dashboard is new enough that it deserves its own map.
 
-Even with `multi-sync`, local collection still writes to local SQLite first.
+### `src/tui/mod.rs`
+
+- terminal setup / teardown
+- alternate screen and raw mode handling
+- event loop
+- periodic refresh
+
+### `src/tui/app.rs`
+
+- dashboard state machine
+- focus sections
+- keyboard handling
+- time window state
+- chart mode state
+- list / heatmap selection and scrolling
+
+### `src/tui/data.rs`
+
+- loads dashboard data from SQLite
+- aggregates app usage, chart series, summary totals, heatmap rows
+- contains dashboard-facing presentation models
+
+### `src/tui/ui.rs`
+
+- ratatui layout
+- chart rendering
+- app list rendering
+- heatmap rendering
+- header/footer/help modal
+
+### Current dashboard behavior
+
+The dashboard is read-only and centered on:
+
+- summary cards
+- app activity list with per-app histograms
+- activity chart with multiple time windows
+- daily average activity grid
+- footer hints and collector/sync status
+
+If you change the TUI, verify both behavior and layout. Most TUI regressions are not compiler errors; they show up as clipped text, dead space, bad resizing, or misleading status information.
+
+---
+
+## Product Invariants
+
+These are the constraints most changes must preserve.
+
+### 1. Local SQLite is the collector database
+
+Even with `multi-sync`, collection writes go to local SQLite first.
 
 Do not turn the collector into a remote-first writer.
 
-### 2. Bucket rows remain the primary truth
+### 2. Bucket rows are the source of truth
 
-Totals, analytics, imports, and sync convergence should all derive from bucket rows.
+Totals, analytics, TUI aggregates, import/export behavior, and sync convergence all derive from bucket rows.
 
-Do not introduce mutable shared running totals as the primary persisted state.
+Do not replace this with ad hoc cumulative counters.
 
-### 3. Import/export must remain idempotency-aware
+### 3. Import/export must stay idempotent
 
 Do not weaken:
 
-- `exports`
-- `imports`
-- file hash checks
 - export UUID checks
+- import history tracking
+- snapshot hash checks
+- duplicate detection
 
-Those exist to prevent duplicate imports and doubled totals.
+These guards prevent doubled totals.
 
-### 4. `--db-path` behavior is user-facing
+### 4. `--db-path` is a user-facing contract
 
-`--db-path` accepts:
+It accepts:
 
-- a file
+- a file path
 - a directory
 - a missing directory-like path
 
-It is remembered for future runs.
+It is also remembered across runs.
 
-Do not change this casually. Users may rely on it for removable disks or mounted shares.
+Do not casually change its resolution or persistence behavior.
 
-### 5. Multi-sync must stay fully gated
+### 5. `multi-sync` must remain fully feature-gated
 
-When `multi-sync` is disabled:
+When the feature is off:
 
-- no sync code should compile
-- no libSQL / remote dependency should be required
-- the local-only collector flow must keep working unchanged
+- sync code must not compile
+- no remote dependency should be required
+- default local-only behavior must stay intact
 
-### 6. Source ownership is strict in sync mode
+### 6. Sync source ownership is strict
 
 Each device owns exactly one `source_uuid`.
 
-A device may push only rows owned by that source.
+- a device may push only its own rows
+- pulled foreign rows may exist locally
+- foreign rows must never be re-enqueued as local outbox rows
 
-Pulled foreign rows:
-
-- may exist locally
-- must remain queryable locally
-- must never be re-enqueued as local authored changes
-
-### 7. Sync must remain retry-safe
-
-Push and pull must remain idempotent:
+### 7. Sync must be retry-safe
 
 - no duplicate canonical rows on retry
-- no cursor advance before successful full apply
-- no marking pending rows as sent before remote acknowledgement
+- no marking outbox rows as sent before acknowledgement
+- no cursor advance before a full successful pull apply
 
-### 8. Foreign source metadata must stay real
+### 8. Sync failure must not stop collection
 
-When pulling foreign-source bucket rows, the local database must receive the real remote
-`sources` metadata first.
-
-Do not reintroduce placeholder source rows based on guessed names or the local platform.
-
-### 9. Sync failure must not stop collection
-
-If the remote is unavailable or a sync attempt fails:
+If the remote is unavailable:
 
 - local collection continues
 - local writes continue
-- pending outbox rows remain queued
-- status records the failure
+- sync status records the problem
+- pending sync work stays pending
 
-### 10. Linux and Windows should share logic only where behavior is truly shared
+### 9. The TUI is inspection-only
 
-Good places to share:
+The dashboard may refresh and read the DB while a collector is running.
+
+It must not:
+
+- acquire the collector instance lock
+- mutate the tracked activity data
+- start background collection implicitly
+
+### 10. Platform behavior should only be shared when it is actually shared
+
+Good shared logic:
 
 - motion math
-- bucket buffering
-- tracker state transitions
+- bucket segmentation
+- focus buffering
 
-Keep platform event decoding and OS integration local to each platform.
+Keep OS event decoding and OS integration inside `platform/linux` or `platform/windows`.
 
-### 11. Release tags must match `Cargo.toml`
+### 11. Linux startup remains XDG-first
 
-The release workflow enforces this.
+Linux startup supports:
 
-Do not change release logic in a way that allows publishing mismatched versions.
+- `xdg` autostart as the default
+- `systemd --user` as an explicit advanced fallback
 
-### 12. Linux startup should prefer standard XDG autostart and keep systemd fallback narrow
+Do not reintroduce fragile session-environment assumptions into startup generation.
 
-Linux startup now has two modes:
+### 12. Release tags must match `Cargo.toml`
 
-- default: XDG autostart desktop entry
-- fallback: `systemd --user` unit tied to the graphical session
-
-Preserve these expectations:
-
-- startup artifacts should point at the executable the user enabled startup from
-- prefer XDG autostart for desktop-session startup
-- keep the `systemd --user` mode explicit and advanced
-- do not bake volatile graphical-session variables such as `WAYLAND_DISPLAY` into the systemd unit
-- do not mutate the wider systemd user manager environment just to make the service start
-- warn when startup is enabled from a fragile repo build path such as `target/debug` or `target/release`
+The workflow enforces this. Do not change release flow in a way that weakens version/tag matching.
 
 ---
 
-## Storage And Sync Tables
+## Storage and Sync Tables
 
-Main local tables:
+### Local tables
 
 - `schema_meta`
 - `sources`
@@ -356,14 +359,14 @@ Main local tables:
 - `imports`
 - `sessions`
 
-Local sync tables when `multi-sync` is enabled:
+### Local sync tables (`multi-sync` only)
 
 - `sync_state`
 - `sync_outbox_sources`
 - `sync_outbox_input_buckets`
 - `sync_outbox_focus_buckets`
 
-Remote canonical sync tables:
+### Remote canonical sync tables
 
 - `sources`
 - `input_buckets`
@@ -374,24 +377,20 @@ Remote canonical sync tables:
 - `sync_input_changes`
 - `sync_focus_changes`
 
-If you change schema:
+When schema changes:
 
-- update schema setup and any migrations or bootstrap logic
-- update tests
+- update setup/bootstrap logic
+- update the relevant tests
 - think through import/export behavior
 - think through sync behavior if `multi-sync` is enabled
 
-Compatibility with older schema versions is not a project priority right now. Keep the implementation simple unless the task explicitly requires compatibility handling.
+Backward schema compatibility is not a major project goal right now. Prefer simple, correct migrations over elaborate compatibility scaffolding unless the task explicitly asks for it.
 
 ---
 
-## Build And Test Expectations
+## Build and Test
 
-### Use flake environments
-
-Builds and tests should be run from environments provided by `flake.nix`.
-
-Preferred commands:
+Use the flake environment and pass `--target` explicitly.
 
 ```bash
 nix develop --command cargo fmt --all
@@ -403,105 +402,62 @@ nix build .#linux
 nix build .#windows
 ```
 
-`nix build .#windows` is a cross-compiled Windows GNU package build from the current host system, not a native Windows build job.
+Notes:
 
-Do not assume the repo's current default target. CI explicitly passes `--target`, and local verification should do the same.
+- `nix build .#windows` is a Linux-hosted cross-build, not native Windows execution.
+- the dev shell intentionally separates host Linux and cross Windows toolchains
+- do not pollute native Linux builds with Windows-specific MinGW defaults
 
-The default dev shell intentionally separates host Linux and Windows cross-build C toolchains:
+### SQLite expectation
 
-- host Linux builds should use the host compiler toolchain
-- Windows cross-builds should use target-specific `x86_64-pc-windows-gnu` toolchain variables
-- normal host `cargo build` / `cargo test` should work without forcing a Windows target globally
+`rusqlite` is bundled on both platforms.
 
-Do not reintroduce Windows MinGW runtime headers or libraries into the default host build environment in a way that pollutes Linux native C builds.
-
-### SQLite runtime expectation
-
-`rusqlite` is bundled on both Linux and Windows.
-
-Preserve that unless there is a deliberate packaging reason to change it:
+Preserve this:
 
 - Linux runtime should not depend on a system `libsqlite3.so`
-- Windows runtime should not depend on an external SQLite install
-- if build or shell changes break bundled SQLite compilation, fix the toolchain environment instead of silently falling back to a system SQLite dependency
+- Windows runtime should not require an external SQLite install
 
-### Windows test reality
+### Windows validation
 
-Wine is useful for some local validation, but it is not authoritative for full Windows runtime behavior.
-
-Assume:
-
-- compile checks for Windows are valuable locally
-- some Windows tests may run under Wine
-- native Windows CI remains the authoritative runtime gate
-
-Do not contort production code just to make every Windows behavior test pass under Wine.
-
-### Test philosophy
-
-Prefer tests that verify:
-
-- observable behavior
-- ownership rules
-- state transitions
-- merge/import/export outcomes
-- retry and idempotency behavior
-- analytics outputs derived from real stored bucket/session rows
-
-Avoid tests that mostly verify:
-
-- OS behavior itself
-- static message wording
-- broad smoke paths with many unrelated failure points
-- timing-sensitive behavior when a direct helper-level test would be clearer
-
-If sync behavior changes, add tests for:
-
-- startup/offline behavior
-- source ownership
-- foreign row pull behavior
-- outbox safety
-- convergence or retry behavior
-
-Use the lowest stable test level that proves the behavior.
+Wine can help locally, but native Windows CI is the real runtime gate.
 
 ---
 
-## Preferred Change Strategy
+## Change Strategy
 
-When working in this repo:
+### Start narrow
 
-1. Identify the task area first:
-   - runtime collection
-   - storage/import/export
-   - sync
-   - CLI/config
-   - platform-specific behavior
-   - CI/release
+Before editing:
 
-2. Read the narrowest responsible files first.
+1. identify the task area
+2. open the smallest responsible files first
+3. confirm which invariant matters most for that change
 
-3. Preserve the current product direction:
-   - local-first
-   - bucket-based
-   - explicit snapshot import/export
-   - optional feature-gated sync
-   - user-visible recovery messages
+### Prefer additive changes in the TUI/data layers
 
-4. Add or update targeted tests when behavior changes.
+For dashboard work:
 
-5. Prefer small coherent commits.
+- prefer deriving new views from existing bucket data
+- avoid changing storage semantics just to support a UI feature
+- keep rendering concerns in `ui.rs`
+- keep state transitions in `app.rs`
+- keep SQL/aggregation in `data.rs`
 
-Commits should be split by feature or coherent code change, not bundled into one large mixed commit.
+### Keep commits coherent
 
-Each commit message should have:
+Prefer separate commits for:
 
-- a helpful title
-- a body that explains what changed
+- product behavior changes
+- schema changes
+- sync changes
+- docs-only updates
+- warning cleanup / dead-code cleanup
+
+Commit messages should include:
+
+- what changed
 - how it changed
 - why it changed
-
-This is important for release notes and for understanding the repo history later.
 
 ---
 
@@ -510,52 +466,77 @@ This is important for release notes and for understanding the repo history later
 Be extra careful in:
 
 - `src/storage/localdb/*`
-  - schema, import/export, analytics, and row merge behavior have wide blast radius
+  - schema, import/export, merge logic, analytics
 
 - `src/sync/*`
-  - ownership, idempotency, and cursor handling can fail subtly
+  - ownership, outbox safety, cursor handling, retry semantics
 
 - `src/common/*`
-  - shared logic regressions hit both platforms
+  - shared logic affects both platforms
 
 - `src/platform/linux/inputs.rs`
-  - measurement accuracy can regress silently
+  - input measurement can drift silently
 
 - `src/platform/windows/inputs.rs`
-  - raw input and message-loop behavior are easy to break
+  - raw input and message loop code are easy to break subtly
 
 - `src/utils/lock.rs`
-  - filesystem semantics vary across environments and mounted paths
+  - filesystem and lock semantics vary by environment
 
-- `.github/workflows/release.yml`
-  - publishing and asset attachment are easy to break
-
----
-
-## Known Weak Spots
-
-Current likely cleanup targets:
-
-- some sync/outbox seams can still be simplified without undoing the current module boundaries
-- storage and sync responsibilities should continue to stay narrow as features grow
-- Wine cannot replace native Windows validation
-- remote share behavior depends on OS mount semantics and is still best-effort
-- there is still no built-in dashboard or TUI
+- `src/tui/ui.rs`
+  - many regressions are visual/layout regressions, not compile failures
 
 ---
 
-## Anti-Patterns To Avoid
+## TUI-Specific Gotchas
 
-- reintroducing a general remote backend into the default product path
-- bypassing bucket storage with ad hoc totals
-- enqueueing pulled foreign rows into the sync outbox
-- marking outbox rows sent before remote acknowledgement
-- advancing the pull cursor before a full successful apply
-- mixing unrelated feature, schema, CI, and docs changes into one commit when they can be separate
-- assuming Linux-only validation is enough for Windows behavior
+When editing the dashboard:
+
+- check wide and narrow layouts
+- check fullscreen and medium terminal sizes
+- avoid leaving dead interior space inside bordered panels
+- protect duration strings and labels from clipping
+- treat charts and scrollable lists as the primary sinks for extra space
+- keep footer/header status high-signal and compact
+- remember the dashboard may run while the collector is active elsewhere
+
+If a TUI change needs new data, prefer adding an additive aggregation in `src/tui/data.rs` instead of altering storage design.
 
 ---
 
-## One-Sentence Mental Model
+## Test Philosophy
 
-`life-monitor` is a local-first, bucket-based activity recorder whose core guarantees are accurate input collection, safe SQLite persistence, explicit snapshot movement of history, and optional feature-gated multi-device convergence without interrupting local collection.
+Prefer tests that prove:
+
+- observable behavior
+- merge/import/export outcomes
+- sync ownership and retry behavior
+- dashboard state transitions and input handling
+- analytics derived from stored rows
+
+Avoid tests that mostly prove:
+
+- the OS itself
+- exact wording of UI copy unless it is product-critical
+- brittle timing behavior
+- giant smoke paths that obscure the real failing invariant
+
+Use the lowest stable test level that proves the behavior.
+
+---
+
+## Common Mistakes To Avoid
+
+- making the collector remote-first
+- bypassing bucket rows with ad hoc totals
+- starting collection from the TUI path
+- re-enqueueing pulled foreign rows
+- advancing sync state before a full successful apply
+- mixing unrelated feature, docs, CI, and schema changes into one commit
+- assuming Linux-only validation is enough for Windows-sensitive code
+
+---
+
+## One-Sentence Model
+
+`life-monitor` is a local-first, bucket-based activity recorder with read-only analytics surfaces and optional feature-gated sync, where correctness depends on preserving local collection, safe SQLite semantics, and clear separation between collection, inspection, and history movement.

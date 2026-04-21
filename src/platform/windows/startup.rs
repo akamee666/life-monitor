@@ -9,9 +9,10 @@ use windows::Win32::System::Com::{
 };
 use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
 
-use crate::Cli;
+use crate::utils::args::CollectorCli;
 
 const SHORTCUT_NAME: &str = "life-monitor.lnk";
+const COLLECTOR_SUBCOMMAND: &str = "collector";
 
 #[allow(dead_code)]
 pub fn check_startup_status() -> Result<bool> {
@@ -27,21 +28,21 @@ pub fn check_startup_status() -> Result<bool> {
     Ok(enabled)
 }
 
-pub fn configure_startup(args: &Cli) -> Result<()> {
+pub fn configure_startup(args: &CollectorCli) -> Result<()> {
     let ctx = startup_context()?;
     let manager = WindowsShortcutManager;
     configure_startup_with(args, &ctx, &manager)
 }
 
 fn configure_startup_with(
-    args: &Cli,
+    args: &CollectorCli,
     ctx: &StartupContext,
     manager: &dyn ShortcutManager,
 ) -> Result<()> {
     let shortcut_path = ctx.shortcut_path();
 
     if args.enable_startup {
-        manager.create_shortcut(&shortcut_path, &ctx.current_exe)?;
+        manager.create_shortcut(&shortcut_path, &ctx.current_exe, COLLECTOR_SUBCOMMAND)?;
         info!("Created startup shortcut at '{}'.", shortcut_path.display());
     } else if args.disable_startup && manager.shortcut_exists(&shortcut_path) {
         manager.remove_shortcut(&shortcut_path)?;
@@ -87,7 +88,7 @@ impl StartupContext {
 
 trait ShortcutManager {
     fn shortcut_exists(&self, shortcut_path: &Path) -> bool;
-    fn create_shortcut(&self, shortcut_path: &Path, target: &Path) -> Result<()>;
+    fn create_shortcut(&self, shortcut_path: &Path, target: &Path, arguments: &str) -> Result<()>;
     fn remove_shortcut(&self, shortcut_path: &Path) -> Result<()>;
 }
 
@@ -98,7 +99,7 @@ impl ShortcutManager for WindowsShortcutManager {
         shortcut_path.exists()
     }
 
-    fn create_shortcut(&self, shortcut_path: &Path, target: &Path) -> Result<()> {
+    fn create_shortcut(&self, shortcut_path: &Path, target: &Path, arguments: &str) -> Result<()> {
         if let Some(parent) = shortcut_path.parent() {
             fs::create_dir_all(parent).with_context(|| {
                 format!(
@@ -112,6 +113,7 @@ impl ShortcutManager for WindowsShortcutManager {
         unsafe {
             let shell_link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
             shell_link.SetPath(&HSTRING::from(target.to_string_lossy().as_ref()))?;
+            shell_link.SetArguments(&HSTRING::from(arguments))?;
             shell_link.SetWorkingDirectory(&HSTRING::from(
                 target
                     .parent()
@@ -162,10 +164,8 @@ mod tests {
     use super::*;
     use std::cell::RefCell;
 
-    fn base_cli() -> Cli {
-        Cli {
-            #[cfg(feature = "multi-sync")]
-            command: None,
+    fn base_collector_args() -> CollectorCli {
+        CollectorCli {
             interval: None,
             #[cfg(target_os = "windows")]
             no_systray: true,
@@ -175,10 +175,6 @@ mod tests {
             import_db: None,
             dry_run: false,
             import_notes: None,
-            report: None,
-            report_days: 7,
-            tui: false,
-            tui_ascii: false,
             dpi: None,
             clear: false,
             enable_startup: false,
@@ -196,7 +192,7 @@ mod tests {
 
     #[derive(Default)]
     struct FakeShortcutManager {
-        created: RefCell<Vec<(PathBuf, PathBuf)>>,
+        created: RefCell<Vec<(PathBuf, PathBuf, String)>>,
         removed: RefCell<Vec<PathBuf>>,
         existing: RefCell<Vec<PathBuf>>,
     }
@@ -209,10 +205,17 @@ mod tests {
                 .any(|path| path == shortcut_path)
         }
 
-        fn create_shortcut(&self, shortcut_path: &Path, target: &Path) -> Result<()> {
-            self.created
-                .borrow_mut()
-                .push((shortcut_path.to_path_buf(), target.to_path_buf()));
+        fn create_shortcut(
+            &self,
+            shortcut_path: &Path,
+            target: &Path,
+            arguments: &str,
+        ) -> Result<()> {
+            self.created.borrow_mut().push((
+                shortcut_path.to_path_buf(),
+                target.to_path_buf(),
+                arguments.to_string(),
+            ));
             self.existing.borrow_mut().push(shortcut_path.to_path_buf());
             Ok(())
         }
@@ -230,8 +233,8 @@ mod tests {
     /// pure helper with a fake shortcut manager instead of calling real Windows COM APIs.
     #[test]
     fn configure_startup_creates_shortcut_in_startup_folder() {
-        let mut cli = base_cli();
-        cli.enable_startup = true;
+        let mut args = base_collector_args();
+        args.enable_startup = true;
         let ctx = StartupContext {
             startup_dir: PathBuf::from(
                 r"C:\Users\me\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup",
@@ -240,20 +243,21 @@ mod tests {
         };
         let manager = FakeShortcutManager::default();
 
-        configure_startup_with(&cli, &ctx, &manager).unwrap();
+        configure_startup_with(&args, &ctx, &manager).unwrap();
 
         let created = manager.created.borrow();
         assert_eq!(created.len(), 1);
         assert_eq!(created[0].0, ctx.shortcut_path());
         assert_eq!(created[0].1, ctx.current_exe);
+        assert_eq!(created[0].2, COLLECTOR_SUBCOMMAND);
     }
 
     /// Verifies that disabling startup removes an existing shortcut only when one is present
     /// by preloading fake manager state and checking the requested removal path.
     #[test]
     fn configure_startup_removes_existing_shortcut_when_disabled() {
-        let mut cli = base_cli();
-        cli.disable_startup = true;
+        let mut args = base_collector_args();
+        args.disable_startup = true;
         let ctx = StartupContext {
             startup_dir: PathBuf::from(
                 r"C:\Users\me\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup",
@@ -263,7 +267,7 @@ mod tests {
         let manager = FakeShortcutManager::default();
         manager.existing.borrow_mut().push(ctx.shortcut_path());
 
-        configure_startup_with(&cli, &ctx, &manager).unwrap();
+        configure_startup_with(&args, &ctx, &manager).unwrap();
 
         assert_eq!(manager.removed.borrow().as_slice(), &[ctx.shortcut_path()]);
     }
@@ -272,8 +276,8 @@ mod tests {
     /// helper path with an empty fake manager and asserting nothing was removed.
     #[test]
     fn configure_startup_does_not_remove_missing_shortcut() {
-        let mut cli = base_cli();
-        cli.disable_startup = true;
+        let mut args = base_collector_args();
+        args.disable_startup = true;
         let ctx = StartupContext {
             startup_dir: PathBuf::from(
                 r"C:\Users\me\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup",
@@ -282,7 +286,7 @@ mod tests {
         };
         let manager = FakeShortcutManager::default();
 
-        configure_startup_with(&cli, &ctx, &manager).unwrap();
+        configure_startup_with(&args, &ctx, &manager).unwrap();
 
         assert!(manager.removed.borrow().is_empty());
     }

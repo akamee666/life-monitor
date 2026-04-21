@@ -14,25 +14,23 @@ use crate::platform::linux::common::*;
 use crate::platform::linux::process;
 
 use crate::storage::backend::*;
-use crate::storage::localdb::{
-    app_activity_report, daily_activity_report, export_database, import_snapshot, open_con_at,
-    plan_import, session_report, session_stats_report, setup_database, DbConfig,
-};
+use crate::storage::localdb::{export_database, import_snapshot, plan_import, DbConfig};
+#[cfg(feature = "multi-sync")]
+use crate::storage::localdb::{open_con_at, setup_database};
 #[cfg(feature = "multi-sync")]
 use crate::sync::{
     record_sync_error, render_sync_status, resolve_sync_runtime_config, run_sync_cycle, sync_pull,
     sync_push, sync_status_snapshot, SqldRemote,
 };
 use crate::tui::run_dashboard;
-use crate::utils::args::{Cli, ReportKind};
+use crate::utils::args::{parse_cli, Cli, CollectorCli, Command, DashboardCli};
 #[cfg(feature = "multi-sync")]
-use crate::utils::args::{Command, SyncCommand};
+use crate::utils::args::{SyncCli, SyncCommand};
 use crate::utils::dpi::{log_mouse_dpi_resolution, resolve_mouse_dpi};
 use crate::utils::lock::*;
 use crate::utils::logger;
 
 use anyhow::{Context, Result};
-use clap::Parser;
 
 use tokio::task::JoinSet;
 use tracing::*;
@@ -50,8 +48,8 @@ mod utils;
 
 #[tokio::main]
 async fn main() {
-    let args = Cli::parse();
-    logger::init(args.debug);
+    let args = parse_cli();
+    logger::init(debug_enabled(&args));
     logger::setup_panic_hook();
 
     if let Err(err) = run(args).await {
@@ -59,35 +57,64 @@ async fn main() {
     }
 }
 
-async fn run(mut args: Cli) -> Result<()> {
+async fn run(args: Cli) -> Result<()> {
+    match args.command {
+        Command::Collector(args) => run_collector(args).await,
+        Command::Dashboard(args) => run_dashboard_mode(args).await,
+        #[cfg(feature = "multi-sync")]
+        Command::Sync { action, args } => run_sync_command(action, args).await,
+    }
+}
+
+fn debug_enabled(cli: &Cli) -> bool {
+    match &cli.command {
+        Command::Collector(args) => args.debug,
+        Command::Dashboard(_) => false,
+        #[cfg(feature = "multi-sync")]
+        Command::Sync { .. } => false,
+    }
+}
+
+async fn run_dashboard_mode(_args: DashboardCli) -> Result<()> {
+    let db_config = DbConfig::from_cli_path(None)?;
+    run_dashboard(&db_config.db_path).with_context(|| "Failed to run terminal dashboard")
+}
+
+#[cfg(feature = "multi-sync")]
+async fn run_sync_command(action: SyncCommand, args: SyncCli) -> Result<()> {
+    let db_config = DbConfig::from_cli_path(args.db_path.clone())?;
+    let mut conn = open_con_at(&db_config.db_path)?;
+    setup_database(&conn)?;
+    let sync_config = resolve_sync_runtime_config(
+        &conn,
+        args.sync_remote_url.as_deref(),
+        args.sync_auth_token.as_deref(),
+        false,
+        300,
+    )?
+    .with_context(|| {
+        "Sync is not configured. Pass --sync-remote-url or set LIFE_MONITOR_SYNC_REMOTE_URL."
+    })?;
+    let remote = SqldRemote::new(&sync_config.remote_url, &sync_config.auth_token).await?;
+
+    match action {
+        SyncCommand::Push => {
+            sync_push(&conn, &remote, &sync_config).await?;
+        }
+        SyncCommand::Pull => {
+            sync_pull(&mut conn, &remote, &sync_config).await?;
+        }
+        SyncCommand::Status => {
+            let status = sync_status_snapshot(&conn, Some(&remote), &sync_config).await?;
+            println!("{}", render_sync_status(&status));
+        }
+    }
+    Ok(())
+}
+
+async fn run_collector(mut args: CollectorCli) -> Result<()> {
     let db_config = DbConfig::from_cli_path(args.db_path.clone())?;
 
-    #[cfg(feature = "multi-sync")]
-    if let Some(Command::Sync { action }) = args.command.clone() {
-        let mut conn = open_con_at(&db_config.db_path)?;
-        setup_database(&conn)?;
-        let sync_config = resolve_sync_runtime_config(&conn, &args)?.with_context(|| {
-            "Sync is not configured. Pass --sync-remote-url or set LIFE_MONITOR_SYNC_REMOTE_URL."
-        })?;
-        let remote = SqldRemote::new(&sync_config.remote_url, &sync_config.auth_token).await?;
-
-        match action {
-            SyncCommand::Push => {
-                sync_push(&conn, &remote, &sync_config).await?;
-            }
-            SyncCommand::Pull => {
-                sync_pull(&mut conn, &remote, &sync_config).await?;
-            }
-            SyncCommand::Status => {
-                let status = sync_status_snapshot(&conn, Some(&remote), &sync_config).await?;
-                println!("{}", render_sync_status(&status));
-            }
-        }
-        return Ok(());
-    }
-
-    // if we receive one of these two flags we call the function and it will enable or disable the
-    // startup depending on the enable value.
     if args.enable_startup || args.disable_startup {
         let state = if args.enable_startup {
             "enable"
@@ -98,7 +125,7 @@ async fn run(mut args: Cli) -> Result<()> {
         configure_startup(&args).with_context(|| format!("Failed to {} startup", state))?;
 
         info!(
-            "Startup {}d successfully. This command only installs or removes the startup entry and then exits. If you want to keep collecting in this session, run Life Monitor again without the startup flags.",
+            "Startup {}d successfully. This command only installs or removes the startup entry and then exits. If you want to keep collecting in this session, run `life-monitor collector` again without the startup flags.",
             state
         );
         return Ok(());
@@ -136,84 +163,6 @@ async fn run(mut args: Cli) -> Result<()> {
         return Ok(());
     }
 
-    if args.tui {
-        run_dashboard(&db_config.db_path, args.report_days, args.tui_ascii)
-            .with_context(|| "Failed to run terminal dashboard")?;
-        return Ok(());
-    }
-
-    if let Some(report) = args.report {
-        let conn = open_con_at(&db_config.db_path)?;
-        setup_database(&conn)?;
-        match report {
-            ReportKind::Sessions => {
-                for row in session_report(&conn, args.report_days)? {
-                    let ended = row.ended_at_utc.as_deref().unwrap_or("running");
-                    let duration = row
-                        .duration_seconds
-                        .map(|value| format!("{value}s"))
-                        .unwrap_or_else(|| "unknown".to_string());
-                    println!(
-                        "{} {} {} {} {} {}",
-                        row.started_at_utc,
-                        ended,
-                        duration,
-                        row.source_name,
-                        row.source_uuid,
-                        row.platform
-                    );
-                }
-            }
-            ReportKind::SessionStats => {
-                for row in session_stats_report(&conn, args.report_days)? {
-                    println!(
-                        "{} {} {} {} {} {} {} {}",
-                        row.source_name,
-                        row.source_uuid,
-                        row.platform,
-                        row.session_count,
-                        row.open_session_count,
-                        row.total_duration_seconds,
-                        row.average_duration_seconds,
-                        row.longest_duration_seconds
-                    );
-                }
-            }
-            ReportKind::Apps => {
-                for row in app_activity_report(&conn, args.report_days)? {
-                    println!(
-                        "{} {} {} {} {}",
-                        row.focus_seconds,
-                        row.source_name,
-                        row.source_uuid,
-                        row.platform,
-                        row.app_identifier
-                    );
-                }
-            }
-            ReportKind::Daily => {
-                for row in daily_activity_report(&conn, args.report_days)? {
-                    println!(
-                        "{} {} {} {} {} {} {} {} {:.2} {:.2} {:.2} {}",
-                        row.local_date,
-                        row.source_name,
-                        row.source_uuid,
-                        row.platform,
-                        row.key_presses,
-                        row.left_clicks,
-                        row.right_clicks,
-                        row.middle_clicks,
-                        row.mouse_distance_cm,
-                        row.scroll_vertical_cm,
-                        row.scroll_horizontal_cm,
-                        row.focus_seconds
-                    );
-                }
-            }
-        }
-        return Ok(());
-    }
-
     ensure_single_instance()
         .with_context(|| "Failed to ensure that we are the only instance of the program")?;
 
@@ -244,7 +193,13 @@ async fn run(mut args: Cli) -> Result<()> {
         let sync_config = {
             let conn = local_db.shared_connection();
             let conn = conn.lock().unwrap();
-            resolve_sync_runtime_config(&conn, &args)?
+            resolve_sync_runtime_config(
+                &conn,
+                args.sync_remote_url.as_deref(),
+                args.sync_auth_token.as_deref(),
+                args.sync_enable,
+                args.sync_interval,
+            )?
         };
         if let Some(sync_config) = sync_config.filter(|config| config.sync_enabled) {
             let db_path = local_db.db_path().clone();
@@ -354,10 +309,8 @@ mod tests {
         LOCK.get_or_init(|| Mutex::new(()))
     }
 
-    fn base_cli() -> Cli {
-        Cli {
-            #[cfg(feature = "multi-sync")]
-            command: None,
+    fn base_collector_args() -> CollectorCli {
+        CollectorCli {
             interval: None,
             #[cfg(target_os = "windows")]
             no_systray: true,
@@ -367,16 +320,10 @@ mod tests {
             import_db: None,
             dry_run: false,
             import_notes: None,
-            report: None,
-            report_days: 7,
-            tui: false,
-            tui_ascii: false,
             dpi: None,
             clear: false,
             enable_startup: false,
             disable_startup: false,
-            #[cfg(target_os = "linux")]
-            startup_mode: crate::utils::args::LinuxStartupMode::Xdg,
             #[cfg(feature = "multi-sync")]
             sync_enable: false,
             #[cfg(feature = "multi-sync")]
@@ -437,10 +384,13 @@ mod tests {
         setup_database(&conn)?;
         insert_input_buckets(&conn, &[sample_input_row()])?;
 
-        let mut cli = base_cli();
-        cli.db_path = Some(db_path.clone());
-        cli.export_db = Some(export_path.clone());
-        run(cli).await?;
+        let mut args = base_collector_args();
+        args.db_path = Some(db_path.clone());
+        args.export_db = Some(export_path.clone());
+        run(Cli {
+            command: Command::Collector(args),
+        })
+        .await?;
 
         let snapshot = open_con_at(&export_path)?;
         let count: u64 =
@@ -485,11 +435,14 @@ mod tests {
         )?;
         crate::storage::localdb::export_database(&source_path, &export_path)?;
 
-        let mut cli = base_cli();
-        cli.db_path = Some(dest_path.clone());
-        cli.import_db = Some(export_path.clone());
-        cli.dry_run = true;
-        run(cli).await?;
+        let mut args = base_collector_args();
+        args.db_path = Some(dest_path.clone());
+        args.import_db = Some(export_path.clone());
+        args.dry_run = true;
+        run(Cli {
+            command: Command::Collector(args),
+        })
+        .await?;
 
         let after = open_con_at(&dest_path)?;
         let imports_count: u64 =
@@ -551,11 +504,14 @@ mod tests {
         insert_focus_buckets(&source, &[sample_focus_row()])?;
         crate::storage::localdb::export_database(&source_path, &export_path)?;
 
-        let mut cli = base_cli();
-        cli.db_path = Some(dest_path.clone());
-        cli.import_db = Some(export_path.clone());
-        cli.import_notes = Some("cli import".to_string());
-        run(cli).await?;
+        let mut args = base_collector_args();
+        args.db_path = Some(dest_path.clone());
+        args.import_db = Some(export_path.clone());
+        args.import_notes = Some("cli import".to_string());
+        run(Cli {
+            command: Command::Collector(args),
+        })
+        .await?;
 
         let after = open_con_at(&dest_path)?;
         let imports_count: u64 =

@@ -1,22 +1,15 @@
-#[cfg(feature = "multi-sync")]
-use clap::Subcommand;
-use clap::{value_parser, Parser, ValueEnum};
+use clap::{
+    builder::styling::{AnsiColor, Effects, Styles},
+    value_parser, Args, CommandFactory, FromArgMatches, Parser, Subcommand,
+};
 use std::path::PathBuf;
 
 use tracing::info;
 
 use crate::common::DEFAULT_MOUSE_DPI;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum ReportKind {
-    Sessions,
-    SessionStats,
-    Apps,
-    Daily,
-}
-
 #[cfg(target_os = "linux")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinuxStartupMode {
     Xdg,
     Systemd,
@@ -30,29 +23,9 @@ pub enum SyncCommand {
     Status,
 }
 
-#[cfg(feature = "multi-sync")]
-#[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
-pub enum Command {
-    Sync {
-        #[command(subcommand)]
-        action: SyncCommand,
-    },
-}
-
-#[derive(Parser, Debug)]
-#[command(name = "Life Monitor")]
-#[command(about = "Track keyboard, mouse, and focused-window activity into a SQLite database.")]
-#[command(
-    long_about = "Life Monitor records keyboard, mouse, scroll, and focused-window activity into a local SQLite database. It is designed for people who want to inspect, merge, export, or analyze their own activity data later.\n\nThe default workflow is simple: run the program, let it collect data in the background, and inspect or export the database whenever you need.\n\nUse --db-path to store the database somewhere else, such as another disk or a mounted network share. When you provide --db-path, Life Monitor remembers that location and reuses it on later runs until you choose another path."
-)]
-#[command(
-    after_long_help = "Examples:\n  life-monitor\n  life-monitor --debug --interval 10\n  life-monitor --db-path /mnt/shared/life-monitor/data.db\n  life-monitor --export-db ./snapshot.sqlite\n  life-monitor --import-db ./snapshot.sqlite --dry-run\n  life-monitor --import-db ./snapshot.sqlite --import-notes \"desktop sync\""
-)]
-pub struct Cli {
-    #[cfg(feature = "multi-sync")]
-    #[command(subcommand)]
-    pub command: Option<Command>,
-
+#[derive(Debug, Clone, Args)]
+#[command(about = "Run the background collector and all collector-related maintenance commands.")]
+pub struct CollectorCli {
     #[arg(
         short = 'i',
         long,
@@ -70,12 +43,10 @@ pub struct Cli {
         help_heading = "Collection",
         default_value_t = false,
         help = "Windows only: disable the tray icon.",
-        long_help = "Windows only.\n\nDisables the system tray icon and runs the program without that UI entry point."
+        long_help = "Windows only.\n\nDisables the system tray icon and runs the collector without that UI entry point."
     )]
     pub no_systray: bool,
 
-    // WARN: Windows subsystem may affect this.
-    //https://stackoverflow.com/questions/43744379/can-i-conditionally-compile-my-rust-program-for-a-windows-subsystem
     #[arg(
         short = 'd',
         long,
@@ -90,7 +61,7 @@ pub struct Cli {
         long,
         help_heading = "Database",
         value_name = "PATH",
-        help = "Store or read the SQLite database from a custom path.",
+        help = "Store or read the collector SQLite database from a custom path.",
         long_help = "Use a specific SQLite database file instead of the default location.\n\nThis can point to:\n- a local file\n- another disk or partition\n- a mounted network share such as Samba or NFS\n\nWhen you provide this option, Life Monitor remembers the path and uses it again on later runs until you provide a different one.\n\nLife Monitor only uses paths that the operating system can already access. It does not mount remote shares or prompt for share credentials."
     )]
     pub db_path: Option<PathBuf>,
@@ -133,47 +104,6 @@ pub struct Cli {
     pub import_notes: Option<String>,
 
     #[arg(
-        long,
-        help_heading = "Analytics",
-        value_enum,
-        value_name = "KIND",
-        conflicts_with_all = ["export_db", "import_db", "enable_startup", "disable_startup", "clear"],
-        help = "Render a built-in analytics report and exit.",
-        long_help = "Renders a built-in analytics report from the local SQLite database and then exits.\n\nAvailable reports:\n- sessions: collection sessions recorded by Life Monitor\n- session-stats: per-source session totals and duration summaries\n- apps: focused-app totals grouped by source\n- daily: per-day activity totals grouped by source"
-    )]
-    pub report: Option<ReportKind>,
-
-    #[arg(
-        long,
-        help_heading = "Analytics",
-        requires = "report",
-        value_name = "DAYS",
-        default_value_t = 7,
-        value_parser = value_parser!(u32).range(1..),
-        help = "How many recent days the analytics report should cover."
-    )]
-    pub report_days: u32,
-
-    #[arg(
-        long,
-        help_heading = "Analytics",
-        default_value_t = false,
-        conflicts_with_all = ["export_db", "import_db", "enable_startup", "disable_startup", "clear", "report"],
-        help = "Open the interactive terminal dashboard and exit when it closes.",
-        long_help = "Opens an interactive ratatui-based dashboard backed by the local SQLite database and exits when you close it.\n\nThe dashboard is read-only. It does not start the collector and it does not require the single-instance lock, so it can be used while another Life Monitor collector process is already running."
-    )]
-    pub tui: bool,
-
-    #[arg(
-        long,
-        help_heading = "Analytics",
-        requires = "tui",
-        default_value_t = false,
-        help = "Render the TUI with ASCII-safe glyphs instead of richer Unicode bars and markers."
-    )]
-    pub tui_ascii: bool,
-
-    #[arg(
         short = 'p',
         long,
         help_heading = "Collection",
@@ -198,7 +128,7 @@ pub struct Cli {
         long,
         help_heading = "Startup",
         help = "Enable automatic startup for the current user session.",
-        long_help = "Configures Life Monitor to start automatically for the current user.\n\nOn Windows, this creates a shortcut in the Startup folder.\nOn Linux, this uses the startup mode selected by --startup-mode. The default is xdg, which creates an XDG autostart desktop entry. The systemd mode is available as an explicit fallback for setups where graphical-session integration is known to work.\n\nLinux startup installation does not launch a second Life Monitor instance immediately. XDG mode takes effect on the next graphical login, and systemd mode installs and enables the unit without starting it right away.\n\nThis is user-session startup, not a system-wide boot service.",
+        long_help = "Configures Life Monitor to start automatically in collector mode for the current user.\n\nOn Windows, this creates a shortcut in the Startup folder.\nOn Linux, Life Monitor will ask you to choose between the recommended XDG autostart mode and the advanced systemd --user fallback mode, then explain when to pick each one.",
         conflicts_with = "disable_startup"
     )]
     pub enable_startup: bool,
@@ -207,21 +137,10 @@ pub struct Cli {
         long,
         help_heading = "Startup",
         help = "Disable automatic startup for the current user session.",
-        long_help = "Removes Life Monitor from automatic startup for the current user.\n\nOn Windows, this removes the Startup shortcut.\nOn Linux, this removes the XDG autostart entry and disables/removes the optional systemd --user fallback unit.",
+        long_help = "Removes Life Monitor collector startup for the current user.\n\nOn Windows, this removes the Startup shortcut.\nOn Linux, this removes the XDG autostart entry and disables/removes the optional systemd --user fallback unit.",
         conflicts_with = "enable_startup"
     )]
     pub disable_startup: bool,
-
-    #[cfg(target_os = "linux")]
-    #[arg(
-        long,
-        help_heading = "Startup",
-        value_enum,
-        default_value_t = LinuxStartupMode::Xdg,
-        help = "Linux only: choose how automatic startup is configured.",
-        long_help = "Linux only.\n\nChoose how Life Monitor should be started automatically for the current user session.\n\nModes:\n- xdg: recommended default. Writes an XDG autostart desktop entry in ~/.config/autostart or $XDG_CONFIG_HOME/autostart.\n- systemd: advanced fallback. Writes a systemd --user unit that expects the graphical session environment to already be imported into systemd --user at login.\n\nThe systemd mode does not bake volatile values like WAYLAND_DISPLAY into the unit file."
-    )]
-    pub startup_mode: LinuxStartupMode,
 
     #[cfg(feature = "multi-sync")]
     #[arg(
@@ -262,10 +181,87 @@ pub struct Cli {
     pub sync_interval: u64,
 }
 
-impl Cli {
+#[derive(Debug, Clone, Args, Default)]
+#[command(about = "Open the interactive read-only dashboard backed by the local SQLite database.")]
+pub struct DashboardCli {}
+
+#[cfg(feature = "multi-sync")]
+#[derive(Debug, Clone, Args, Default)]
+pub struct SyncCli {
+    #[arg(
+        long,
+        help_heading = "Database",
+        value_name = "PATH",
+        help = "Read the local SQLite database from a custom path."
+    )]
+    pub db_path: Option<PathBuf>,
+
+    #[arg(
+        long,
+        help_heading = "Sync",
+        value_name = "URL",
+        help = "Remote sqld/libSQL endpoint used as the canonical sync store."
+    )]
+    pub sync_remote_url: Option<String>,
+
+    #[arg(
+        long,
+        help_heading = "Sync",
+        value_name = "TOKEN",
+        help = "Authentication token for the remote sqld/libSQL endpoint."
+    )]
+    pub sync_auth_token: Option<String>,
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum Command {
+    Collector(CollectorCli),
+    Dashboard(DashboardCli),
+    #[cfg(feature = "multi-sync")]
+    Sync {
+        #[command(subcommand)]
+        action: SyncCommand,
+        #[command(flatten)]
+        args: SyncCli,
+    },
+}
+
+#[derive(Parser, Debug, Clone)]
+#[command(name = "Life Monitor")]
+#[command(subcommand_required = true, arg_required_else_help = true)]
+#[command(about = "Track keyboard, mouse, and focused-window activity into a SQLite database.")]
+#[command(
+    long_about = "Life Monitor records keyboard, mouse, scroll, and focused-window activity into a local SQLite database.\n\nUse `collector` to run the background collector and maintenance commands.\nUse `dashboard` to inspect the database through the interactive terminal dashboard."
+)]
+#[command(
+    after_long_help = "Examples:\n  life-monitor collector\n  life-monitor collector --debug --interval 10\n  life-monitor collector --db-path /mnt/shared/life-monitor/data.db\n  life-monitor collector --export-db ./snapshot.sqlite\n  life-monitor collector --import-db ./snapshot.sqlite --dry-run\n  life-monitor dashboard"
+)]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Command,
+}
+
+pub fn parse_cli() -> Cli {
+    let mut command = Cli::command().styles(cli_styles());
+    let matches = command.get_matches_mut();
+    Cli::from_arg_matches(&matches).unwrap_or_else(|err| err.exit())
+}
+
+fn cli_styles() -> Styles {
+    Styles::styled()
+        .header(AnsiColor::Green.on_default() | Effects::BOLD)
+        .usage(AnsiColor::Green.on_default() | Effects::BOLD)
+        .literal(AnsiColor::Cyan.on_default() | Effects::BOLD)
+        .placeholder(AnsiColor::Yellow.on_default())
+        .valid(AnsiColor::Green.on_default())
+        .invalid(AnsiColor::Red.on_default() | Effects::BOLD)
+        .error(AnsiColor::Red.on_default() | Effects::BOLD)
+}
+
+impl CollectorCli {
     #[allow(dead_code)]
     pub fn print_args(&self) {
-        info!("Arguments provided:");
+        info!("Collector arguments provided:");
         info!("Interval: {:?}", self.interval.unwrap_or(300));
         #[cfg(target_os = "windows")]
         info!("No systray: {:?}", self.no_systray);
@@ -274,18 +270,14 @@ impl Cli {
         info!("Export database: {:?}", self.export_db);
         info!("Import database: {:?}", self.import_db);
         info!("Dry-run import: {:?}", self.dry_run);
-        info!("Report: {:?}", self.report);
-        info!("Report days: {:?}", self.report_days);
-        info!("TUI: {:?}", self.tui);
-        info!("TUI ASCII: {:?}", self.tui_ascii);
-        #[cfg(feature = "multi-sync")]
-        info!("Sync command: {:?}", self.command);
+        info!("Mouse DPI: {:?}", self.dpi.unwrap_or(DEFAULT_MOUSE_DPI));
+        info!("Clear database: {:?}", self.clear);
+        info!("Enable startup: {:?}", self.enable_startup);
+        info!("Disable startup: {:?}", self.disable_startup);
         #[cfg(feature = "multi-sync")]
         info!("Sync enabled: {:?}", self.sync_enable);
         #[cfg(feature = "multi-sync")]
         info!("Sync remote URL: {:?}", self.sync_remote_url);
-        info!("Mouse DPI: {:?}", self.dpi.unwrap_or(DEFAULT_MOUSE_DPI));
-        info!("Clear database: {:?}", self.clear);
         println!();
     }
 }

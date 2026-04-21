@@ -3,7 +3,6 @@ use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::storage::localdb::get_source;
-use crate::utils::args::Cli;
 
 use super::types::SyncStateRecord;
 
@@ -18,24 +17,26 @@ pub struct SyncRuntimeConfig {
 
 pub fn resolve_sync_runtime_config(
     conn: &Connection,
-    args: &Cli,
+    sync_remote_url: Option<&str>,
+    sync_auth_token: Option<&str>,
+    sync_enable: bool,
+    sync_interval: u64,
 ) -> Result<Option<SyncRuntimeConfig>> {
     let own_source = get_source(conn, crate::common::DEFAULT_SOURCE_ID)?;
 
-    let explicit_remote_url = args.sync_remote_url.clone().or_else(|| {
+    let explicit_remote_url = sync_remote_url.map(str::to_string).or_else(|| {
         std::env::var("LIFE_MONITOR_SYNC_REMOTE_URL")
             .ok()
             .filter(|value| !value.trim().is_empty())
     });
-    let auth_token = args
-        .sync_auth_token
-        .clone()
+    let auth_token = sync_auth_token
+        .map(str::to_string)
         .or_else(|| std::env::var("LIFE_MONITOR_SYNC_AUTH_TOKEN").ok())
         .unwrap_or_default();
 
     let existing = explicit_remote_url
         .as_deref()
-        .map(|url| load_or_init_sync_state(conn, &own_source.source_uuid, url, args.sync_enable))
+        .map(|url| load_or_init_sync_state(conn, &own_source.source_uuid, url, sync_enable))
         .transpose()?;
 
     let persisted = if existing.is_none() {
@@ -66,11 +67,7 @@ pub fn resolve_sync_runtime_config(
         None => return Ok(None),
     };
 
-    let sync_enabled = if args.sync_enable {
-        true
-    } else {
-        state_enabled
-    };
+    let sync_enabled = if sync_enable { true } else { state_enabled };
 
     if existing.is_none() {
         let _ = load_or_init_sync_state(conn, &own_source.source_uuid, &remote_url, sync_enabled)?;
@@ -81,7 +78,7 @@ pub fn resolve_sync_runtime_config(
         auth_token,
         own_source_uuid: own_source.source_uuid,
         sync_enabled,
-        sync_interval_seconds: args.sync_interval,
+        sync_interval_seconds: sync_interval,
     }))
 }
 
