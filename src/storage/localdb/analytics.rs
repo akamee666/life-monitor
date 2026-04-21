@@ -1,28 +1,8 @@
 use anyhow::{Context, Result};
-use chrono::{DateTime, Duration, Utc};
-use rusqlite::{params, Connection, OptionalExtension};
+use chrono::{Duration, Utc};
+use rusqlite::{params, Connection};
 use std::collections::BTreeMap;
 use uuid::Uuid;
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct SessionRow {
-    pub session_uuid: String,
-    pub source_uuid: String,
-    pub source_name: String,
-    pub started_at_utc: String,
-    pub ended_at_utc: Option<String>,
-    pub platform: String,
-    pub duration_seconds: Option<u64>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct AppActivityRow {
-    pub source_uuid: String,
-    pub source_name: String,
-    pub platform: String,
-    pub app_identifier: String,
-    pub focus_seconds: u64,
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DailyActivityRow {
@@ -38,18 +18,6 @@ pub struct DailyActivityRow {
     pub scroll_vertical_cm: f64,
     pub scroll_horizontal_cm: f64,
     pub focus_seconds: u64,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct SessionStatsRow {
-    pub source_uuid: String,
-    pub source_name: String,
-    pub platform: String,
-    pub session_count: u64,
-    pub open_session_count: u64,
-    pub total_duration_seconds: u64,
-    pub average_duration_seconds: u64,
-    pub longest_duration_seconds: u64,
 }
 
 pub fn begin_session(conn: &Connection, source_id: i64, platform: &str) -> Result<String> {
@@ -88,93 +56,6 @@ pub fn end_session(conn: &Connection, session_uuid: &str) -> Result<()> {
     )
     .with_context(|| format!("Failed to finalize session {session_uuid}"))?;
     Ok(())
-}
-
-#[allow(dead_code)]
-pub fn current_open_session(conn: &Connection, source_id: i64) -> Result<Option<SessionRow>> {
-    conn.query_row(
-        "
-        SELECT sess.session_uuid, src.source_uuid, src.source_name, sess.started_at_utc, sess.ended_at_utc, sess.platform
-        FROM sessions sess
-        JOIN sources src ON src.id = sess.source_id
-        WHERE sess.source_id = ?1 AND sess.ended_at_utc IS NULL
-        ORDER BY sess.started_at_utc DESC
-        LIMIT 1
-        ",
-        [source_id],
-        |row| {
-            Ok(SessionRow {
-                session_uuid: row.get(0)?,
-                source_uuid: row.get(1)?,
-                source_name: row.get(2)?,
-                started_at_utc: row.get(3)?,
-                ended_at_utc: row.get(4)?,
-                platform: row.get(5)?,
-                duration_seconds: None,
-            })
-        },
-    )
-    .optional()
-    .with_context(|| "Failed to query the currently open session")
-}
-
-pub fn session_report(conn: &Connection, days: u32) -> Result<Vec<SessionRow>> {
-    let since = Utc::now() - Duration::days(days.max(1) as i64);
-    let mut stmt = conn.prepare(
-        "
-        SELECT sess.session_uuid, src.source_uuid, src.source_name, sess.started_at_utc, sess.ended_at_utc, sess.platform
-        FROM sessions sess
-        JOIN sources src ON src.id = sess.source_id
-        WHERE sess.started_at_utc >= ?1
-        ORDER BY sess.started_at_utc DESC, src.source_name ASC
-        ",
-    )?;
-    let rows = stmt.query_map([since.to_rfc3339()], |row| {
-        let started_at_utc: String = row.get(3)?;
-        let ended_at_utc: Option<String> = row.get(4)?;
-        let duration_seconds = compute_duration_seconds(&started_at_utc, ended_at_utc.as_deref());
-
-        Ok(SessionRow {
-            session_uuid: row.get(0)?,
-            source_uuid: row.get(1)?,
-            source_name: row.get(2)?,
-            started_at_utc,
-            ended_at_utc,
-            platform: row.get(5)?,
-            duration_seconds,
-        })
-    })?;
-
-    rows.collect::<rusqlite::Result<Vec<_>>>()
-        .with_context(|| "Failed to load session analytics rows")
-}
-
-pub fn app_activity_report(conn: &Connection, days: u32) -> Result<Vec<AppActivityRow>> {
-    let since = Utc::now() - Duration::days(days.max(1) as i64);
-    let mut stmt = conn.prepare(
-        "
-        SELECT src.source_uuid, src.source_name, src.platform, focus.app_identifier,
-               SUM(focus.focus_seconds) AS total_focus_seconds
-        FROM focus_buckets focus
-        JOIN sources src ON src.id = focus.source_id
-        WHERE focus.bucket_start_utc >= ?1
-        GROUP BY src.source_uuid, src.source_name, src.platform, focus.app_identifier
-        ORDER BY total_focus_seconds DESC, src.source_name ASC, focus.app_identifier ASC
-        ",
-    )?;
-
-    let rows = stmt.query_map([since.to_rfc3339()], |row| {
-        Ok(AppActivityRow {
-            source_uuid: row.get(0)?,
-            source_name: row.get(1)?,
-            platform: row.get(2)?,
-            app_identifier: row.get(3)?,
-            focus_seconds: row.get::<_, Option<u64>>(4)?.unwrap_or(0),
-        })
-    })?;
-
-    rows.collect::<rusqlite::Result<Vec<_>>>()
-        .with_context(|| "Failed to load app activity analytics rows")
 }
 
 pub fn daily_activity_report(conn: &Connection, days: u32) -> Result<Vec<DailyActivityRow>> {
@@ -264,67 +145,4 @@ pub fn daily_activity_report(conn: &Connection, days: u32) -> Result<Vec<DailyAc
             .then_with(|| left.source_name.cmp(&right.source_name))
     });
     Ok(rows)
-}
-
-pub fn session_stats_report(conn: &Connection, days: u32) -> Result<Vec<SessionStatsRow>> {
-    let since = Utc::now() - Duration::days(days.max(1) as i64);
-    // Duration uses strftime('%s') for exact integer-second differences.
-    // Open sessions use datetime('now') as the end time, matching compute_duration_seconds.
-    let mut stmt = conn.prepare(
-        "
-        SELECT
-            src.source_uuid,
-            src.source_name,
-            src.platform,
-            COUNT(*)                                                    AS session_count,
-            SUM(CASE WHEN sess.ended_at_utc IS NULL THEN 1 ELSE 0 END) AS open_session_count,
-            COALESCE(SUM(duration_seconds), 0)                          AS total_duration_seconds,
-            COALESCE(MAX(duration_seconds), 0)                          AS longest_duration_seconds
-        FROM (
-            SELECT
-                source_id,
-                ended_at_utc,
-                max(0,
-                    CAST(strftime('%s', COALESCE(ended_at_utc, datetime('now'))) AS INTEGER)
-                    - CAST(strftime('%s', started_at_utc) AS INTEGER)
-                ) AS duration_seconds
-            FROM sessions
-            WHERE started_at_utc >= ?1
-        ) sess
-        JOIN sources src ON src.id = sess.source_id
-        GROUP BY src.source_uuid, src.source_name, src.platform
-        ORDER BY total_duration_seconds DESC, src.source_name ASC
-        ",
-    )?;
-
-    let rows = stmt.query_map([since.to_rfc3339()], |row| {
-        let session_count: u64 = row.get(3)?;
-        let total_duration_seconds: u64 = row.get(5)?;
-        Ok(SessionStatsRow {
-            source_uuid: row.get(0)?,
-            source_name: row.get(1)?,
-            platform: row.get(2)?,
-            session_count,
-            open_session_count: row.get(4)?,
-            total_duration_seconds,
-            average_duration_seconds: if session_count > 0 {
-                total_duration_seconds / session_count
-            } else {
-                0
-            },
-            longest_duration_seconds: row.get(6)?,
-        })
-    })?;
-
-    rows.collect::<rusqlite::Result<Vec<_>>>()
-        .with_context(|| "Failed to load session stats analytics rows")
-}
-
-fn compute_duration_seconds(started_at_utc: &str, ended_at_utc: Option<&str>) -> Option<u64> {
-    let started_at = DateTime::parse_from_rfc3339(started_at_utc).ok()?;
-    let ended_at = ended_at_utc
-        .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
-        .unwrap_or_else(|| Utc::now().fixed_offset());
-
-    Some((ended_at - started_at).num_seconds().max(0) as u64)
 }

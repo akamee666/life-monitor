@@ -7,11 +7,7 @@ mod rows;
 mod schema;
 
 #[allow(unused_imports)]
-pub use analytics::{
-    app_activity_report, begin_session, current_open_session, daily_activity_report, end_session,
-    session_report, session_stats_report, AppActivityRow, DailyActivityRow, SessionRow,
-    SessionStatsRow,
-};
+pub use analytics::{begin_session, daily_activity_report, end_session, DailyActivityRow};
 #[allow(unused_imports)]
 pub use config::{default_db_path, resolve_db_path, DbConfig, DbPathSource};
 #[allow(unused_imports)]
@@ -44,7 +40,7 @@ mod tests {
 
     fn unique_temp_db(name: &str) -> PathBuf {
         let suffix = Uuid::new_v4();
-        std::env::temp_dir().join(format!("life-monitor-{name}-{suffix}.db"))
+        std::env::temp_dir().join(format!("vigil-{name}-{suffix}.db"))
     }
 
     fn env_lock() -> &'static Mutex<()> {
@@ -99,7 +95,7 @@ mod tests {
         let _guard = env_lock().lock().unwrap();
         let data_dir = unique_temp_db("remembered-config-dir");
         std::fs::create_dir_all(&data_dir)?;
-        std::env::set_var("LIFE_MONITOR_DATA_DIR", &data_dir);
+        std::env::set_var("VIGIL_DATA_DIR", &data_dir);
 
         let first_path = unique_temp_db("remembered-first");
         let second_path = unique_temp_db("remembered-second");
@@ -119,7 +115,7 @@ mod tests {
         assert_eq!(remembered_again.db_path, second_path);
         assert_eq!(remembered_again.source, DbPathSource::Remembered);
 
-        std::env::remove_var("LIFE_MONITOR_DATA_DIR");
+        std::env::remove_var("VIGIL_DATA_DIR");
         fs::remove_dir_all(data_dir)?;
         Ok(())
     }
@@ -178,7 +174,7 @@ mod tests {
     #[test]
     fn resolve_db_path_creates_missing_directory_and_uses_data_db() -> anyhow::Result<()> {
         let dir = std::env::temp_dir().join(format!(
-            "life-monitor-custom-dir-missing-{}",
+            "vigil-custom-dir-missing-{}",
             Uuid::new_v4()
         ));
 
@@ -541,50 +537,52 @@ mod tests {
         Ok(())
     }
 
-    /// Verifies that session reporting returns both open and closed sessions in reverse
-    /// chronology by creating one ended session and one current session in a real database.
+    /// Verifies that begin_session creates a session row and end_session closes it by
+    /// querying the sessions table directly and checking the ended_at_utc state.
     #[test]
-    fn session_report_returns_closed_and_open_sessions() -> anyhow::Result<()> {
-        let path = unique_temp_db("session-report");
+    fn begin_and_end_session_persist_session_rows() -> anyhow::Result<()> {
+        let path = unique_temp_db("session-lifecycle");
         let conn = build_test_db(&path)?;
 
-        let first = begin_session(&conn, DEFAULT_SOURCE_ID, "windows")?;
+        let first = begin_session(&conn, DEFAULT_SOURCE_ID, "linux")?;
         end_session(&conn, &first)?;
-        let second = begin_session(&conn, DEFAULT_SOURCE_ID, "windows")?;
+        let second = begin_session(&conn, DEFAULT_SOURCE_ID, "linux")?;
 
-        let sessions = session_report(&conn, 30)?;
-        assert_eq!(sessions.len(), 2);
+        let count: u64 =
+            conn.query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))?;
+        assert_eq!(count, 2);
 
-        // Most-recent (open) session is first.
-        assert_eq!(sessions[0].session_uuid, second);
-        assert!(!sessions[0].source_uuid.is_empty());
-        assert!(!sessions[0].source_name.is_empty());
-        assert_eq!(sessions[0].ended_at_utc, None);
-        // Open session duration uses Utc::now() as end — should be a few seconds at most.
-        assert!(sessions[0].duration_seconds.unwrap_or(u64::MAX) < 30);
+        // First session should be closed.
+        let first_ended: Option<String> = conn.query_row(
+            "SELECT ended_at_utc FROM sessions WHERE session_uuid = ?1",
+            [&first],
+            |row| row.get(0),
+        )?;
+        assert!(first_ended.is_some());
 
-        // Closed session is second.
-        assert_eq!(sessions[1].session_uuid, first);
-        assert!(sessions[1].ended_at_utc.is_some());
-        // Closed session was ended immediately — duration should be 0 or 1 second.
-        assert!(sessions[1].duration_seconds.unwrap_or(u64::MAX) <= 2);
+        // Second session should be open.
+        let second_ended: Option<String> = conn.query_row(
+            "SELECT ended_at_utc FROM sessions WHERE session_uuid = ?1",
+            [&second],
+            |row| row.get(0),
+        )?;
+        assert!(second_ended.is_none());
 
         drop(conn);
         fs::remove_file(path)?;
         Ok(())
     }
 
-    /// Verifies that app activity reporting aggregates focus time by app identifier by loading
-    /// multiple focus rows and asserting the grouped totals and ordering from the query result.
-    /// Also verifies that rows outside the requested day window are excluded.
+    /// Verifies that focus bucket aggregation by app identifier works correctly by inserting
+    /// multiple focus rows across apps and asserting the per-app totals via direct SQL.
     #[test]
-    fn app_activity_report_aggregates_focus_seconds_by_app() -> anyhow::Result<()> {
-        let path = unique_temp_db("app-report");
+    fn focus_buckets_aggregate_by_app_identifier() -> anyhow::Result<()> {
+        let path = unique_temp_db("focus-agg");
         let conn = build_test_db(&path)?;
         insert_focus_buckets(
             &conn,
             &[
-                sample_focus_row(),
+                sample_focus_row(), // firefox, 120s
                 FocusBucketRecord {
                     app_identifier: "firefox".to_string(),
                     focus_seconds: 30,
@@ -597,31 +595,21 @@ mod tests {
                     focus_seconds: 10,
                     ..sample_second_focus_row()
                 },
-                // Row from 60 days ago — must be excluded when days=30.
-                FocusBucketRecord {
-                    source_id: DEFAULT_SOURCE_ID,
-                    bucket_start_utc: Utc.with_ymd_and_hms(2026, 2, 18, 10, 0, 0).unwrap(),
-                    bucket_end_utc: Utc.with_ymd_and_hms(2026, 2, 18, 10, 15, 0).unwrap(),
-                    local_date: "2026-02-18".to_string(),
-                    local_hour: 10,
-                    timezone_offset_minutes: 0,
-                    app_identifier: "ancient-app".to_string(),
-                    window_title: "Old Window".to_string(),
-                    window_class: "old".to_string(),
-                    focus_seconds: 999,
-                },
             ],
         )?;
 
-        let rows = app_activity_report(&conn, 30)?;
-        assert!(!rows[0].source_uuid.is_empty());
-        assert!(!rows[0].source_name.is_empty());
-        assert_eq!(rows[0].app_identifier, "firefox");
-        assert_eq!(rows[0].focus_seconds, 150);
-        assert_eq!(rows[1].app_identifier, "code");
-        assert_eq!(rows[1].focus_seconds, 10);
-        // The ancient-app row from 60 days ago must not appear in a 30-day window.
-        assert!(rows.iter().all(|r| r.app_identifier != "ancient-app"));
+        let firefox_total: u64 = conn.query_row(
+            "SELECT SUM(focus_seconds) FROM focus_buckets WHERE app_identifier = 'firefox'",
+            [],
+            |row| row.get(0),
+        )?;
+        let code_total: u64 = conn.query_row(
+            "SELECT SUM(focus_seconds) FROM focus_buckets WHERE app_identifier = 'code'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(firefox_total, 150);
+        assert_eq!(code_total, 10);
 
         drop(conn);
         fs::remove_file(path)?;
@@ -650,33 +638,40 @@ mod tests {
         Ok(())
     }
 
-    /// Verifies that session statistics summarize counts and durations per source, including
-    /// correct average computation, by inserting sessions with known timestamps directly.
+    /// Verifies that session duration computation in SQLite is correct by inserting two sessions
+    /// with known timestamps and asserting the derived totals via direct aggregate query.
     #[test]
-    fn session_stats_report_summarizes_sessions_per_source() -> anyhow::Result<()> {
-        let path = unique_temp_db("session-stats");
+    fn session_duration_aggregates_correctly_in_sql() -> anyhow::Result<()> {
+        let path = unique_temp_db("session-durations");
         let conn = build_test_db(&path)?;
 
-        // Insert two closed sessions with known durations: 60 s and 120 s.
+        // Two closed sessions: 60 s and 120 s.
         conn.execute_batch(&format!(
             "
             INSERT INTO sessions (source_id, started_at_utc, ended_at_utc, session_uuid, platform)
-            VALUES ({id}, '2026-04-18T10:00:00Z', '2026-04-18T10:01:00Z', 'stats-uuid-1', 'linux');
+            VALUES ({id}, '2026-04-18T10:00:00Z', '2026-04-18T10:01:00Z', 'dur-uuid-1', 'linux');
             INSERT INTO sessions (source_id, started_at_utc, ended_at_utc, session_uuid, platform)
-            VALUES ({id}, '2026-04-18T10:02:00Z', '2026-04-18T10:04:00Z', 'stats-uuid-2', 'linux');
+            VALUES ({id}, '2026-04-18T10:02:00Z', '2026-04-18T10:04:00Z', 'dur-uuid-2', 'linux');
             ",
             id = DEFAULT_SOURCE_ID
         ))?;
 
-        let rows = session_stats_report(&conn, 30)?;
-        assert_eq!(rows.len(), 1);
-        assert!(!rows[0].source_uuid.is_empty());
-        assert!(!rows[0].source_name.is_empty());
-        assert_eq!(rows[0].session_count, 2);
-        assert_eq!(rows[0].open_session_count, 0);
-        assert_eq!(rows[0].total_duration_seconds, 180); // 60 + 120
-        assert_eq!(rows[0].longest_duration_seconds, 120);
-        assert_eq!(rows[0].average_duration_seconds, 90); // 180 / 2
+        let (count, total, longest): (u64, u64, u64) = conn.query_row(
+            "
+            SELECT COUNT(*),
+                   COALESCE(SUM(CAST(strftime('%s', ended_at_utc) AS INTEGER)
+                                - CAST(strftime('%s', started_at_utc) AS INTEGER)), 0),
+                   COALESCE(MAX(CAST(strftime('%s', ended_at_utc) AS INTEGER)
+                                - CAST(strftime('%s', started_at_utc) AS INTEGER)), 0)
+            FROM sessions
+            WHERE ended_at_utc IS NOT NULL
+            ",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(count, 2);
+        assert_eq!(total, 180); // 60 + 120
+        assert_eq!(longest, 120);
 
         drop(conn);
         fs::remove_file(path)?;
