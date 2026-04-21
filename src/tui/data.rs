@@ -297,7 +297,7 @@ fn aggregate_top_apps(rows: &[FocusUsageRow], top_n: usize) -> Vec<AppShare> {
     let mut aggregated =
         std::collections::BTreeMap::<String, (u64, std::collections::BTreeMap<String, u64>)>::new();
     for row in rows {
-        let label = friendly_app_name(&row.app_identifier);
+        let label = app_display_label(&row.app_identifier, &row.window_title);
         let detail = activity_context(&row.app_identifier, &row.window_title);
         let entry = aggregated
             .entry(label)
@@ -315,7 +315,8 @@ fn aggregate_top_apps(rows: &[FocusUsageRow], top_n: usize) -> Vec<AppShare> {
                 let detail = details
                     .into_iter()
                     .max_by(|left, right| left.1.cmp(&right.1).then_with(|| right.0.cmp(&left.0)))
-                    .map(|(detail, _)| detail);
+                    .map(|(detail, _)| detail)
+                    .filter(|d| d != &label);
                 AppShare {
                     label,
                     detail,
@@ -457,10 +458,10 @@ fn attach_app_sparklines(
 
     let mut stmt = conn.prepare(
         "
-        SELECT app_identifier, bucket_start_utc, COALESCE(SUM(focus_seconds), 0)
+        SELECT app_identifier, window_title, bucket_start_utc, COALESCE(SUM(focus_seconds), 0)
         FROM focus_buckets
         WHERE bucket_start_utc >= ?1
-        GROUP BY app_identifier, bucket_start_utc
+        GROUP BY app_identifier, window_title, bucket_start_utc
         ORDER BY bucket_start_utc ASC
         ",
     )?;
@@ -468,13 +469,14 @@ fn attach_app_sparklines(
         Ok((
             row.get::<_, String>(0)?,
             row.get::<_, String>(1)?,
-            row.get::<_, Option<u64>>(2)?.unwrap_or(0),
+            row.get::<_, String>(2)?,
+            row.get::<_, Option<u64>>(3)?.unwrap_or(0),
         ))
     })?;
 
     for row in rows {
-        let (app_identifier, bucket_start_raw, focus_seconds) = row?;
-        let label = friendly_app_name(&app_identifier);
+        let (app_identifier, window_title, bucket_start_raw, focus_seconds) = row?;
+        let label = app_display_label(&app_identifier, &window_title);
         let Some(series) = series_by_label.get_mut(&label) else {
             continue;
         };
@@ -588,6 +590,18 @@ fn friendly_app_name(app_identifier: &str) -> String {
         "steam" | "steam.exe" => "Steam".to_string(),
         other => title_case_identifier(other),
     }
+}
+
+fn app_display_label(app_identifier: &str, window_title: &str) -> String {
+    let normalized = normalize_app_id(app_identifier);
+    if !normalized.is_empty() && normalized != "unknown" {
+        return friendly_app_name(app_identifier);
+    }
+    let title = friendly_window_title(window_title);
+    if !title.is_empty() {
+        return title;
+    }
+    "unknown".to_string()
 }
 
 fn classify_activity_label(app_identifier: &str, window_title: &str) -> String {
