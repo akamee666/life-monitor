@@ -26,11 +26,6 @@ Find which days, hours or weeks that you were most active and what you're curren
 cargo install vigil
 ```
 
-Notes:
-
-- `nix build .#linux` produces the native Linux package for the current host system
-- `nix build .#windows` cross-compiles the Windows GNU binary from the current host system; it is not a native Windows build
-
 ### Building from source
 
 Build directly from source and get the latest commit:
@@ -52,16 +47,21 @@ nix build .#linux
 nix build .#windows
 ```
 
+Notes:
+
+- `nix build .#linux` produces the native Linux package for the current host system
+- `nix build .#windows` cross-compiles the Windows GNU binary from the current host system; it is not a native Windows build
+
 ---
 
 ## Commands
 
 ### `vigil collector`
 
-Runs the background activity collector and handles all collector-related maintenance, it should keep running so your data keeps accurate.
-
 > [!WARNING]
 > On Linux, `life-monitor` reads raw input events from `/dev/input`. Your user usually needs permission to access those devices, add yourself to input group using `sudo usermod -aG input $USER` or run the program as `root`
+
+Runs the background activity collector and handles all collector-related maintenance, it should keep running so your data keeps accurate.
 
 ```
 vigil collector [OPTIONS]
