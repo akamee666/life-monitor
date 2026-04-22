@@ -4,7 +4,7 @@ Vigil is a activity tracker for Linux and Windows to help you understand when yo
 
 Find which days, hours or weeks that you were most active and what you're currently spending your time on:
 
-![Showing TUI dashboard](./screenshots/recording_20260421_20-36-45.mp4)
+![Showing TUI dashboard](./screenshots/dashboard-showcase.gif)
 
 ## Features
 
