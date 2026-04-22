@@ -2,10 +2,10 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{self, *};
 use x11rb::rust_connection::RustConnection;
 
-use crate::common::*;
-use crate::*;
+use crate::common::{ProcessTracker, Window};
 
 use anyhow::*;
+use tracing::debug;
 
 #[cfg(feature = "x11")]
 pub struct X11Ctx {
