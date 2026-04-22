@@ -218,9 +218,6 @@ mod tests {
         let path = Path::new("/tmp/vigil/shared.db");
         let lock_path = db_operation_lock_path(path);
 
-        assert_eq!(
-            lock_path,
-            PathBuf::from("/tmp/vigil/shared.db.oplock")
-        );
+        assert_eq!(lock_path, PathBuf::from("/tmp/vigil/shared.db.oplock"));
     }
 }

@@ -173,10 +173,7 @@ mod tests {
     /// inside it, which covers the user flow of pointing at a new storage directory.
     #[test]
     fn resolve_db_path_creates_missing_directory_and_uses_data_db() -> anyhow::Result<()> {
-        let dir = std::env::temp_dir().join(format!(
-            "vigil-custom-dir-missing-{}",
-            Uuid::new_v4()
-        ));
+        let dir = std::env::temp_dir().join(format!("vigil-custom-dir-missing-{}", Uuid::new_v4()));
 
         let resolved = resolve_db_path(Some(&dir))?;
 
@@ -548,8 +545,7 @@ mod tests {
         end_session(&conn, &first)?;
         let second = begin_session(&conn, DEFAULT_SOURCE_ID, "linux")?;
 
-        let count: u64 =
-            conn.query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))?;
+        let count: u64 = conn.query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))?;
         assert_eq!(count, 2);
 
         // First session should be closed.

@@ -795,6 +795,7 @@ fn resolve_display_name(
     fallback_display_name(&normalized)
 }
 
+#[cfg(target_os = "linux")]
 fn desktop_exec_basename(value: &str) -> Option<String> {
     let mut parts = value
         .split_whitespace()
@@ -1614,6 +1615,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn desktop_exec_basename_ignores_placeholders_and_quotes() {
         assert_eq!(

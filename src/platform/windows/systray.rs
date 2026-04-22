@@ -27,12 +27,7 @@ enum TrayCommand {
 pub async fn init_tray() -> Result<()> {
     debug!("Spawning native Win32 systray thread");
 
-    tokio::spawn(async move {
-        if let Err(e) = run_tray_loop() {
-            error!("Tray loop failed: {e:?}");
-        }
-    })
-    .await?;
+    tokio::task::spawn_blocking(run_tray_loop).await??;
 
     Ok(())
 }
@@ -135,14 +130,17 @@ unsafe extern "system" fn wnd_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     match msg {
-        // How do we handle errors here?
         WM_TRAYICON if lparam.0 as u32 == WM_RBUTTONUP => {
-            show_context_menu(hwnd).expect("Failed to handle message in systray");
+            if let Err(err) = show_context_menu(hwnd) {
+                error!("Failed to handle tray context menu: {err:#}");
+            }
             LRESULT(0)
         }
 
         WM_COMMAND => {
-            handle_command(LOWORD(wparam.0) as u16);
+            if let Err(err) = handle_command(LOWORD(wparam.0) as u16) {
+                error!("Failed to handle tray command: {err:#}");
+            }
             LRESULT(0)
         }
 
@@ -185,27 +183,63 @@ unsafe fn show_context_menu(hwnd: HWND) -> Result<()> {
     Ok(())
 }
 
-fn handle_command(cmd: u16) {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TrayAction {
+    OpenProjectPage,
+    QuitApplication,
+    None,
+}
+
+fn resolve_tray_action(cmd: u16) -> TrayAction {
     match cmd {
-        x if x == TrayCommand::GoTo as u16 => {
-            let _ = Command::new("cmd.exe")
-                .args([
-                    "/C",
-                    "start",
-                    "",
-                    "https://github.com/akamee666/vigil",
-                ])
-                .spawn();
-        }
-        x if x == TrayCommand::Quit as u16 => unsafe {
-            PostQuitMessage(0);
+        x if x == TrayCommand::GoTo as u16 => TrayAction::OpenProjectPage,
+        x if x == TrayCommand::Quit as u16 => TrayAction::QuitApplication,
+        _ => TrayAction::None,
+    }
+}
+
+fn handle_command(cmd: u16) -> Result<()> {
+    match resolve_tray_action(cmd) {
+        TrayAction::OpenProjectPage => Command::new("cmd.exe")
+            .args(["/C", "start", "", "https://github.com/akamee666/vigil"])
+            .spawn()
+            .map(|_| ())
+            .map_err(anyhow::Error::from),
+        TrayAction::QuitApplication => {
+            unsafe {
+                PostQuitMessage(0);
+            }
             std::process::exit(0);
-        },
-        _ => {}
+        }
+        TrayAction::None => Ok(()),
     }
 }
 
 #[allow(non_snake_case)]
 pub fn LOWORD(l: usize) -> usize {
     l & 0xffff
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_tray_action_maps_known_menu_commands() {
+        assert_eq!(
+            resolve_tray_action(TrayCommand::GoTo as u16),
+            TrayAction::OpenProjectPage
+        );
+        assert_eq!(
+            resolve_tray_action(TrayCommand::Quit as u16),
+            TrayAction::QuitApplication
+        );
+        assert_eq!(resolve_tray_action(9999), TrayAction::None);
+    }
+
+    #[test]
+    fn loword_returns_lower_16_bits_only() {
+        assert_eq!(LOWORD(0x1234_5678), 0x5678);
+        assert_eq!(LOWORD(0x0000_FFFF), 0xFFFF);
+    }
 }

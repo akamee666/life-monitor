@@ -252,6 +252,19 @@ mod tests {
         assert_eq!(created[0].2, COLLECTOR_SUBCOMMAND);
     }
 
+    #[test]
+    fn startup_dir_from_appdata_matches_windows_startup_convention() {
+        let appdata = Path::new(r"C:\Users\me\AppData\Roaming");
+        let startup_dir = startup_dir_from_appdata(appdata);
+
+        assert_eq!(
+            startup_dir,
+            PathBuf::from(
+                r"C:\Users\me\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup"
+            )
+        );
+    }
+
     /// Verifies that disabling startup removes an existing shortcut only when one is present
     /// by preloading fake manager state and checking the requested removal path.
     #[test]

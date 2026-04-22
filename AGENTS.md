@@ -2,20 +2,20 @@
 
 ## Purpose
 
-Use this file to get oriented quickly in `vigil` and avoid breaking the parts of the product that are easy to regress:
+Use this file to orient quickly in `vigil` and avoid breaking the parts of the product that are easiest to regress:
 
 - local-first collection
 - bucket-based storage
 - import/export merge safety
-- feature-gated multi-device sync
-- platform-specific collectors
+- feature-gated sync
+- Linux and Windows collectors
 - the read-only ratatui dashboard
 
-This guide is intentionally practical. It is optimized for helping the next model find the right files, preserve product invariants, and choose the right verification steps.
+This guide is practical rather than exhaustive. It is written for the next model that needs to change code safely.
 
 ---
 
-## Project Summary
+## Project Model
 
 `vigil` is a cross-platform Rust activity tracker for Linux and Windows.
 
@@ -25,40 +25,50 @@ It records:
 - mouse movement, clicks, and scroll
 - focused-window / active-app activity over time
 
-It stores data in a local SQLite database using bucketed rows:
+It stores that history in a local SQLite database using bucket rows:
 
 - `InputBucketRecord`
 - `FocusBucketRecord`
 
-It also supports:
+There are three main product surfaces:
 
-- snapshot export/import
-- a read-only ratatui dashboard (`vigil dashboard`)
-- optional feature-gated multi-device sync (`--features multi-sync`)
+1. `collector`
+   - long-running writer
+   - owns collection, startup setup, import/export, and optional background sync
 
-Current release line:
+2. `dashboard`
+   - read-only ratatui inspection UI
+   - must not start collection or acquire the collector lock
 
-- crate version: `1.0.0`
-- release tags: `vX.Y.Z`
+3. `sync` / history movement
+   - import/export snapshots
+   - optional remote convergence when built with `multi-sync`
+
+Keep those surfaces separate.
 
 ---
 
-## Mental Model
+## Current CLI Shape
 
-The product has three distinct surfaces:
+Top-level commands:
 
-1. **collector** (`vigil collector`)
-   - long-running process that writes activity into local SQLite
+- `vigil collector`
+- `vigil dashboard`
+- `vigil sync` when `multi-sync` is enabled
 
-2. **dashboard** (`vigil dashboard`)
-   - read-only inspection and analytics
-   - does not start collection, does not acquire the collector lock
+Collector-only behavior lives under `collector`:
 
-3. **history movement / convergence**
-   - export/import snapshots (under `collector`)
-   - optional sync with a remote canonical store (`vigil sync`, `multi-sync` feature)
+- `--db-path`
+- `--dpi`
+- `--clear`
+- `--enable-startup`
+- `--disable-startup`
+- `--export-db`
+- `--import-db`
+- collector debug / interval settings
+- collector-side sync runtime flags
 
-If you keep those surfaces separate, most changes fall into place.
+The old report-oriented CLI flow is gone. Analytics now live in `dashboard`.
 
 ---
 
@@ -68,6 +78,7 @@ If you keep those surfaces separate, most changes fall into place.
 src/
 ├── main.rs
 ├── input_bindings.rs
+├── common.rs
 ├── common/
 │   ├── buckets.rs
 │   ├── focus.rs
@@ -78,24 +89,26 @@ src/
 │   ├── ticker.rs
 │   └── types.rs
 ├── platform/
+│   ├── mod.rs
 │   ├── common.rs
 │   ├── linux/
+│   │   ├── mod.rs
 │   │   ├── common.rs
 │   │   ├── inputs.rs
-│   │   ├── mod.rs
 │   │   ├── process.rs
 │   │   ├── wayland.rs
 │   │   └── x11.rs
 │   └── windows/
+│       ├── mod.rs
 │       ├── common.rs
 │       ├── inputs.rs
-│       ├── mod.rs
 │       ├── process.rs
 │       ├── startup.rs
 │       └── systray.rs
 ├── storage/
-│   ├── backend.rs
 │   ├── mod.rs
+│   ├── backend.rs
+│   ├── localdb.rs
 │   └── localdb/
 │       ├── analytics.rs
 │       ├── config.rs
@@ -116,17 +129,25 @@ src/
 │   ├── tests.rs
 │   └── types.rs
 ├── tui/
+│   ├── mod.rs
 │   ├── app.rs
 │   ├── data.rs
-│   ├── mod.rs
 │   └── ui.rs
 └── utils/
+    ├── mod.rs
     ├── args.rs
     ├── dpi.rs
     ├── lock.rs
-    ├── logger.rs
-    └── mod.rs
+    └── logger.rs
 ```
+
+Other important repo paths:
+
+- `.cargo/config.toml`
+- `build.rs`
+- `icon-resource.rc`
+- `screenshots/`
+- `.github/workflows/`
 
 ---
 
@@ -134,181 +155,132 @@ src/
 
 | Task | Files |
 | --- | --- |
-| CLI flags, command routing, startup flow | `src/main.rs`, `src/utils/args.rs` |
-| Shared bucket logic, focus buffering, motion math | `src/common/*` |
-| SQLite schema, import/export, analytics | `src/storage/localdb/*`, `src/storage/backend.rs` |
-| Read-only terminal dashboard | `src/tui/mod.rs`, `src/tui/app.rs`, `src/tui/data.rs`, `src/tui/ui.rs` |
-| Linux raw input collection | `src/platform/linux/inputs.rs` |
-| Linux startup generation + picker UI | `src/platform/linux/common.rs` |
-| Windows raw input / focus / startup / tray | `src/platform/windows/*` |
-| Sync implementation | `src/sync/*`, `src/main.rs`, `src/utils/args.rs` |
+| CLI parsing, subcommands, help text | `src/utils/args.rs` |
+| Command routing and runtime flow | `src/main.rs` |
+| Shared bucket / tracker logic | `src/common/*` |
+| DB path resolution and SQLite setup | `src/storage/localdb.rs`, `src/storage/localdb/config.rs`, `src/storage/localdb/schema.rs` |
+| Import/export/merge behavior | `src/storage/localdb/export.rs`, `src/storage/localdb/import.rs`, `src/storage/localdb/integrity.rs` |
+| Storage write path | `src/storage/localdb/rows.rs`, `src/storage/backend.rs` |
+| Dashboard state/data/rendering | `src/tui/app.rs`, `src/tui/data.rs`, `src/tui/ui.rs`, `src/tui/mod.rs` |
+| Linux startup and startup picker | `src/platform/linux/common.rs` |
+| Linux collection | `src/platform/linux/inputs.rs`, `src/platform/linux/process.rs`, `src/platform/linux/wayland.rs`, `src/platform/linux/x11.rs` |
+| Windows collection | `src/platform/windows/inputs.rs`, `src/platform/windows/process.rs`, `src/platform/windows/common.rs` |
+| Windows startup and tray | `src/platform/windows/startup.rs`, `src/platform/windows/systray.rs` |
 | Locking and multi-process coordination | `src/utils/lock.rs` |
-| DPI persistence and resolution | `src/utils/dpi.rs` |
-| CI / packaging / release | `.github/workflows/*`, `flake.nix` |
+| DPI persistence | `src/utils/dpi.rs` |
+| Sync | `src/sync/*` |
 
 ---
 
-## Current Runtime Flow
+## Runtime Flow
 
-`src/main.rs` has three execution paths.
+`src/main.rs` has three practical execution paths.
 
-### 1. `vigil collector` — short-circuit maintenance commands
+### 1. `vigil collector` short-circuit operations
 
 These do work and exit:
 
 - startup enable/disable
-- `--export-db`
-- `--import-db` / `--import-db --dry-run`
+- export
+- import
+- import dry-run
 - `sync push/pull/status` when `multi-sync` is enabled
 
-### 2. `vigil dashboard` — read-only dashboard
+These must not accidentally start the long-running collector.
 
-- opens the ratatui dashboard
-- reads from the local SQLite DB
+### 2. `vigil dashboard`
+
+- opens the read-only ratatui dashboard
+- reads SQLite
 - refreshes periodically
-- does not start the collector
-- does not acquire the single-instance lock
+- does not acquire the collector lock
+- does not mutate tracked activity
+- does not start background collection
 
-This separation matters. The dashboard is an inspection tool, not a collection mode.
+### 3. `vigil collector` long-running mode
 
-### 3. `vigil collector` — long-running collector
-
-Normal run without short-circuit flags:
+Normal collector run:
 
 1. resolve DB path
-2. acquire single-instance lock
-3. resolve mouse DPI
-4. initialize the local SQLite backend
-5. start platform input collection
-6. start focus/process collection
-7. start Windows systray if enabled
-8. start opportunistic sync loop only when compiled and configured
+2. handle short-circuit flags if present
+3. acquire single-instance lock
+4. resolve DPI
+5. initialize SQLite backend
+6. spawn input collection
+7. spawn focus/process collection
+8. spawn Windows systray when enabled
+9. spawn background sync when compiled and configured
 
-Do not blur these paths together.
-
----
-
-## TUI Structure
-
-### `src/tui/mod.rs`
-
-- terminal setup / teardown
-- alternate screen and raw mode handling
-- event loop
-- periodic refresh
-
-### `src/tui/app.rs`
-
-- dashboard state machine
-- focus sections
-- keyboard handling
-- time window state (`All`, `1h`, `6h`, `24h`, `7d`, `30d`)
-- chart mode state (single / scope overlay)
-- list / heatmap selection and scrolling
-
-### `src/tui/data.rs`
-
-- loads dashboard data from SQLite
-- aggregates app usage, chart series, summary totals, heatmap rows
-- contains dashboard-facing presentation models
-
-### `src/tui/ui.rs`
-
-- ratatui layout
-- chart rendering
-- app list rendering with per-app histograms
-- week activity grid rendering
-- header/footer/help modal
-
-### Current dashboard behavior
-
-The dashboard is read-only and shows:
-
-- summary cards (totals for the selected time window)
-- app activity list with per-app histograms, selection and scrolling
-- activity chart with multiple time windows and modes
-- week activity grid with row selection and current-day highlighting
-- footer hints and collector/sync status
-
-If you change the TUI, verify both behavior and layout. Most TUI regressions are not compiler errors; they show up as clipped text, dead space, bad resizing, or misleading status.
+Do not blur dashboard and collector behavior.
 
 ---
 
-## Product Invariants
-
-These are the constraints most changes must preserve.
+## Core Invariants
 
 ### 1. Local SQLite is the collector database
 
-Even with `multi-sync`, collection writes go to local SQLite first.
+Collection writes go to local SQLite first, even with sync enabled.
 
 ### 2. Bucket rows are the source of truth
 
-Totals, analytics, TUI aggregates, import/export behavior, and sync convergence all derive from bucket rows.
+Dashboard views, analytics, import/export merges, and sync convergence derive from bucket rows.
 
-### 3. Import/export must stay idempotent
+### 3. Import/export must remain idempotent
 
 Do not weaken:
 
-- export UUID checks
-- import history tracking
-- snapshot hash checks
-- duplicate detection
+- export UUID tracking
+- file hash checks
+- duplicate import detection
+- merge-safety checks
 
 ### 4. `--db-path` is a user-facing contract
 
-It accepts a file, a directory, or a missing directory-like path. It is remembered across runs.
+It accepts:
+
+- a direct file path
+- a directory
+- a missing directory-like path
+
+It is also remembered across runs.
 
 ### 5. `multi-sync` must remain fully feature-gated
 
-When the feature is off: sync code must not compile, no remote dependency should be required, default local-only behavior must stay intact.
+When the feature is off:
 
-### 6. Sync source ownership is strict
+- sync code should not compile
+- no remote dependency should be required
+- local-only behavior must remain intact
 
-Each device owns exactly one `source_uuid`. Pulled foreign rows may exist locally but must never be re-enqueued as local outbox rows.
+### 6. Sync ownership is strict
 
-### 7. Sync must be retry-safe
+Each device owns exactly one `source_uuid`.
 
-No duplicate canonical rows on retry. No marking outbox rows as sent before acknowledgement. No cursor advance before a full successful pull apply.
+- local devices push only their own rows
+- foreign rows may exist locally
+- foreign rows must never be re-enqueued as local outbox rows
 
-### 8. Sync failure must not stop collection
+### 7. Sync failures must not stop collection
 
-If the remote is unavailable, local collection and local writes continue.
+Sync is opportunistic. Remote failure must not stop local writes.
 
-### 9. The dashboard is inspection-only
+### 8. Dashboard is inspection-only
 
-The dashboard must not acquire the collector instance lock, mutate activity data, or start background collection implicitly.
+The dashboard may read while a collector is running, but it must not become a second collector.
 
-### 10. Platform behavior should only be shared when it is actually shared
+### 9. Platform code should stay platform-specific
 
-Motion math, bucket segmentation, and focus buffering are safe to share. Keep OS event decoding and OS integration inside `platform/linux` or `platform/windows`.
+Share math and tracker logic when behavior is identical. Keep OS event decoding and integration inside the relevant platform modules.
 
-### 11. Linux startup remains XDG-first
+### 10. Startup should launch `vigil collector`
 
-- `xdg` autostart as the default
-- `systemd --user` as an explicit advanced fallback
-- both artifacts launch `vigil collector`
-
-### 12. Release tags must match `Cargo.toml`
-
-The workflow enforces this.
+Both Linux and Windows startup artifacts must target the collector subcommand, not an ambiguous bare binary invocation.
 
 ---
 
-## Environment Variables
+## Storage Model
 
-| Variable | Purpose |
-|----------|---------|
-| `VIGIL_DATA_DIR` | Override the default data directory |
-| `VIGIL_SKIP_INSTANCE_LOCK` | Set to `1` to skip the single-instance lock (testing only) |
-| `VIGIL_SYNC_REMOTE_URL` | Remote sqld/libSQL endpoint (`multi-sync` only) |
-| `VIGIL_SYNC_AUTH_TOKEN` | Auth token for the sync remote (`multi-sync` only) |
-
----
-
-## Storage and Sync Tables
-
-### Local tables
+Important local tables:
 
 - `schema_meta`
 - `sources`
@@ -318,14 +290,14 @@ The workflow enforces this.
 - `imports`
 - `sessions`
 
-### Local sync tables (`multi-sync` only)
+Sync-related local tables when `multi-sync` is enabled:
 
 - `sync_state`
 - `sync_outbox_sources`
 - `sync_outbox_input_buckets`
 - `sync_outbox_focus_buckets`
 
-### Remote canonical sync tables
+Remote canonical tables:
 
 - `sources`
 - `input_buckets`
@@ -336,128 +308,245 @@ The workflow enforces this.
 - `sync_input_changes`
 - `sync_focus_changes`
 
+When schema changes:
+
+- update setup/bootstrap logic
+- update tests
+- think through import/export effects
+- think through sync effects
+
 ---
 
-## Build and Test
+## Dashboard Structure
 
-Use the flake environment and pass `--target` explicitly.
+### `src/tui/mod.rs`
+
+- terminal setup and teardown
+- alternate screen
+- raw mode handling
+- event loop
+- periodic refresh
+
+### `src/tui/app.rs`
+
+- state machine
+- focus sections
+- chart mode
+- app-list mode
+- time windows
+- scrolling and selection
+- key handling
+
+### `src/tui/data.rs`
+
+- loads SQLite-backed dashboard data
+- builds summary cards, chart data, app lists, week activity rows
+- resolves display names
+- attaches per-app histograms
+
+### `src/tui/ui.rs`
+
+- ratatui layout
+- charts
+- app list panel
+- week activity grid
+- header/footer/help
+
+### Current dashboard behavior
+
+The dashboard currently includes:
+
+- summary cards
+- apps activity panel with histograms
+- generic and specific app list modes
+- activity chart with multiple time windows and chart modes
+- week activity grid
+- collector and sync status
+- focused-panel hints
+- ASCII/Unicode display toggle
+
+Important recent behavior:
+
+- the app list now supports:
+  - `generic` mode: app-level aggregation
+  - `specific` mode: richer app/context labels
+- desktop entry matching on Linux is the primary source for app display names
+- reverse-DNS and title-based fallbacks exist when desktop entries do not resolve a clean name
+
+When changing the dashboard:
+
+- keep rendering in `ui.rs`
+- keep state transitions in `app.rs`
+- keep aggregation/queries in `data.rs`
+- do not change storage semantics just to support UI display
+
+---
+
+## Linux-Specific Notes
+
+Important files:
+
+- `src/platform/linux/common.rs`
+- `src/platform/linux/inputs.rs`
+- `src/platform/linux/process.rs`
+- `src/platform/linux/wayland.rs`
+- `src/platform/linux/x11.rs`
+
+Important behavior:
+
+- Linux startup uses an interactive mode picker
+- XDG autostart is the recommended default
+- `systemd --user` is the advanced/manual fallback
+- startup artifacts should point to the current executable and launch `vigil collector`
+
+High-risk area:
+
+- input measurement drift in `inputs.rs`
+
+---
+
+## Windows-Specific Notes
+
+Important files:
+
+- `src/platform/windows/common.rs`
+- `src/platform/windows/inputs.rs`
+- `src/platform/windows/process.rs`
+- `src/platform/windows/startup.rs`
+- `src/platform/windows/systray.rs`
+
+Important behavior:
+
+- Windows collection uses raw input and foreground-process tracking
+- Windows startup creates a Startup-folder shortcut that launches `vigil collector`
+- Windows systray is optional and collector-only
+
+Recent Windows-specific cleanup:
+
+- systray loop moved onto a blocking task
+- tray menu command mapping was refactored into a testable pure path
+- startup behavior was kept aligned with the collector/dashboard split
+
+High-risk areas:
+
+- raw input decoding
+- tray message loop behavior
+- startup shortcut generation
+
+---
+
+## Locks and Concurrency
+
+`src/utils/lock.rs` matters more than it looks.
+
+There are two lock concepts:
+
+1. collector instance lock
+   - ensures only one collector runs
+
+2. DB operation lock
+   - serializes DB operations for flows like sync/import/export
+
+Do not casually change lock behavior.
+
+Important env var:
+
+- `VIGIL_SKIP_INSTANCE_LOCK=1`
+  - testing only
+
+---
+
+## Tests
+
+Current tests are mostly in-module:
+
+- pure logic/unit tests in `common/*`, `platform/*`, `tui/*`, `utils/*`
+- storage/integration-style tests in `src/storage/localdb.rs`
+- command-routing/integration-style tests in `src/main.rs`
+- sync-specific tests in `src/sync/tests.rs`
+
+What the current suite meaningfully covers:
+
+- bucket segmentation
+- focus tracker behavior
+- input aggregation
+- DB path semantics
+- import/export behavior
+- dashboard state transitions
+- app display-name resolution
+- CLI parsing boundaries
+- Windows startup / tray pure logic helpers
+
+Testing guidance:
+
+- prefer tests that prove observable behavior
+- avoid tests for OS or stdlib behavior outside project responsibility
+- prefer pure helpers when possible
+- use real SQLite-backed tests where merge/import/export behavior matters
+
+Current practical verification commands:
 
 ```bash
-nix develop --command cargo fmt --all
-nix develop --command cargo build --target x86_64-unknown-linux-gnu
-nix develop --command cargo test --target x86_64-unknown-linux-gnu
-nix develop --command cargo build --target x86_64-pc-windows-gnu
-nix develop --command cargo check --target x86_64-pc-windows-gnu
-nix build .#linux
-nix build .#windows
+cargo fmt --all
+cargo test --target x86_64-unknown-linux-gnu
+cargo check --target x86_64-pc-windows-gnu
+cargo check --target x86_64-pc-windows-gnu --all-features
+cargo check --tests --target x86_64-pc-windows-gnu
 ```
 
-Notes:
+Important note:
 
-- `nix build .#windows` is a Linux-hosted cross-build, not native Windows execution.
-- the dev shell intentionally separates host Linux and cross Windows toolchains
-
-### SQLite expectation
-
-`rusqlite` is bundled on both platforms. Linux runtime should not depend on a system `libsqlite3.so`. Windows runtime should not require an external SQLite install.
-
-### Windows validation
-
-Wine can help locally, but native Windows CI is the real runtime gate.
+- in this environment, Windows test linking may fail due to toolchain linkage issues even when Windows code typechecks correctly
 
 ---
 
-## Change Strategy
+## Build / Tooling Notes
 
-### Start narrow
+- `build.rs` generates Linux bindings and embeds Windows icon resources
+- `.cargo/config.toml` contains Windows runner config
+- `screenshots/` contains dashboard images and capture assets that are useful for docs and UI review
 
-Before editing:
+Do not silently break:
 
-1. identify the task area
-2. open the smallest responsible files first
-3. confirm which invariant matters most for that change
-
-### Prefer additive changes in the TUI/data layers
-
-For dashboard work:
-
-- prefer deriving new views from existing bucket data
-- avoid changing storage semantics just to support a UI feature
-- keep rendering concerns in `ui.rs`
-- keep state transitions in `app.rs`
-- keep SQL/aggregation in `data.rs`
-
-### Keep commits coherent
-
-Prefer separate commits for product behavior changes, schema changes, sync changes, TUI/dashboard changes, and docs-only updates.
-
-Commit messages should include: what changed, how it changed, why it changed.
+- Windows icon/resource embedding
+- Linux bindgen generation
+- target-specific build behavior
 
 ---
 
-## High-Risk Areas
+## High-Risk Files
 
-Be extra careful in:
+Be especially careful in:
 
-- `src/storage/localdb/*` — schema, import/export, merge logic, analytics
-- `src/sync/*` — ownership, outbox safety, cursor handling, retry semantics
-- `src/common/*` — shared logic affects both platforms
-- `src/platform/linux/inputs.rs` — input measurement can drift silently
-- `src/platform/windows/inputs.rs` — raw input and message loop code are easy to break subtly
-- `src/utils/lock.rs` — filesystem and lock semantics vary by environment
-- `src/tui/ui.rs` — many regressions are visual/layout regressions, not compile failures
+- `src/storage/localdb/import.rs`
+- `src/storage/localdb/export.rs`
+- `src/storage/localdb/schema.rs`
+- `src/storage/localdb/rows.rs`
+- `src/sync/*`
+- `src/platform/linux/inputs.rs`
+- `src/platform/windows/inputs.rs`
+- `src/platform/windows/systray.rs`
+- `src/utils/lock.rs`
+- `src/tui/ui.rs`
+- `src/tui/data.rs`
 
----
-
-## TUI-Specific Gotchas
-
-When editing the dashboard:
-
-- check wide and narrow layouts
-- check fullscreen and medium terminal sizes
-- avoid leaving dead interior space inside bordered panels
-- protect duration strings and labels from clipping
-- treat charts and scrollable lists as the primary sinks for extra space
-- keep footer/header status high-signal and compact
-- remember the dashboard may run while the collector is active elsewhere
-
-If a TUI change needs new data, prefer adding an additive aggregation in `src/tui/data.rs` instead of altering storage design.
-
----
-
-## Test Philosophy
-
-Prefer tests that prove:
-
-- observable behavior
-- merge/import/export outcomes
-- sync ownership and retry behavior
-- dashboard state transitions and input handling
-- analytics derived from stored rows
-
-Avoid tests that mostly prove:
-
-- the OS itself
-- exact wording of UI copy unless it is product-critical
-- brittle timing behavior
-- giant smoke paths that obscure the real failing invariant
-
-Use the lowest stable test level that proves the behavior.
+Most regressions in these areas are behavioral, not syntactic.
 
 ---
 
 ## Common Mistakes To Avoid
 
 - making the collector remote-first
-- bypassing bucket rows with ad hoc totals
+- bypassing bucket rows with ad hoc cumulative state
 - starting collection from the dashboard path
-- re-enqueueing pulled foreign rows
-- advancing sync state before a full successful apply
-- mixing unrelated feature, docs, CI, and schema changes into one commit
+- treating dashboard display labels as storage semantics
+- re-enqueueing foreign sync rows
+- weakening duplicate import detection
+- conflating app display naming with source data fidelity
 - assuming Linux-only validation is enough for Windows-sensitive code
 
 ---
 
 ## One-Sentence Model
 
-`vigil` is a local-first, bucket-based activity recorder with a read-only analytics dashboard and optional feature-gated sync, where correctness depends on preserving local collection, safe SQLite semantics, and clear separation between collection, inspection, and history movement.
+`vigil` is a local-first, bucket-based activity recorder with a read-only dashboard, platform-specific collectors, and optional feature-gated sync, where correctness depends on preserving clean separation between collection, inspection, and history movement.

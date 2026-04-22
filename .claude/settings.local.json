@@ -5,7 +5,12 @@
       "Bash(grep -E \"\\\\.\\(rs|toml\\)$\")",
       "Bash(grep -E \"error|Finished|ok$|FAILED\")",
       "Bash(git add *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(git commit *)",
+      "Read(//nix/store/ln9i1hs8v6rv57mzhgmm7d9pq7b5m6bf-ghostty-1.3.1/share/applications/**)",
+      "Read(//nix/store/xg78kz67d8846xmmcj91yqh5vrnal1hl-discord.desktop/share/applications/**)",
+      "Read(//nix/store/9asl54fmm7hjcw1jx7kvdv92rba6xfr3-ticktick-8.0.0/share/applications/**)",
+      "Read(//nix/store/3dgyb25x6vwwb2qw19ki42pwswsyyqd1-swappy-1.8.0/share/applications/**)"
     ]
   },
   "spinnerTipsEnabled": false
