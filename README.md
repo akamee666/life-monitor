@@ -23,7 +23,7 @@ Find which days, hours or weeks that you were most active and what you're curren
 ### From crates.io
 
 ```sh
-cargo install vigil
+cargo install vigil-rs
 ```
 
 ### Building from source
