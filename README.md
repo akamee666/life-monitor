@@ -31,13 +31,74 @@ cargo install vigil
 Build directly from source and get the latest commit:
 
 ```sh
-git clone https://github.com/akamee666/vigil
+git clone https://github.com/tomatoo10/vigil
 cd vigil
 cargo build --release
 # Binary at: target/release/vigil
 ```
 
-#### Nix
+### Nix
+
+```bash
+# Run native vigil directly without installing
+nix run github:tomatoo10/vigil
+# Install native binary (recommended)
+nix profile install github:tomatoo10/Vigil
+```
+
+### Using with Nix Flakes
+
+#### In your flake.nix
+
+```nix
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    vigil.url = "github:tomatoo10/Vigil";
+  };
+
+  outputs = { self, nixpkgs, vigil }:
+    let
+      system = "x86_64-linux"; # or your system
+      pkgs = nixpkgs.legacyPackages.${system};
+    in
+    {
+      devShells.${system}.default = pkgs.mkShell {
+        buildInputs = [
+          vigil.packages.${system}.default
+        ];
+      };
+    };
+}
+```
+
+##### Using with NixOS
+
+Add to your system configuration:
+
+```nix
+{ inputs, pkgs, ... }:
+{
+  environment.systemPackages = [
+    inputs.vigil.packages.${pkgs.system}.default
+  ];
+}
+```
+
+##### Using with Home Manager
+
+Add to your Home Manager configuration:
+
+```nix
+{ inputs, pkgs, ... }:
+{
+  home.packages = [
+    inputs.vigil.packages.${pkgs.system}.default
+  ];
+}
+```
+
+### Development
 
 This repository ships a `flake.nix` with a development shell and build targets:
 
