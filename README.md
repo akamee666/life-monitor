@@ -2,7 +2,7 @@
 
 Vigil is a activity tracker for Linux and Windows to help you understand when you're most active, what do you do in active time and besides that, Vigil also create some cool stats. Vigil records keyboard activity, mouse movement, clicks, most used apps and save it all into a local SQLite database.
 
-Find which days, hours or weeks that you were most active and what you're currently spending your time on:
+Find which part of the day, week or month that you was most active and in what did you spend your time on:
 
 ![Showing TUI dashboard](./screenshots/dashboard-showcase.gif)
 
@@ -23,7 +23,7 @@ Find which days, hours or weeks that you were most active and what you're curren
 ### From crates.io
 
 ```sh
-cargo install vigil
+cargo install vigil-rs
 ```
 
 ### Building from source
