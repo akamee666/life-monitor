@@ -72,9 +72,9 @@
         linuxRuntimeDeps = with pkgs; [
           openssl
           wayland
-          xorg.libX11
-          xorg.libXi
-          xorg.libXtst
+          libx11
+          libxi
+          libxtst
         ];
 
         linuxBuildDeps = with pkgs; [
@@ -231,14 +231,10 @@
                         export RANLIB_${builtins.replaceStrings ["-"] ["_"] linuxTarget}=ranlib
 
                         export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER="${windowsLinker}"
-                        export CC_${builtins.replaceStrings ["-"] ["_"] windowsTarget}
-            ="${windowsLinker}"
-                        export CXX_${builtins.replaceStrings ["-"] ["_"] windowsTarget}
-            ="${windowsCxx}"
-                        export AR_${builtins.replaceStrings ["-"] ["_"] windowsTarget}
-            ="${windowsAr}"
-                        export RANLIB_${builtins.replaceStrings ["-"] ["_"] windowsTarget}
-            ="${windowsRanlib}"
+                        export CC_${builtins.replaceStrings ["-"] ["_"] windowsTarget}="${windowsLinker}"
+                        export CXX_${builtins.replaceStrings ["-"] ["_"] windowsTarget}="${windowsCxx}"
+                        export AR_${builtins.replaceStrings ["-"] ["_"] windowsTarget}="${windowsAr}"
+                        export RANLIB_${builtins.replaceStrings ["-"] ["_"] windowsTarget}="${windowsRanlib}"
                         export PKG_CONFIG_ALLOW_CROSS=1
 
                         export WINEPREFIX="$HOME/.wine64"
