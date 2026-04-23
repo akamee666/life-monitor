@@ -201,7 +201,7 @@ fn resolve_tray_action(cmd: u16) -> TrayAction {
 fn handle_command(cmd: u16) -> Result<()> {
     match resolve_tray_action(cmd) {
         TrayAction::OpenProjectPage => Command::new("cmd.exe")
-            .args(["/C", "start", "", "https://github.com/akamee666/vigil"])
+            .args(["/C", "start", "", "https://github.com/tomatoo10/vigil"])
             .spawn()
             .map(|_| ())
             .map_err(anyhow::Error::from),

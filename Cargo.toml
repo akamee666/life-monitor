@@ -6,7 +6,7 @@ authors = ["Davi Aguiar moraes@akmee.xyz"]
 description = "A local-first activity tracker for keyboard, mouse, and focused-window activity"
 license = "MIT"
 readme = "README.md"
-repository = "https://github.com/akamee666/vigil"
+repository = "https://github.com/tomatoo10/vigil"
 keywords = ["cli", "tracker", "productivity", "activity"]
 categories = ["command-line-utilities"]
 
