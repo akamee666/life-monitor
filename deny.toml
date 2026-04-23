@@ -14,11 +14,6 @@ yanked = "warn"
 # No upstream patch release is available for this stack, and libsql 0.9.30 is
 # the latest published version. Revisit when libsql bumps its rustls deps.
 ignore = [
-  # paste 1.0.15 is pulled in transitively by ratatui 0.29.0. The advisory is
-  # maintenance-only rather than a known soundness or security break, and there
-  # is no direct replacement we can apply from this crate without changing the
-  # ratatui stack. Revisit when ratatui drops or replaces paste.
-  "RUSTSEC-2024-0436",
   # rustls-pemfile 2.2.0 is unmaintained (repo archived). Pulled in by
   # hyper-rustls 0.25.0 transitively; only used by multi-sync.
   "RUSTSEC-2025-0134",
