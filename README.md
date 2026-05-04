@@ -367,3 +367,8 @@ Feel free to contact me or create a PR if you want a new feature. Also, if you'v
 ## License
 
 MIT
+
+## TODO
+
+apps activity won't show any heatmap for processes after the second index. Once you scroll down they appear. If you keep scrooling it seems that the heatmap will get less qualitiy or levels, need investigation and fixes.
+can we get scroll distance as well?
