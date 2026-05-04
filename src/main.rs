@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 #[cfg(target_os = "windows")]
 use crate::platform::windows::startup::configure_startup;
 

@@ -228,6 +228,7 @@ pub enum Command {
 
 #[derive(Parser, Debug, Clone)]
 #[command(name = "vigil")]
+#[command(version)]
 #[command(subcommand_required = true, arg_required_else_help = true)]
 #[command(about = "Track keyboard, mouse, and focused-window activity into a SQLite database.")]
 #[command(
@@ -322,5 +323,13 @@ mod tests {
             Cli::try_parse_from(["vigil"]).expect_err("root command should require subcommand");
         let rendered = err.to_string();
         assert!(rendered.contains("Usage:"));
+    }
+
+    #[test]
+    fn root_command_prints_version_without_subcommand() {
+        let err = Cli::try_parse_from(["vigil", "--version"])
+            .expect_err("version flag should exit before requiring a subcommand");
+        let rendered = err.to_string();
+        assert!(rendered.contains(env!("CARGO_PKG_VERSION")));
     }
 }

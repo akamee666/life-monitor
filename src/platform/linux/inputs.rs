@@ -190,6 +190,15 @@ fn test_bit(bit: u32, bytes: &[u8]) -> bool {
 
 /// Detect keyboard capabilities
 fn is_keyboard(fd: &File) -> bool {
+    has_keyboard_capabilities(fd) && !has_mouse_capabilities(fd)
+}
+
+/// Detect mouse capabilities
+fn is_mouse(fd: &File) -> bool {
+    has_mouse_capabilities(fd) && !has_keyboard_capabilities(fd)
+}
+
+fn has_keyboard_capabilities(fd: &File) -> bool {
     // (EV_MAX + 7) / 8
     let mut ev_bitmask = vec![0u8; (EV_MAX as usize).div_ceil(8)];
     unsafe {
@@ -224,16 +233,10 @@ fn is_keyboard(fd: &File) -> bool {
         return false;
     }
 
-    if is_mouse(fd) {
-        // debug!("Device also has capabilities of a mouse, it isn't a keyboard.");
-        return false;
-    }
-
     true
 }
 
-/// Detect mouse capabilities
-fn is_mouse(fd: &File) -> bool {
+fn has_mouse_capabilities(fd: &File) -> bool {
     let mut ev_types_bits = vec![0u8; (EV_MAX as usize).div_ceil(8)];
     unsafe {
         if eviocgbit_all(fd.as_raw_fd(), ev_types_bits.as_mut_slice()).is_err() {
@@ -270,11 +273,6 @@ fn is_mouse(fd: &File) -> bool {
 
     if !test_bit(EV_KEY, &ev_bitmask) {
         // debug!("Device can't handle EV_KEY events, not a mouse!");
-        return false;
-    }
-
-    if is_keyboard(fd) {
-        // debug!("Device seems to be an adapter; treat as non-mouse.");
         return false;
     }
 
