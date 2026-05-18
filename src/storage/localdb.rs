@@ -31,7 +31,7 @@ pub(crate) use integrity::{file_sha256, scalar_query_u64};
 mod tests {
     use super::*;
     use crate::common::{FocusBucketRecord, InputBucketRecord, DEFAULT_SOURCE_ID};
-    use chrono::{TimeZone, Utc};
+    use chrono::{Duration, TimeZone, Utc};
     use rusqlite::OptionalExtension;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -141,6 +141,50 @@ mod tests {
             focus_seconds: 45,
             ..sample_focus_row()
         }
+    }
+
+    fn report_test_input_rows() -> [InputBucketRecord; 2] {
+        let report_day = (Utc::now() - Duration::days(1)).date_naive();
+        let local_date = report_day.format("%F").to_string();
+        let first_start = Utc.from_utc_datetime(&report_day.and_hms_opt(12, 0, 0).unwrap());
+        let second_start = Utc.from_utc_datetime(&report_day.and_hms_opt(12, 15, 0).unwrap());
+
+        [
+            InputBucketRecord {
+                bucket_start_utc: first_start,
+                bucket_end_utc: first_start + Duration::minutes(15),
+                local_date: local_date.clone(),
+                ..sample_input_row()
+            },
+            InputBucketRecord {
+                bucket_start_utc: second_start,
+                bucket_end_utc: second_start + Duration::minutes(15),
+                local_date,
+                ..sample_second_input_row()
+            },
+        ]
+    }
+
+    fn report_test_focus_rows() -> [FocusBucketRecord; 2] {
+        let report_day = (Utc::now() - Duration::days(1)).date_naive();
+        let local_date = report_day.format("%F").to_string();
+        let first_start = Utc.from_utc_datetime(&report_day.and_hms_opt(12, 0, 0).unwrap());
+        let second_start = Utc.from_utc_datetime(&report_day.and_hms_opt(12, 15, 0).unwrap());
+
+        [
+            FocusBucketRecord {
+                bucket_start_utc: first_start,
+                bucket_end_utc: first_start + Duration::minutes(15),
+                local_date: local_date.clone(),
+                ..sample_focus_row()
+            },
+            FocusBucketRecord {
+                bucket_start_utc: second_start,
+                bucket_end_utc: second_start + Duration::minutes(15),
+                local_date,
+                ..sample_second_focus_row()
+            },
+        ]
     }
 
     /// Verifies that a direct custom file path is preserved as-is while ensuring the parent
@@ -618,12 +662,14 @@ mod tests {
     fn daily_activity_report_groups_metrics_by_day_and_source() -> anyhow::Result<()> {
         let path = unique_temp_db("daily-report");
         let conn = build_test_db(&path)?;
-        insert_input_buckets(&conn, &[sample_input_row(), sample_second_input_row()])?;
-        insert_focus_buckets(&conn, &[sample_focus_row(), sample_second_focus_row()])?;
+        let input_rows = report_test_input_rows();
+        let focus_rows = report_test_focus_rows();
+        insert_input_buckets(&conn, &input_rows)?;
+        insert_focus_buckets(&conn, &focus_rows)?;
 
         let rows = daily_activity_report(&conn, 30)?;
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].local_date, "2026-04-18");
+        assert_eq!(rows[0].local_date, input_rows[0].local_date);
         assert_eq!(rows[0].key_presses, 12);
         assert_eq!(rows[0].left_clicks, 5);
         assert_eq!(rows[0].focus_seconds, 165);
@@ -796,13 +842,14 @@ mod tests {
     fn daily_activity_report_includes_focus_only_day() -> anyhow::Result<()> {
         let path = unique_temp_db("focus-only-day");
         let conn = build_test_db(&path)?;
+        let focus_rows = report_test_focus_rows();
 
         // Insert only focus data — no input_buckets rows at all.
-        insert_focus_buckets(&conn, &[sample_focus_row()])?;
+        insert_focus_buckets(&conn, &[focus_rows[0].clone()])?;
 
         let rows = daily_activity_report(&conn, 30)?;
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].local_date, "2026-04-18");
+        assert_eq!(rows[0].local_date, focus_rows[0].local_date);
         assert_eq!(rows[0].focus_seconds, 120);
         // Input counters must default to zero, not be missing.
         assert_eq!(rows[0].key_presses, 0);

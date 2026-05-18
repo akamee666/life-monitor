@@ -1,6 +1,6 @@
 [package]
 name = "vigil-rs"
-version = "1.0.2"
+version = "1.0.3"
 edition = "2021"
 authors = ["Davi Aguiar moraes@akmee.xyz"]
 description = "A local-first activity tracker for keyboard, mouse, and focused-window activity"
